@@ -20,47 +20,47 @@
   "three_quarter.jpg": {
     "camera": [0.82, -0.82, 0.72, 0, 0, 1]
   },
-  "extended_three_quarter.jpg": {
+  "pressed_three_quarter.jpg": {
     "camera": [0.82, -0.82, 0.72, 0, 0, 1],
     "joints": {
-      "refill_extend": -0.003
+      "upper_press": -0.27
     }
   },
-  "press_and_extend.mp4": {
+  "open_three_quarter.jpg": {
+    "camera": [0.82, -0.82, 0.72, 0, 0, 1],
+    "joints": {
+      "upper_press": 0.7
+    }
+  },
+  "press_and_open.mp4": {
     "fps": 24,
     "frames": [
       {
         "frame": 0,
-        "camera": [0.3, -1, 0.7, 0, 0, 1],
-        "joints": {
-          "button_press": 0,
-          "refill_extend": 0
-        }
+        "camera": [0.5, -1, 0.6, 0, 0, 1]
       },
       {
         "frame": 12,
         "joints": {
-          "button_press": -0.003,
-          "refill_extend": -0.003
+          "upper_press": -0.27
         }
       },
       {
         "frame": 24,
         "joints": {
-          "button_press": 0
+          "upper_press": 0
         }
       },
       {
         "frame": 36,
         "joints": {
-          "button_press": -0.003,
-          "refill_extend": 0
+          "upper_press": 0.7
         }
       },
       {
         "frame": 48,
         "joints": {
-          "button_press": 0
+          "upper_press": 0
         }
       }
     ]

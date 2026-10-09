@@ -8,6 +8,8 @@ asset_sources/
     object.py
     metadata.json
     preview.json
+    README.md
+    three_quarter.jpg
     physics.json
   scenes/scene-000000/
 assets/
@@ -24,7 +26,11 @@ assets/
 
 `object.py` 只生成自己的资产；统一执行入口调用其 `main(argv)`，通过 `--output` 指定产物目录。`preview.json` 定义预览，`physics.json` 定义物理属性；尚未做到相应阶段时不要求提供对应配置。
 
+每个源目录的简洁 `README.md` 说明结构、局部坐标、关节行程、当前物理阶段和复现命令。`three_quarter.jpg` 是约 600 × 300 的四分之三缩略图，左视觉、右碰撞；两者随 Git 保存。缩略图优先保持辨识度，通常约 20 KB。完整六视图、动画和验收报告仍属于生成物，保存在 `assets/`，不提交。
+
 一个包含多个可动部件的逻辑对象作为一个对象资产保存。生成的 `.blend` 保存建模结果，`.usd` 或 `.usdz` 保存仿真导出结果，预览图片和视频保存在 `preview/`。这些文件不提交到 Git；未完成导出的阶段不要求存在 `.usdz`。
+
+生成目录保存 `object.py`、预览配置和元数据副本；资产使用共用建模代码时，也保存重建所需的共用模块副本。源码修改在 `asset_sources/` 和 `table_1000/` 进行，再重新生成这些快照。
 
 脚本中定义的材质参数随源码提交。外部纹理、参考图片等资源使用独立的资产存储，源目录保存资源引用及必要的版本、来源和许可信息，不引用私有绝对路径。具体资源存储服务与清单格式在引入外部资源时确定。
 

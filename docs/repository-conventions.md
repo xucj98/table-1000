@@ -6,6 +6,8 @@
 
 对象与场景按 [资产存储布局](designs/storage-layout.md) 保存。外部框架下载的资产与权重遵循其自身约定，不与本项目资产混放。
 
+对象源目录保存独立建模入口、JSON 配置、简洁 README 和约 600 × 300 的四分之三 JPG 缩略图；README 与缩略图随 Git 提交。完整渲染、动画、模型和验收报告保存在生成目录，不提交。`preview.json` 的每个 `camera` 数组保持单行。
+
 ## 提交与审查
 
 `tests/` 以单元测试为主，子目录与 `table_1000/` 的源码目录对应，例如 `table_1000/modeling/` 对应 `tests/modeling/`，测试文件使用 `test_*.py` 命名。需要 Blender 或生成资产的集成测试应明确注明运行环境与输入；测试产物写入 `outputs/`，不存入 `tests/`。

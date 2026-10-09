@@ -91,6 +91,22 @@ class AcceptanceTests(unittest.TestCase):
             'convex_vertices': 64, 'convex_faces': 48,
         })
 
+    def test_pen_independent_slider_travel(self):
+        path=options.assets_root/'pen/000000/object.blend'
+        camera=[.82,-.82,.72,0,0,1]
+        with tempfile.TemporaryDirectory(dir=options.output) as tmp:
+            for values in ({'button_press':-.003}, {'refill_extend':-.003}):
+                views={'pose.jpg':[{'frame':0,'camera':camera,'joints':values}]}
+                run_worker(path,views,Path(tmp),True)
+                checks=GeometryChecks()
+                self.assertEqual(len(checks.bodies),3)
+                self.assertFalse(checks.ignored)
+                for name in ('button_press','refill_extend'):
+                    c=bpy.data.objects[name].rigid_body_constraint
+                    self.assertEqual(c.type,'SLIDER')
+                    self.assertAlmostEqual(c.object2.matrix_world.translation.x,values.get(name,0),places=6)
+                    self.assertAlmostEqual(c.object1.matrix_world.translation.x,0,places=6)
+
 
 result=unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(AcceptanceTests))
 if not result.wasSuccessful():raise RuntimeError('Acceptance regression failed')
