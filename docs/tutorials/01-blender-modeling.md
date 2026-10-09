@@ -6,7 +6,7 @@
 
 ## 1. 准备输入与环境
 
-**输入：**下面的单张照片。目标是左上方的三抽屉盒子，以及桌面中下方带银色环的黑色圆珠笔。尺寸和不可见结构由 AI 根据图片与常识推断。
+**输入：** 下面的单张照片。目标是左上方的三抽屉盒子，以及桌面中下方带银色环的黑色圆珠笔。尺寸和不可见结构由 AI 根据图片与常识推断。
 
 ![参考照片](images/reference.jpg)
 
@@ -25,9 +25,9 @@ uv sync --locked
 
 ## 2. 编写资产源码
 
-**输入：**参考图、以下结构约束和第 4 节的验收要求。
+**输入：** 参考图、以下结构约束和第 4 节的验收要求。
 
-**输出：**每个资产目录中的 `object.py`、`metadata.json` 和 `preview.json`。预览配置按第 4.1 节设计，可在建模迭代中调整。
+**输出：** 每个资产目录中的 `object.py`、`metadata.json` 和 `preview.json`。预览配置按第 4.1 节设计，可在建模迭代中调整。
 
 每个 `object.py` 只生成自己的资产，提供统一入口 `main(argv=None)`，用 `--output` 指定产物目录。修改示例时保留已有 UUID。示例材质使用 Blender 内置节点和脚本参数，无外部纹理依赖。
 
@@ -79,7 +79,7 @@ Object 是父子树的节点。Mesh Object 引用 Mesh 数据块，Empty 没有�
 
 ## 3. 生成模型
 
-**输入：**资产目录中的源码和配置。
+**输入：** 资产目录中的源码和配置。
 
 ```bash
 blender -b --python-exit-code 1 -P asset_sources/objects/cabinet/000000/object.py -- --output assets/objects/cabinet/000000
@@ -92,7 +92,7 @@ blender -b --python-exit-code 1 -P asset_sources/objects/pen/000000/object.py --
 blender -b --python-exit-code 1 -P scripts/tutorials/build_modeling_demo.py -- --output assets
 ```
 
-**输出：**每个产物目录包含 `object.blend`，以及 `object.py`、`preview.json`、`metadata.json` 的副本；日志输出 `MODEL_BUILT`。源码和配置的修改应发生在 `asset_sources/`，不要只修改产物副本。
+**输出：** 每个产物目录包含 `object.blend`，以及 `object.py`、`preview.json`、`metadata.json` 的副本；日志输出 `MODEL_BUILT`。源码和配置的修改应发生在 `asset_sources/`，不要只修改产物副本。
 
 ## 4. 配置预览并验收
 
@@ -132,7 +132,7 @@ blender -b --python-exit-code 1 -P scripts/tutorials/build_modeling_demo.py -- -
 
 ### 4.2 执行自动检查与渲染
 
-**输入：**第 3 节生成的模型和第 4.1 节配置。
+**输入：** 第 3 节生成的模型和第 4.1 节配置。
 
 ```bash
 uv run python scripts/assets/validate_and_preview.py assets/objects/cabinet/000000/object.blend \
@@ -143,7 +143,7 @@ uv run python scripts/assets/validate_and_preview.py assets/objects/pen/000000/o
 
 脚本先检查结构、凸性、复杂度和配置，再按视频 FPS 摆姿、检测不同刚体间的穿透，通过后渲染。失败时退出非零；查看终端报错和本次生成的 `acceptance.json`，修正后重跑。
 
-**输出：**模型旁的 `preview/` 保存报告与预览，图片和视频均为**左视觉、右碰撞**；右侧按刚体着色。
+**输出：** 模型旁的 `preview/` 保存报告与预览，图片和视频均为**左视觉、右碰撞**；右侧按刚体着色。
 
 | 资产 | 预期输出 |
 | --- | --- |
