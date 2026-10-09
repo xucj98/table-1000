@@ -13,9 +13,9 @@
 参考图随教程保存；源目录的 README 和四分之三缩略图随 Git 保存，完整模型和预览不进入 Git。示例源码和配置位于：
 
 - [盒子](../../asset_sources/objects/cabinet/000000/)：外壳、三个空心抽屉，共四个刚体。
-- [笔](../../asset_sources/objects/pen/000000/)：笔壳与包含按钮、笔芯、笔尖的活动组件，两个刚体与一个滑动关节。
+- [笔](../../asset_sources/objects/pen/000001/)：笔壳与包含按钮、笔芯、笔尖的活动组件，两个刚体与一个滑动关节。
 
-同一照片中的其他文具也提供独立源码：[白黑按动笔](../../asset_sources/objects/pen/000001/)、[订书机](../../asset_sources/objects/stapler/000000/)、[尖嘴胶水](../../asset_sources/objects/glue/000000/)、[固体胶](../../asset_sources/objects/glue/000001/)和[胶带](../../asset_sources/objects/tape/000000/)。各目录 README 展示缩略图并简述资产尺寸、组件与关节。
+同一照片中的其他文具也提供独立源码：[白黑按动笔](../../asset_sources/objects/pen/000002/)、[订书机](../../asset_sources/objects/stapler/000000/)、[尖嘴胶水](../../asset_sources/objects/glue/000000/)、[固体胶](../../asset_sources/objects/glue/000001/)和[胶带](../../asset_sources/objects/tape/000000/)。各目录 README 展示缩略图并简述资产尺寸、组件与关节。原单刚体黑笔保留在 [pen/000000](../../asset_sources/objects/pen/000000/)，本章使用新增的黑色按动笔 pen/000001。
 
 安装 uv、Blender 和 FFmpeg，并确保终端能找到 `uv`、`blender`、`ffmpeg`。本章实测 Blender 4.5.14 LTS。以下命令均在仓库根目录执行：
 
@@ -88,7 +88,7 @@ Object 是父子树的节点。Mesh Object 引用 Mesh 数据块，Empty 没有�
 
 ```bash
 blender -b --python-exit-code 1 -P asset_sources/objects/cabinet/000000/object.py -- --output assets/objects/cabinet/000000
-blender -b --python-exit-code 1 -P asset_sources/objects/pen/000000/object.py -- --output assets/objects/pen/000000
+blender -b --python-exit-code 1 -P asset_sources/objects/pen/000001/object.py -- --output assets/objects/pen/000001
 ```
 
 也可用[批量入口](../../scripts/tutorials/build_modeling_demo.py)生成两个示例：
@@ -105,7 +105,7 @@ blender -b --python-exit-code 1 -P scripts/tutorials/build_modeling_demo.py -- -
 
 ### 4.1 设计 preview.json
 
-编辑资产源目录中的配置：[盒子 preview.json](../../asset_sources/objects/cabinet/000000/preview.json)、[笔 preview.json](../../asset_sources/objects/pen/000000/preview.json)。复现示例可直接使用现有配置。
+编辑资产源目录中的配置：[盒子 preview.json](../../asset_sources/objects/cabinet/000000/preview.json)、[笔 preview.json](../../asset_sources/objects/pen/000001/preview.json)。复现示例可直接使用现有配置。
 
 每个资产提供六视图和四分之三视图。可动资产还须提供能看清活动空间的端点姿态，以及覆盖各关节零位、限位和往返运动的视频。本例三个抽屉依次拉出至 0.173 m，再依次关闭；笔的按钮、笔芯和笔尖沿 −X 一同移动最多 0.003 m，再一起返回，视频演示两次按压与复位。订书机零位已是最大打开姿态，只能下压到金属钉槽接触底座的几何限位，不额外向上展开。
 
@@ -145,13 +145,13 @@ blender -b --python-exit-code 1 -P scripts/tutorials/build_modeling_demo.py -- -
 ```bash
 uv run python scripts/assets/validate_and_preview.py assets/objects/cabinet/000000/object.blend \
   --views asset_sources/objects/cabinet/000000/preview.json
-uv run python scripts/assets/validate_and_preview.py assets/objects/pen/000000/object.blend \
-  --views asset_sources/objects/pen/000000/preview.json
+uv run python scripts/assets/validate_and_preview.py assets/objects/pen/000001/object.blend \
+  --views asset_sources/objects/pen/000001/preview.json
 ```
 
 脚本先清除旧报告，再检查结构、凸性和配置，统计复杂度，并按视频 FPS 摆姿、检测不同刚体间的穿透，通过后渲染。失败时退出非零；查看终端报错及本次报告（若已生成），修正后重跑。没有本次通过报告即未通过验收。
 
-**输出：** 模型旁的 `preview/` 保存报告与预览，图片和视频均为**左视觉、右碰撞**；右侧按刚体着色。
+**输出：** 模型旁的 `preview/` 保存报告与预览，图片和视频均为**左视觉、右碰撞**；右侧按刚体着色。静态 JPG 为 480 × 240；MP4 保持 960 × 480。
 
 | 资产 | 预期输出 |
 | --- | --- |
@@ -199,7 +199,7 @@ uv run python scripts/assets/validate_and_preview.py assets/objects/pen/000000/o
 
 自动报告和人工检查均通过后，按[资产布局](../designs/storage-layout.md)保存：
 
-- `asset_sources/`：生成源码、预览配置、UUID 元数据、简洁 README 与约 600 × 300 的四分之三 JPG 缩略图，随 Git 提交。README 只引用该图，简述外观尺寸、刚体数，以及多组件名称和关节类型、限位、方向；缩略图左视觉、右碰撞，通常约 20 KB，优先保证辨识度。
+- `asset_sources/`：生成源码、预览配置、UUID 元数据、简洁 README 与约 480 × 240 的四分之三 JPG 缩略图，随 Git 提交。README 只引用该图，简述外观尺寸、刚体数，以及多组件名称和关节类型、限位、方向；缩略图左视觉、右碰撞，通常约 20 KB，优先保证辨识度。
 - `assets/`：模型、源码与配置副本、验收报告和预览，不提交。
 - `outputs/`：日志、调试和测试结果，不提交。
 
@@ -208,8 +208,8 @@ uv run python scripts/assets/validate_and_preview.py assets/objects/pen/000000/o
 从完整预览生成黑笔源目录缩略图：
 
 ```bash
-ffmpeg -hide_banner -loglevel error -y -i assets/objects/pen/000000/preview/three_quarter.jpg \
-  -vf scale=600:300 -q:v 2 -frames:v 1 asset_sources/objects/pen/000000/three_quarter.jpg
+ffmpeg -hide_banner -loglevel error -y -i assets/objects/pen/000001/preview/three_quarter.jpg \
+  -vf scale=480:240 -q:v 2 -frames:v 1 asset_sources/objects/pen/000001/three_quarter.jpg
 ```
 
 开发或修改检测器时，可额外运行回归测试；它是代码测试，不替代上述资产验收：

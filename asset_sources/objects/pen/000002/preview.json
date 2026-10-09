@@ -1,0 +1,65 @@
+{
+  "front.jpg": {
+    "camera": [0, -1, 0, 0, 0, 1]
+  },
+  "back.jpg": {
+    "camera": [0, 1, 0, 0, 0, 1]
+  },
+  "left.jpg": {
+    "camera": [-1, 0, 0, 0, 0, 1]
+  },
+  "right.jpg": {
+    "camera": [1, 0, 0, 0, 0, 1]
+  },
+  "top.jpg": {
+    "camera": [0, 0, 1, 0, 1, 0]
+  },
+  "bottom.jpg": {
+    "camera": [0, 0, -1, 0, -1, 0]
+  },
+  "three_quarter.jpg": {
+    "camera": [0.82, -0.82, 0.72, 0, 0, 1]
+  },
+  "press_and_extend.mp4": {
+    "fps": 24,
+    "frames": [
+      {
+        "frame": 0,
+        "camera": [0.3, -1, 0.7, 0, 0, 1],
+        "joints": {
+          "button_press": 0
+        }
+      },
+      {
+        "frame": 12,
+        "joints": {
+          "button_press": -0.003
+        }
+      },
+      {
+        "frame": 24,
+        "joints": {
+          "button_press": 0
+        }
+      },
+      {
+        "frame": 36,
+        "joints": {
+          "button_press": -0.003
+        }
+      },
+      {
+        "frame": 48,
+        "joints": {
+          "button_press": 0
+        }
+      }
+    ]
+  },
+  "pressed_three_quarter.jpg": {
+    "camera": [0.82, -0.82, 0.72, 0, 0, 1],
+    "joints": {
+      "button_press": -0.003
+    }
+  }
+}

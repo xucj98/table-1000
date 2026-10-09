@@ -15,9 +15,9 @@ def main():
     args = parser.parse_args(argv)
     output = args.output.resolve()
     source = Path(__file__).resolve().parents[2] / "asset_sources/objects"
-    for kind in ("cabinet", "pen"):
-        builder = runpy.run_path(str(source / kind / "000000/object.py"))
-        builder["main"](["--output", str(output / "objects" / kind / "000000")])
+    for reference in ("cabinet/000000", "pen/000001"):
+        builder = runpy.run_path(str(source / reference / "object.py"))
+        builder["main"](["--output", str(output / "objects" / reference)])
 
 
 if __name__ == "__main__":

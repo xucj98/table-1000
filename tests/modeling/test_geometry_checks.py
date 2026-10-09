@@ -92,7 +92,7 @@ class AcceptanceTests(unittest.TestCase):
         })
 
     def test_pen_button_and_refill_share_slider(self):
-        path=options.assets_root/'pen/000000/object.blend'
+        path=options.assets_root/'pen/000001/object.blend'
         camera=[.82,-.82,.72,0,0,1]
         with tempfile.TemporaryDirectory(dir=options.output) as tmp:
             for values in ({'button_press':-.003}, {'button_press':0}):
