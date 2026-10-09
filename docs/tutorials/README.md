@@ -10,4 +10,4 @@
 | 04 编写专家轨迹脚本 | 待发布 |
 | 05 渲染专家轨迹视频 | 待发布 |
 
-标准资产验收与预览入口是 [`scripts/assets/validate_and_preview.py`](../../scripts/assets/validate_and_preview.py)，实现位于 `table_1000/modeling/`，回归测试在 `tests/assets/`。单资产定义位于 `asset_sources/objects/`，教程批量入口放在 [`scripts/tutorials/`](../../scripts/tutorials/)。资产按[存储布局](../designs/storage-layout.md)分别保存源码、配置和生成产物。第一章实测环境为 Blender 4.5.14 LTS，后续章节逐块编写与复现。
+标准资产验收与预览入口是 [`scripts/assets/validate_and_preview.py`](../../scripts/assets/validate_and_preview.py)，实现位于 `table_1000/modeling/`，回归测试在对应的 `tests/modeling/`。单资产定义位于 `asset_sources/objects/`，教程批量入口放在 [`scripts/tutorials/`](../../scripts/tutorials/)。资产按[存储布局](../designs/storage-layout.md)分别保存源码、配置和生成产物。第一章实测环境为 Blender 4.5.14 LTS，后续章节逐块编写与复现。

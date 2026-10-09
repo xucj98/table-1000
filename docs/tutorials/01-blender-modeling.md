@@ -169,10 +169,10 @@ done
 
 人工查看本地的 `assets/objects/cabinet/000000/preview/open_three_quarter.jpg`、`open.mp4` 和 `assets/objects/pen/000000/preview/three_quarter.jpg`。这些生成预览不随 Git 提交。碰撞与可见外壳使用匹配的圆角分段；必要的内部几何同属一个刚体，允许自身板件相接或重叠。盒子约 0.286×0.285×0.284 m，笔约 0.1485×0.0120×0.0123 m，均为推断尺寸。
 
-不通过时，把具体帧号、视图及报告反馈给 AI，修改源码后重复建模与验收。检测器的反例测试命令：
+不通过时，把具体帧号、视图及报告反馈给 AI，修改源码后重复建模与验收。以下回归测试包含依赖 Blender 和生成资产的集成检查：
 
 ```bash
-blender -b --python-exit-code 1 -P tests/assets/test_geometry_checks.py -- \
+blender -b --python-exit-code 1 -P tests/modeling/test_geometry_checks.py -- \
   --assets-root assets/objects --output "$OUT/tests"
 ```
 

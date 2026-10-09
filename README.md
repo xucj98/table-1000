@@ -33,7 +33,7 @@ asset_sources/                # 资产生成源码、配置与资源引用
 assets/                       # 本地生成或下载的资产，不提交
 table_1000/                   # 可复用代码
 scripts/                      # 薄入口与教程示例
-tests/                        # 自动化测试
+tests/                        # 以单元测试为主，目录对应 table_1000/
 outputs/                      # 本地生成结果，不提交
 pyproject.toml                 # 包定义与依赖
 uv.lock                       # 核心环境锁文件
