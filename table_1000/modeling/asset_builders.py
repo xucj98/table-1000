@@ -211,9 +211,6 @@ def capped_pen(asset_id, profile):
     barrel_mat = material("Barrel plastic", profile["barrel_color"], 0.35)
     cap_mat = material("Cap plastic", profile["cap_color"], 0.30,
                        transmission=profile["cap_transmission"])
-    clip_mat = material("Pocket clip", profile["clip_color"], 0.32)
-    rear_mat = material("Rear plug", profile["rear_color"], 0.34,
-                        transmission=profile["rear_transmission"])
     ink = material("Writing tip", (0.018, 0.024, 0.020), 0.35)
     pen, cap = body("body", None), body("cap", None)
     pen["asset_id"] = asset_id
@@ -228,8 +225,16 @@ def capped_pen(asset_id, profile):
     tip = seat - g["neck_length_m"]
     cylinder("Barrel", g["barrel_radius_m"], g["barrel_end_x_m"]-seat-0.00005,
              ((seat+0.00005+g["barrel_end_x_m"])/2,0,0), barrel_mat, pen, segments=n)
-    cylinder("Rear plug", g["rear_radius_m"], g["rear_end_x_m"]-g["rear_start_x_m"],
-             ((g["rear_start_x_m"]+g["rear_end_x_m"])/2,0,0), rear_mat, pen, segments=n)
+    if "rear_end_x_m" in g:
+        rear_mat = material("Rear plug", profile["rear_color"], 0.34,
+                            transmission=profile["rear_transmission"])
+        cylinder("Rear plug", g["rear_radius_m"], g["rear_end_x_m"]-g["rear_start_x_m"],
+                 ((g["rear_start_x_m"]+g["rear_end_x_m"])/2,0,0), rear_mat, pen, segments=n)
+    if "label_length_m" in g:
+        label = material("Paper label", profile["label_color"], 0.60)
+        tube("Pale paper label", g["barrel_radius_m"]+.00005, g["barrel_radius_m"],
+             g["label_length_m"], (seat+.0001+g["label_length_m"]/2,0,0),
+             label, pen, segments=n, collision=False)
     cylinder("Neck", g["neck_radius_m"], g["neck_length_m"]+0.00005,
              ((tip+seat+0.00005)/2,0,0), barrel_mat, pen, segments=n)
     cylinder("Nib", g["nib_tip_radius_m"], g["nib_length_m"],
@@ -250,8 +255,10 @@ def capped_pen(asset_id, profile):
          (lip_end/2,0,0), cap_mat, cap, segments=n)
     cylinder("Cap end", g["cap_radius_m"], g["end_thickness_m"],
              (-g["cap_length_m"]+g["end_thickness_m"]/2,0,0), cap_mat, cap, segments=n)
-    box("Cap clip", profile["clip_dimensions_m"], profile["clip_position_m"],
-        clip_mat, cap, bevel=0.0003)
+    if "clip_dimensions_m" in profile:
+        clip_mat = material("Pocket clip", profile["clip_color"], 0.32)
+        box("Cap clip", profile["clip_dimensions_m"], profile["clip_position_m"],
+            clip_mat, cap, bevel=0.0003)
 
 
 def joint(name, kind, fixed, moving, position, limits, rotation=(0, 0, 0)):

@@ -55,9 +55,10 @@ def build():
         ("Right open cubby floor", (.280, .350, .014), (.2835, .005, .225)),
         ("Right cabinet bottom", (.280, .350, .013), (.2835, .005, .008)),
         ("Drawer divider shelf", (.280, .337, .010), (.2835, .009, .115)),
-        ("Left upper rear rail", (.560, .013, .105), (-.147, .177, .376)),
+        ("Left upper rear rail", (.560, .013, .1606666667), (-.147, .177, .3481666667)),
+        ("Left lower rear board", (.560, .013, .1415), (-.147, .177, .07075)),
         ("Right upper rear rail", (.280, .013, .105), (.2835, .177, .376)),
-        ("Right cubby back", (.280, .009, .119), (.2835, .178, .279)),
+        ("Right cubby back", (.280, .009, .092), (.2835, .178, .2655)),
         ("Drawer cabinet back", (.280, .008, .210), (.2835, .177, .114)),
     ]:
         box(name, dimensions, position, wood, housing)

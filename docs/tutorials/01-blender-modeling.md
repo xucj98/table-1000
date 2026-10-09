@@ -27,7 +27,7 @@
 - [盒子](../../asset_sources/objects/cabinet/000000/)：外壳、三个空心抽屉，共四个刚体。
 - [笔](../../asset_sources/objects/pen/000001/)：笔壳与包含按钮、笔芯、笔尖的活动组件，两个刚体与一个滑动关节。
 
-同一照片中的其他文具也提供独立源码：[白黑按动笔](../../asset_sources/objects/pen/000002/)、[订书机](../../asset_sources/objects/stapler/000000/)、[尖嘴胶水](../../asset_sources/objects/glue/000000/)、[固体胶](../../asset_sources/objects/glue/000001/)、[胶带](../../asset_sources/objects/tape/000000/)、[蓝盖粗笔](../../asset_sources/objects/pen/000003/)、[红盖粗笔](../../asset_sources/objects/pen/000004/)、[浅蓝细笔](../../asset_sources/objects/pen/000005/)和[双抽屉木架](../../asset_sources/objects/cabinet/000001/)。各目录 README 展示缩略图并简述资产尺寸、组件与关节。原单刚体黑笔保留在 [pen/000000](../../asset_sources/objects/pen/000000/)，本章使用新增的黑色按动笔 pen/000001。
+同一照片中的其他文具也提供独立源码：[白黑按动笔](../../asset_sources/objects/pen/000002/)、[订书机](../../asset_sources/objects/stapler/000000/)、[尖嘴胶水](../../asset_sources/objects/glue/000000/)、[固体胶](../../asset_sources/objects/glue/000001/)、[胶带](../../asset_sources/objects/tape/000000/)、[蓝色粗笔](../../asset_sources/objects/pen/000003/)、[红色粗笔](../../asset_sources/objects/pen/000004/)、[浅蓝细笔](../../asset_sources/objects/pen/000005/)和[双抽屉木架](../../asset_sources/objects/cabinet/000001/)。各目录 README 展示缩略图并简述资产尺寸、组件与关节。原单刚体黑笔保留在 [pen/000000](../../asset_sources/objects/pen/000000/)，本章使用新增的黑色按动笔 pen/000001。
 
 安装 uv、Blender 和 FFmpeg，并确保终端能找到 `uv`、`blender`、`ffmpeg`。本章实测 Blender 4.5.14 LTS。以下命令均在仓库根目录执行：
 
@@ -66,7 +66,7 @@ Object 是父子树的节点。Mesh Object 引用 Mesh 数据块，Empty 没有�
 
 黑笔采用笔壳和活动组件两个 Compound 根。后部按钮、笔芯和笔尖属于同一个完整活动子树，通过一个 `SLIDER` 连接笔壳并共同运动。笔壳及鼻锥的碰撞由闭合凸扇区构成，保留笔芯运动通道；不把空心壳体变成一个实心凸包。按压与伸缩仅指定几何行程，按压自锁、凸轮和弹簧动力学在下一阶段处理。
 
-三支带盖笔分别保留笔身和空心笔帽两棵顶层刚体子树。笔帽内截面按低面数多边形的内切半径留约 0.2 mm 径向间隙，避免插拔和相对滚转时产生假干涉；细笔使用独立的笔杆、笔尖和短后塞尺寸。木架包括层架外壳与两个空心白面板抽屉，使用两个 `SLIDER`，正值沿 −Y 拉出，行程为 0.208 m。
+三支带盖笔分别保留笔身和空心笔帽两棵顶层刚体子树。红、蓝粗笔的半透明端是可拆帽，浅色标签带和彩色长笔杆属于笔身；细笔也是半透明帽，使用独立的笔杆、笔尖和短后塞尺寸。笔帽内截面按低面数多边形的内切半径留约 0.2 mm 径向间隙，避免插拔和相对滚转时产生假干涉。木架包括有后挡板与后缝的层架外壳和两个空心白面板抽屉，使用两个 `SLIDER`，正值沿 −Y 拉出，行程为 0.208 m。
 
 视觉对象不设刚体；碰撞子对象关闭渲染显示。这些子对象提供碰撞形状，不是独立运动的刚体。使用多个基础形状或凸块保留空腔和活动间隙，不能将整只空心抽屉合并后求一个凸包。视觉与碰撞网格可以不同，但接触表面应匹配。
 
@@ -251,7 +251,7 @@ ffmpeg -hide_banner -loglevel error -y -i assets/objects/cabinet/000000/preview/
   -vf scale=640:320 -q:v 3 -frames:v 1 docs/tutorials/images/cabinet-open.jpg
 ```
 
-开发或修改检测器时，可额外运行回归测试；它是代码测试，不替代上述资产验收。回归使用盒子、黑色按动笔和蓝盖粗笔，先生成这三个资产：
+开发或修改检测器时，可额外运行回归测试；它是代码测试，不替代上述资产验收。回归使用盒子、黑色按动笔和蓝色粗笔，先生成这三个资产：
 
 ```bash
 blender -b --python-exit-code 1 -P scripts/assets/build_assets.py -- --assets cabinet/000000 pen/000001 pen/000003
