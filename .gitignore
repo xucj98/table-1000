@@ -10,10 +10,16 @@ __pycache__/
 .pytest_cache/
 
 # Large or private research artifacts
+assets/
 artifacts/
 outputs/
 checkpoints/
 wandb/
+
+# Python build artifacts
+dist/
+build/
+*.egg-info/
 
 # Editor and operating system residue
 .DS_Store
