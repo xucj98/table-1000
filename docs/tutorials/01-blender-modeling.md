@@ -140,7 +140,7 @@ uv run python scripts/assets/validate_and_preview.py assets/objects/pen/000000/o
   --views asset_sources/objects/pen/000000/preview.json
 ```
 
-脚本先检查结构、凸性和配置，统计复杂度，再按视频 FPS 摆姿、检测不同刚体间的穿透，通过后渲染。失败时退出非零；查看终端报错和本次生成的 `acceptance.json`，修正后重跑。
+脚本先清除旧报告，再检查结构、凸性和配置，统计复杂度，并按视频 FPS 摆姿、检测不同刚体间的穿透，通过后渲染。失败时退出非零；查看终端报错及本次报告（若已生成），修正后重跑。没有本次通过报告即未通过验收。
 
 **输出：** 模型旁的 `preview/` 保存报告与预览，图片和视频均为**左视觉、右碰撞**；右侧按刚体着色。
 
@@ -180,7 +180,7 @@ uv run python scripts/assets/validate_and_preview.py assets/objects/pen/000000/o
 | 凸网格数量 | 8 | 3 |
 | 凸网格顶点/面总数 | 64 / 48 | 96 / 54 |
 
-`status = "passed"` 只说明自动几何检查通过，不代表人工验收完成。运行失败时，不要用输出目录中旧的图片或报告代替本次结果；报告里的 `error` 或 `failures` 可帮助定位出错视图、帧号、刚体和碰撞块。
+`status = "passed"` 只说明自动几何检查通过，不代表人工验收完成。运行失败时，不要用输出目录中旧的图片代替本次结果；终端错误或报告里的 `failures` 可帮助定位问题。
 
 **再人工查看图片和视频。** 在图片查看器中打开两资产的 `preview/`，对照输入照片查看全部 JPG；用视频播放器播放盒子的 `open.mp4`，在全开、全闭和可疑位置暂停检查。
 
