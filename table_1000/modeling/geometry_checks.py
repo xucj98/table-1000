@@ -155,7 +155,7 @@ class GeometryChecks:
                        'ignored_body_pairs':[list(p) for p in sorted(self.ignored)],
                        'penetration_tolerance_m':self.tolerance,'samples':[],'failures':[]}
 
-    def sample(self, output, frame, values):
+    def sample(self, output, frame, values, transforms=None):
         world = {}
         for obj in self.colliders:
             p,n,e = self.local[obj.name]
@@ -176,5 +176,7 @@ class GeometryChecks:
                 failures.append({'output':output,'frame':frame,'bodies':list(owners),'colliders':[a.name,b.name],
                                  'penetration_m':depth})
         self.report['samples'].append({'output':output,'frame':frame,'joints':values.copy(),'penetrations':len(failures)})
+        if transforms:
+            self.report['samples'][-1]['transforms'] = transforms.copy()
         self.report['failures'].extend(failures)
         return failures

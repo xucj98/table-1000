@@ -204,6 +204,56 @@ def label_patch(name, radius, depth, position, surface, parent, angle=math.pi / 
     return obj
 
 
+def capped_pen(asset_id, profile):
+    """Two top-level rigid bodies; authored visual/collision clearance agrees."""
+    g = profile["geometry"]
+    n, seat = g["segments"], g["seat_x_m"]
+    barrel_mat = material("Barrel plastic", profile["barrel_color"], 0.35)
+    cap_mat = material("Cap plastic", profile["cap_color"], 0.30,
+                       transmission=profile["cap_transmission"])
+    clip_mat = material("Pocket clip", profile["clip_color"], 0.32)
+    rear_mat = material("Rear plug", profile["rear_color"], 0.34,
+                        transmission=profile["rear_transmission"])
+    ink = material("Writing tip", (0.018, 0.024, 0.020), 0.35)
+    pen, cap = body("body", None), body("cap", None)
+    pen["asset_id"] = asset_id
+    pen["coordinate_frame_normalized"] = True
+    pen["origin_convention"] = "barrel reference center; cap local origin at mouth"
+    pen["axis_convention"] = "+X rear; -X writing tip and cap removal; Y/Z radial"
+    pen["semantic_front"] = "writing tip at -X"
+    for root, mass in [(pen, profile["body_mass_kg"]), (cap, profile["cap_mass_kg"])]:
+        root.rigid_body.mass = mass
+        root["asset_reference"] = asset_id
+    cap.location.x = seat
+    tip = seat - g["neck_length_m"]
+    cylinder("Barrel", g["barrel_radius_m"], g["barrel_end_x_m"]-seat-0.00005,
+             ((seat+0.00005+g["barrel_end_x_m"])/2,0,0), barrel_mat, pen, segments=n)
+    cylinder("Rear plug", g["rear_radius_m"], g["rear_end_x_m"]-g["rear_start_x_m"],
+             ((g["rear_start_x_m"]+g["rear_end_x_m"])/2,0,0), rear_mat, pen, segments=n)
+    cylinder("Neck", g["neck_radius_m"], g["neck_length_m"]+0.00005,
+             ((tip+seat+0.00005)/2,0,0), barrel_mat, pen, segments=n)
+    cylinder("Nib", g["nib_tip_radius_m"], g["nib_length_m"],
+             (tip-g["nib_length_m"]/2,0,0), ink, pen,
+             radius_end=g["nib_base_radius_m"], segments=n)
+    if profile["metal_point"]:
+        steel = material("Fine steel point", (0.50,0.54,0.57), 0.24, metallic=0.90)
+        cylinder("Fine point", 0.0003, 0.0035, (tip-g["nib_length_m"]-0.00175,0,0),
+                 steel, pen, radius_end=0.0007, segments=12)
+    inner_end = -g["cap_length_m"]+g["end_thickness_m"]
+    lip_end = -g["lip_length_m"]
+    # Circumscribed inner polygons guarantee the requested minimum radial
+    # clearance even when the neck and cap polygons rotate relative to one another.
+    inner = (g["neck_radius_m"]+g["rigid_lip_clearance_m"])/math.cos(math.pi/n)
+    tube("Cap shell", g["cap_radius_m"], g["shell_inner_radius_m"]/math.cos(math.pi/n),
+         lip_end-inner_end, ((inner_end+lip_end)/2,0,0), cap_mat, cap, segments=n)
+    tube("Cap lip", g["cap_radius_m"], inner, -lip_end,
+         (lip_end/2,0,0), cap_mat, cap, segments=n)
+    cylinder("Cap end", g["cap_radius_m"], g["end_thickness_m"],
+             (-g["cap_length_m"]+g["end_thickness_m"]/2,0,0), cap_mat, cap, segments=n)
+    box("Cap clip", profile["clip_dimensions_m"], profile["clip_position_m"],
+        clip_mat, cap, bevel=0.0003)
+
+
 def joint(name, kind, fixed, moving, position, limits, rotation=(0, 0, 0)):
     obj = bpy.data.objects.new(name, None)
     bpy.context.scene.collection.objects.link(obj)
