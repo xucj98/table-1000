@@ -199,7 +199,7 @@ uv run python scripts/assets/validate_and_preview.py assets/objects/pen/000001/o
 
 自动报告和人工检查均通过后，按[资产布局](../designs/storage-layout.md)保存：
 
-- `asset_sources/`：生成源码、预览配置、UUID 元数据、简洁 README 与约 480 × 240 的四分之三 JPG 缩略图，随 Git 提交。README 只引用该图，简述外观尺寸、刚体数，以及多组件名称和关节类型、限位、方向；缩略图左视觉、右碰撞，当前 8 张缩略图大小约 4–12 KB（中位数约 5 KB），优先保证辨识度。
+- `asset_sources/`：生成源码、预览配置、UUID 元数据、简洁 README 与约 480 × 240 的四分之三 JPG 缩略图，随 Git 提交。README 只引用该图，简述外观尺寸、刚体数，以及多组件名称和关节类型、限位、方向；`three_quarter.jpg` 是四分之三视角的 480 × 240 的缩略图，约 5 - 10 KB，左视觉、右碰撞。
 - `assets/`：模型、源码与配置副本、验收报告和预览，不提交。
 - `outputs/`：日志、调试和测试结果，不提交。
 
