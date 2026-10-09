@@ -4,18 +4,30 @@
 
 本阶段同时完成视觉与碰撞形状，验证活动空间和复杂度。质量、摩擦、受力运动及 USDZ 导出在下一章处理。
 
-## 1. 准备输入与环境
-
-**输入：** 下面的单张照片。目标是左上方的三抽屉盒子，以及桌面中下方带银色环的黑色圆珠笔。尺寸和不可见结构由 AI 根据图片与常识推断。
+**输入：单张参考照片。** 尺寸和不可见结构由 AI 根据图片与常识推断。
 
 ![参考照片](images/reference.jpg)
 
-参考图随教程保存；源目录的 README 和四分之三缩略图随 Git 保存，完整模型和预览不进入 Git。示例源码和配置位于：
+**输出：照片中物品的独立资产。** 下图展示开放的抽屉和分离的笔帽；布局用于比较外观，未按实物尺寸等比例摆放。
+
+![资产输出拼图](images/modeling-output.jpg)
+
+三抽屉盒子的几何开合预览（非动力学）：
+
+<video controls preload="none" poster="images/cabinet-open.jpg" src="images/cabinet-open.mp4"></video>
+
+[打开视频](images/cabinet-open.mp4) · [查看静态展开图](images/cabinet-open.jpg)
+
+## 1. 准备输入与环境
+
+本章主要示例是参考照片左上方的三抽屉盒子，以及桌面中下方带银色环的黑色圆珠笔。
+
+参考图与本章开头的紧凑展示附件随教程保存；源目录的 README 和四分之三缩略图随 Git 保存，完整模型和验收预览不进入 Git。示例源码和配置位于：
 
 - [盒子](../../asset_sources/objects/cabinet/000000/)：外壳、三个空心抽屉，共四个刚体。
 - [笔](../../asset_sources/objects/pen/000001/)：笔壳与包含按钮、笔芯、笔尖的活动组件，两个刚体与一个滑动关节。
 
-同一照片中的其他文具也提供独立源码：[白黑按动笔](../../asset_sources/objects/pen/000002/)、[订书机](../../asset_sources/objects/stapler/000000/)、[尖嘴胶水](../../asset_sources/objects/glue/000000/)、[固体胶](../../asset_sources/objects/glue/000001/)和[胶带](../../asset_sources/objects/tape/000000/)。各目录 README 展示缩略图并简述资产尺寸、组件与关节。原单刚体黑笔保留在 [pen/000000](../../asset_sources/objects/pen/000000/)，本章使用新增的黑色按动笔 pen/000001。
+同一照片中的其他文具也提供独立源码：[白黑按动笔](../../asset_sources/objects/pen/000002/)、[订书机](../../asset_sources/objects/stapler/000000/)、[尖嘴胶水](../../asset_sources/objects/glue/000000/)、[固体胶](../../asset_sources/objects/glue/000001/)、[胶带](../../asset_sources/objects/tape/000000/)、[蓝色粗笔](../../asset_sources/objects/pen/000003/)、[红色粗笔](../../asset_sources/objects/pen/000004/)、[浅蓝细笔](../../asset_sources/objects/pen/000005/)和[双抽屉木架](../../asset_sources/objects/cabinet/000001/)。各目录 README 展示缩略图并简述资产尺寸、组件与关节。原单刚体黑笔保留在 [pen/000000](../../asset_sources/objects/pen/000000/)，本章使用新增的黑色按动笔 pen/000001。
 
 安装 uv、Blender 和 FFmpeg，并确保终端能找到 `uv`、`blender`、`ffmpeg`。本章实测 Blender 4.5.14 LTS。以下命令均在仓库根目录执行：
 
@@ -54,6 +66,8 @@ Object 是父子树的节点。Mesh Object 引用 Mesh 数据块，Empty 没有�
 
 黑笔采用笔壳和活动组件两个 Compound 根。后部按钮、笔芯和笔尖属于同一个完整活动子树，通过一个 `SLIDER` 连接笔壳并共同运动。笔壳及鼻锥的碰撞由闭合凸扇区构成，保留笔芯运动通道；不把空心壳体变成一个实心凸包。按压与伸缩仅指定几何行程，按压自锁、凸轮和弹簧动力学在下一阶段处理。
 
+三支带盖笔分别保留笔身和空心笔帽两棵顶层刚体子树。红、蓝粗笔的半透明端是可拆帽，浅色标签带和彩色长笔杆属于笔身；细笔也是半透明帽，使用独立的笔杆、笔尖和短后塞尺寸。笔帽内截面按低面数多边形的内切半径留约 0.2 mm 径向间隙，避免插拔和相对滚转时产生假干涉。木架包括有后挡板与后缝的层架外壳和两个空心白面板抽屉，使用两个 `SLIDER`，正值沿 −Y 拉出，行程为 0.208 m。
+
 视觉对象不设刚体；碰撞子对象关闭渲染显示。这些子对象提供碰撞形状，不是独立运动的刚体。使用多个基础形状或凸块保留空腔和活动间隙，不能将整只空心抽屉合并后求一个凸包。视觉与碰撞网格可以不同，但接触表面应匹配。
 
 | 信息 | 脚本约定 |
@@ -71,7 +85,7 @@ Object 是父子树的节点。Mesh Object 引用 Mesh 数据块，Empty 没有�
 
 ### 局部坐标与复杂度
 
-按物体常识定义原点和局部坐标，所有部件共用明确的资产参考系。预览使用带 `asset_id` 的顶层对象作为参考系；没有该对象时使用场景坐标系。
+一个资产保存在一个 `.blend` 中，Blender 世界坐标系就是本资产的局部坐标系。按物体常识定义原点和轴向，所有部件共用该坐标系；对象自身的局部坐标或 `asset_id` 不改变预览的参考系。带盖笔的 `body` 和 `cap` 是两棵顶层刚体子树，无共同父对象或永久关节。
 
 | 资产 | 原点和坐标 |
 | --- | --- |
@@ -135,8 +149,22 @@ blender -b --python-exit-code 1 -P scripts/assets/build_assets.py -- --assets ca
 - `camera`：前三个数是资产局部系中从物体指向相机的方向，后三个数是画面向上的参考方向；两者不能平行。相机正交投影、自动居中，动画使用整段共同画幅。
 - 源配置的每个 `camera` 数组保持单行，方便比较视角。
 - `joints`：键为 Blender 约束对象名。每张图或每段视频从零位开始，未指定的关节默认 0。
-- `frames`：首帧编号为 0，后续编号严格递增。相机和关节值在线性插值前依次合并：省略项沿用上一关键帧，`joints` 按名称合并，空 `{}` 不表示复位；复位须显式写 0。首帧必须给相机。
+- `transforms`：按刚体根名称指定 `[x, y, z, w, qx, qy, qz]`。平移单位为米，四元数为 wxyz，输入会标准化。变换相对保存初始姿态，平移和旋转轴均用 Blender 世界坐标（本资产局部坐标）表示；旋转绕所选刚体根的初始原点，整个子树一起运动。每个样本先恢复保存姿态，未指定的刚体默认零平移、单位旋转。与 `joints` 同用时先摆关节，再施加各刚体变换。
+- `frames`：首帧编号为 0，后续编号严格递增。省略项沿用上一关键帧；`joints` 按名称合并，`transforms` 按刚体名称保留完整七值姿态，空 `{}` 不表示复位。相机、关节和平移线性插值，旋转使用最短路径 SLERP。首帧必须给相机，复位须显式写 0 或单位姿态。
 - `fps`：视频帧率，也是碰撞粗测采样率；示例使用 24。包含首尾帧，0–48 共 49 帧。未知关节、越界值或插值后无效的相机方向会报错。
+
+带盖笔的静态分离图和拔出/摆放视频使用相同的 `transforms` 字段，例如：
+
+```json
+{
+  "separated_three_quarter.jpg": {
+    "camera": [0.82, -0.82, 0.72, 0, 0, 1],
+    "transforms": {"cap": [-0.055, -0.045, 0, 0.70710678, 0, 0, -0.70710678]}
+  }
+}
+```
+
+该姿态先向 −X 拔出笔帽，再移向 −Y 并转向；完整配置通过关键帧分开这两段运动。这是几何姿态展示，不模拟手、卡扣或受力。粗测、相机取景和渲染使用同一变换后的几何，预览不回写保存模型。
 
 六视图为前 −Y、后 +Y、左 −X、右 +X、顶 +Z、底 −Z；四分之三使用 (+0.82, −0.82, +0.72)。画面向上通常取 +Z，顶视图取 +Y，底视图取 −Y。视图定义始终绑定资产局部坐标，例如笔的左视图看向笔尖。
 
@@ -214,9 +242,10 @@ ffmpeg -hide_banner -loglevel error -y -i assets/objects/pen/000001/preview/thre
   -vf scale=480:240 -q:v 2 -frames:v 1 asset_sources/objects/pen/000001/three_quarter.jpg
 ```
 
-开发或修改检测器时，可额外运行回归测试；它是代码测试，不替代上述资产验收：
+开发或修改检测器时，可额外运行回归测试；它是代码测试，不替代上述资产验收。回归使用盒子、黑色按动笔和蓝色粗笔，先生成这三个资产：
 
 ```bash
+blender -b --python-exit-code 1 -P scripts/assets/build_assets.py -- --assets cabinet/000000 pen/000001 pen/000003
 blender -b --python-exit-code 1 -P tests/modeling/test_geometry_checks.py -- \
   --assets-root assets/objects --output outputs/blender-modeling/tests
 ```

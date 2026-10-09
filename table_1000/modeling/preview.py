@@ -50,6 +50,37 @@ def pose_values(value):
     return {name: finite_number(q, f"joint {name}") for name, q in value.items()}
 
 
+def transform_values(value):
+    result = {}
+    for name, pose in value.items():
+        if len(pose) != 7:
+            raise ValueError(f"transform {name} requires [x,y,z,w,qx,qy,qz]")
+        pose = [finite_number(v, f"transform {name}") for v in pose]
+        length = math.sqrt(sum(v * v for v in pose[3:]))
+        if length == 0:
+            raise ValueError(f"transform {name} has a zero quaternion")
+        result[name] = pose[:3] + [v / length for v in pose[3:]]
+    return result
+
+
+IDENTITY_TRANSFORM = [0, 0, 0, 1, 0, 0, 0]
+
+
+def interpolate_transform(a, b, t):
+    qa, qb = a[3:], b[3:]
+    dot = sum(x * y for x, y in zip(qa, qb))
+    if dot < 0:
+        qb, dot = [-v for v in qb], -dot
+    if dot > 0.9995:
+        q = [(1 - t) * x + t * y for x, y in zip(qa, qb)]
+    else:
+        angle = math.acos(min(1, dot))
+        q = [(math.sin((1 - t) * angle) * x + math.sin(t * angle) * y) / math.sin(angle)
+             for x, y in zip(qa, qb)]
+    length = math.sqrt(sum(v * v for v in q))
+    return [(1 - t) * x + t * y for x, y in zip(a[:3], b[:3])] + [v / length for v in q]
+
+
 def read_views(path):
     entries = json.loads(path.read_text(encoding="utf-8")) if path else DEFAULT_VIEWS
     if not isinstance(entries, dict) or not entries:
@@ -61,10 +92,11 @@ def read_views(path):
         if not isinstance(entry, dict):
             raise ValueError(f"{name} must be an object")
         if name.endswith(".jpg"):
-            if set(entry) - {"camera", "joints"}:
+            if set(entry) - {"camera", "joints", "transforms"}:
                 raise ValueError(f"unsupported fields in {name}")
             result[name] = [{"frame": 0, "camera": camera_values(entry.get("camera")),
-                             "joints": pose_values(entry.get("joints", {}))}]
+                             "joints": pose_values(entry.get("joints", {})),
+                             "transforms": transform_values(entry.get("transforms", {}))}]
         elif name.endswith(".mp4"):
             if set(entry) != {"fps", "frames"}:
                 raise ValueError(f"{name} requires fps and frames")
@@ -77,9 +109,10 @@ def read_views(path):
             expanded = []
             camera = None
             joints = {}
+            transforms = {}
             previous = -1
             for keyframe in frames:
-                if not isinstance(keyframe, dict) or set(keyframe) - {"frame", "camera", "joints"}:
+                if not isinstance(keyframe, dict) or set(keyframe) - {"frame", "camera", "joints", "transforms"}:
                     raise ValueError(f"{name}: invalid keyframe")
                 frame = keyframe.get("frame")
                 if isinstance(frame, bool) or not isinstance(frame, int) or frame <= previous:
@@ -90,7 +123,9 @@ def read_views(path):
                 if camera is None:
                     raise ValueError(f"{name}: first keyframe needs camera")
                 joints.update(pose_values(keyframe.get("joints", {})))
-                expanded.append({"frame": frame, "camera": camera, "joints": joints.copy()})
+                transforms.update(transform_values(keyframe.get("transforms", {})))
+                expanded.append({"frame": frame, "camera": camera, "joints": joints.copy(),
+                                 "transforms": transforms.copy()})
                 previous = frame
             result[name] = (fps, expanded)
         else:
@@ -106,7 +141,11 @@ def interpolate(keys, frame):
     names = before["joints"].keys() | after["joints"].keys()
     joints = {name: (1 - t) * before["joints"].get(name, 0.0) + t * after["joints"].get(name, 0.0)
               for name in names}
-    return {"frame": frame, "camera": camera, "joints": joints}
+    names = before.get("transforms", {}).keys() | after.get("transforms", {}).keys()
+    transforms = {name: interpolate_transform(before.get("transforms", {}).get(name, IDENTITY_TRANSFORM),
+                                             after.get("transforms", {}).get(name, IDENTITY_TRANSFORM), t)
+                  for name in names}
+    return {"frame": frame, "camera": camera, "joints": joints, "transforms": transforms}
 
 
 def configure_cycles(scene, requested):
@@ -144,7 +183,7 @@ def run_worker(blend, views, output, check_only=False, device="auto"):
     import bpy
     import numpy as np
     from table_1000.modeling.geometry_checks import GeometryChecks
-    from mathutils import Matrix, Vector
+    from mathutils import Matrix, Quaternion, Vector
 
     output.mkdir(parents=True, exist_ok=True)
     (output / "acceptance.json").unlink(missing_ok=True)
@@ -156,12 +195,6 @@ def run_worker(blend, views, output, check_only=False, device="auto"):
     bpy.context.view_layer.update()
 
     checks = GeometryChecks()
-    roots = [obj for obj in scene.objects if obj.parent is None and obj.get("asset_id")]
-    if len(roots) > 1:
-        raise ValueError("multiple asset roots; specify one local reference frame")
-    root = roots[0] if roots else None
-    asset_frame = root.matrix_world.copy() if root else Matrix.Identity(4)
-    asset_inverse = asset_frame.inverted()
     meshes = checks.visuals + checks.colliders
     if not meshes:
         raise ValueError("asset contains no visible meshes")
@@ -177,7 +210,10 @@ def run_worker(blend, views, output, check_only=False, device="auto"):
             joints[obj.name] = (obj, c, limits if enabled else None)
     rest = {obj.name: obj.matrix_world.copy() for obj in scene.objects}
 
-    def pose(values):
+    bodies = {obj.name: obj for obj in checks.bodies}
+
+    def pose(values, transforms=None):
+        transforms = transforms or {}
         unknown = values.keys() - joints.keys()
         if unknown:
             raise ValueError(f"unknown joints: {sorted(unknown)}")
@@ -185,8 +221,11 @@ def run_worker(blend, views, output, check_only=False, device="auto"):
             q = values.get(name, 0.0)
             if limits and not limits[0] - 1e-6 <= q <= limits[1] + 1e-6:
                 raise ValueError(f"{name}={q} outside [{limits[0]}, {limits[1]}]")
-        for name, (joint, c, _) in joints.items():
-            c.object2.matrix_world = rest[c.object2.name]
+        unknown = transforms.keys() - bodies.keys()
+        if unknown:
+            raise ValueError(f"unknown bodies: {sorted(unknown)}")
+        for obj in bodies.values():
+            obj.matrix_world = rest[obj.name]
         bpy.context.view_layer.update()
         pending = set(joints)
         while pending:
@@ -210,14 +249,21 @@ def run_worker(blend, views, output, check_only=False, device="auto"):
                 progressed = True
             if not progressed:
                 raise ValueError("joint dependency cycle")
+        for name, transform in transforms.items():
+            pivot = rest[name].translation
+            rotation = Quaternion(transform[3:]).to_matrix().to_4x4()
+            delta = (Matrix.Translation(Vector(transform[:3]) + pivot)
+                     @ rotation @ Matrix.Translation(-pivot))
+            bodies[name].matrix_world = delta @ bodies[name].matrix_world
+        bpy.context.view_layer.update()
 
     output.mkdir(parents=True, exist_ok=True)
     report_path = output / "acceptance.json"
     for output_name, entry in views.items():
         states = entry if output_name.endswith(".jpg") else [interpolate(entry[1], i) for i in range(entry[1][-1]["frame"]+1)]
         for state in states:
-            pose(state["joints"])
-            checks.sample(output_name, state["frame"], state["joints"])
+            pose(state["joints"], state.get("transforms"))
+            checks.sample(output_name, state["frame"], state["joints"], state.get("transforms"))
     checks.report["timings_seconds"] = {"validation": round(time.perf_counter() - started, 3)}
     checks.report["status"] = "failed" if checks.report["failures"] else "passed"
     report_path.write_text(json.dumps(checks.report, indent=2)+"\n", encoding="utf-8")
@@ -230,7 +276,7 @@ def run_worker(blend, views, output, check_only=False, device="auto"):
 
     def corners():
         depsgraph = bpy.context.evaluated_depsgraph_get()
-        return [asset_inverse @ obj.evaluated_get(depsgraph).matrix_world @ Vector(corner)
+        return [obj.evaluated_get(depsgraph).matrix_world @ Vector(corner)
                 for obj in meshes for corner in obj.evaluated_get(depsgraph).bound_box]
 
     def box(points):
@@ -278,8 +324,8 @@ def run_worker(blend, views, output, check_only=False, device="auto"):
         data.size = default_span * 1.5
         light = bpy.data.objects.new(name, data)
         scene.collection.objects.link(light)
-        light.location = asset_frame @ (default_center + Vector(offset) * default_span)
-        light.rotation_euler = (asset_frame.to_quaternion() @ (-Vector(offset))).to_track_quat("-Z", "Y").to_euler()
+        light.location = default_center + Vector(offset) * default_span
+        light.rotation_euler = (-Vector(offset)).to_track_quat("-Z", "Y").to_euler()
 
     def camera_rotation(values):
         direction = Vector(values[:3]).normalized()
@@ -290,7 +336,7 @@ def run_worker(blend, views, output, check_only=False, device="auto"):
     def frame_camera(values, center, scale, span):
         rotation = camera_rotation(values)
         direction = Vector(values[:3]).normalized()
-        camera.matrix_world = asset_frame @ Matrix.Translation(center + direction * span * 3) @ rotation.to_4x4()
+        camera.matrix_world = Matrix.Translation(center + direction * span * 3) @ rotation.to_4x4()
         camera.data.ortho_scale = scale
         camera.data.clip_start = max(span * 0.001, 1e-5)
         camera.data.clip_end = max(span * 20, 1)
@@ -337,7 +383,7 @@ def run_worker(blend, views, output, check_only=False, device="auto"):
     for name, entry in views.items():
         if name.endswith(".jpg"):
             state = entry[0]
-            pose(state["joints"])
+            pose(state["joints"], state.get("transforms"))
             points = corners()
             low, high = box(points)
             center = (low + high) / 2
@@ -353,14 +399,14 @@ def run_worker(blend, views, output, check_only=False, device="auto"):
             frames = [interpolate(keys, index) for index in range(keys[-1]["frame"] + 1)]
             all_points = []
             for state in frames:
-                pose(state["joints"])
+                pose(state["joints"], state.get("transforms"))
                 all_points.extend(corners())
             low, high = box(all_points)
             center = (low + high) / 2
             span = max(high - low)
             scale = 0.0
             for state in frames:
-                pose(state["joints"])
+                pose(state["joints"], state.get("transforms"))
                 rotation = camera_rotation(state["camera"])
                 projected = [rotation.transposed() @ (point - center) for point in corners()]
                 a, b = box(projected)
@@ -370,7 +416,7 @@ def run_worker(blend, views, output, check_only=False, device="auto"):
             with tempfile.TemporaryDirectory(prefix="preview-frames-", dir=output) as temp:
                 temporary = Path(temp)
                 for state in frames:
-                    pose(state["joints"])
+                    pose(state["joints"], state.get("transforms"))
                     frame_camera(state["camera"], center, scale * 1.28, span)
                     render_pair(temporary / f"{state['frame']:06d}.bmp")
                 subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-framerate", str(fps),

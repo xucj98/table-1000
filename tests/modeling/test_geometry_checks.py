@@ -1,6 +1,6 @@
 """Regression checks for geometric rejection, joint poses and sparse keyframes.
 
-Run inside Blender; requires --assets-root pointing to generated example assets.
+Run inside Blender; --assets-root needs cabinet/000000, pen/000001 and pen/000003.
 """
 import argparse
 import json
@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 import bpy
 import numpy as np
 from mathutils import Matrix, Vector
@@ -49,6 +50,68 @@ class AcceptanceTests(unittest.TestCase):
         self.assertTrue(checks.sample('intentional_overlap',1,{}))
         checks.ignored={tuple(sorted((a.name,b.name))) for a in checks.bodies for b in checks.bodies if a!=b}
         self.assertFalse(checks.sample('explicitly_filtered',1,{}))
+
+    def test_transform_sparse_slerp(self):
+        data = {'move.mp4': {'fps': 24, 'frames': [
+            {'frame': 0, 'camera': [1,-1,1,0,0,1]},
+            {'frame': 10, 'transforms': {'cap': [1,0,0,0,0,0,2]}},
+            {'frame': 20, 'transforms': {'body': [0,2,0,1,0,0,0]}},
+            {'frame': 30, 'transforms': {'cap': [1,0,0,0,0,0,-1]}}]}}
+        with tempfile.TemporaryDirectory(dir=options.output) as tmp:
+            p = Path(tmp)/'views.json'; p.write_text(json.dumps(data))
+            _, keys = read_views(p)['move.mp4']
+            self.assertEqual(keys[2]['transforms']['cap'], [1,0,0,0,0,0,1])
+            halfway = interpolate(keys,5)['transforms']['cap']
+            self.assertAlmostEqual(halfway[0], .5)
+            np.testing.assert_allclose(halfway[3:], [2**-.5,0,0,2**-.5])
+            # Opposite quaternion signs encode the same rotation.
+            np.testing.assert_allclose(interpolate(keys,25)['transforms']['cap'][3:], [0,0,0,1])
+
+    def test_transform_subtree_saved_pivot_and_reset(self):
+        path = options.assets_root/'pen/000003/object.blend'
+        camera = [1,-1,1,0,0,1]
+        cap_pose = [-.055,-.045,0,2**-.5,0,0,-2**-.5]
+        views = {'moved.jpg': [{'frame':0, 'camera':camera, 'joints':{},
+                               'transforms':{'body':[.2,0,0,1,0,0,0], 'cap':cap_pose}}],
+                 'reset.jpg': [{'frame':0, 'camera':camera, 'joints':{}}]}
+        initial = {}
+        original_sample = GeometryChecks.sample
+        def capture(checks, output, frame, values, transforms=None):
+            body, cap = bpy.data.objects['body'], bpy.data.objects['cap']
+            self.assertIsNone(body.parent); self.assertIsNone(cap.parent)
+            for obj in [body, cap] + checks.visuals + checks.colliders:
+                owner = obj.name if obj in (body, cap) else checks.owner[obj.name]
+                delta = Matrix.Identity(4)
+                if output == 'moved.jpg':
+                    if owner == 'body':
+                        delta = Matrix.Translation((.2,0,0))
+                    else:
+                        pivot = initial['cap'].translation
+                        delta = (Matrix.Translation(pivot + Vector(cap_pose[:3]))
+                                 @ Matrix.Rotation(-np.pi/2,4,'Z') @ Matrix.Translation(-pivot))
+                np.testing.assert_allclose(obj.matrix_world, delta @ initial[obj.name], atol=1e-6)
+            return original_sample(checks, output, frame, values, transforms)
+        with tempfile.TemporaryDirectory(dir=options.output) as tmp, patch.object(GeometryChecks,'sample',capture):
+            # asset_id is identity only: a non-unit body frame must not rotate world-space axes.
+            bpy.ops.wm.open_mainfile(filepath=str(path))
+            bpy.context.scene.rigidbody_world.enabled = False
+            frame = Matrix.Translation((.1,.2,.3)) @ Matrix.Rotation(np.pi/2,4,'Z')
+            for name in ('body', 'cap'):
+                obj = bpy.data.objects[name]
+                obj.matrix_world = frame @ obj.matrix_world
+            bpy.context.view_layer.update()
+            initial.update({obj.name: obj.matrix_world.copy() for obj in bpy.context.scene.objects})
+            saved_path = Path(tmp)/'world-frame.blend'
+            bpy.ops.wm.save_as_mainfile(filepath=str(saved_path))
+            run_worker(saved_path, views, Path(tmp)/'preview', True)
+        # Rotating an inserted cap sideways must be seen by the collision check.
+        overlapping = {'overlap.jpg': [{'frame':0, 'camera':camera, 'joints':{},
+                                       'transforms':{'cap':[0,0,0,2**-.5,0,0,2**-.5]}}]}
+        with tempfile.TemporaryDirectory(dir=options.output) as tmp:
+            with self.assertRaisesRegex(ValueError, 'Collision coarse check failed'):
+                run_worker(path, overlapping, Path(tmp), True)
+            report = json.loads((Path(tmp)/'acceptance.json').read_text())
+            self.assertTrue(report['failures'])
 
     def test_containment_and_touch(self):
         normals=np.eye(3);edges=np.eye(3)
