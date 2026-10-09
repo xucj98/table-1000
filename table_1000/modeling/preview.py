@@ -405,31 +405,38 @@ def main(argv=None):
         argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else sys.argv[1:]
     args = parser.parse_args(argv)
     blend = args.object.resolve()
-    if not blend.is_file():
-        parser.error(f"missing Blender file: {blend}")
     views_path = args.views.resolve() if args.views else None
-    if views_path and not views_path.is_file():
-        parser.error(f"missing views file: {views_path}")
-    views = read_views(views_path)
     output = (args.output or blend.parent / "preview").resolve()
-    if args.worker:
-        try:
+    output.mkdir(parents=True, exist_ok=True)
+    path = output / "acceptance.json"
+    path.write_text(json.dumps({"status": "running"}) + "\n", encoding="utf-8")
+    try:
+        if not blend.is_file():
+            raise ValueError(f"missing Blender file: {blend}")
+        if views_path and not views_path.is_file():
+            raise ValueError(f"missing views file: {views_path}")
+        views = read_views(views_path)
+        if args.worker:
             run_worker(blend, views, output, args.check_only, args.device)
-        except Exception as exc:
-            output.mkdir(parents=True, exist_ok=True)
-            path = output / "acceptance.json"
+        else:
+            blender = shutil.which("blender")
+            if not blender:
+                raise ValueError("blender not found on PATH")
+            subprocess.run([blender, "-b", "--python-exit-code", "1", "-P", str(Path(__file__).resolve()),
+                            "--", str(blend), "--output", str(output), "--worker", "--device", args.device,
+                            *(["--views", str(views_path)] if views_path else []),
+                            *(["--check-only"] if args.check_only else [])], check=True)
+    except Exception as exc:
+        try:
             report = json.loads(path.read_text()) if path.exists() else {}
-            report.update(status="failed", error=str(exc))
-            path.write_text(json.dumps(report, indent=2)+"\n", encoding="utf-8")
-            raise
-    else:
-        blender = shutil.which("blender")
-        if not blender:
-            parser.error("blender not found on PATH")
-        subprocess.run([blender, "-b", "--python-exit-code", "1", "-P", str(Path(__file__).resolve()),
-                        "--", str(blend), "--output", str(output), "--worker", "--device", args.device,
-                        *(["--views", str(views_path)] if views_path else []),
-                        *(["--check-only"] if args.check_only else [])], check=True)
+        except (ValueError, OSError):
+            report = {}
+        if not isinstance(report, dict):
+            report = {}
+        report["status"] = "failed"
+        report.setdefault("error", str(exc))
+        path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        raise
 
 
 if __name__ == "__main__":
