@@ -13,7 +13,7 @@
 参考图随教程保存；源目录的 README 和四分之三缩略图随 Git 保存，完整模型和预览不进入 Git。示例源码和配置位于：
 
 - [盒子](../../asset_sources/objects/cabinet/000000/)：外壳、三个空心抽屉，共四个刚体。
-- [笔](../../asset_sources/objects/pen/000000/)：笔壳、按钮、笔芯，三个刚体与两个滑动关节。
+- [笔](../../asset_sources/objects/pen/000000/)：笔壳与包含按钮、笔芯、笔尖的活动组件，两个刚体与一个滑动关节。
 
 同一照片中的其他文具也提供独立源码：[白黑按动笔](../../asset_sources/objects/pen/000001/)、[订书机](../../asset_sources/objects/stapler/000000/)、[尖嘴胶水](../../asset_sources/objects/glue/000000/)、[固体胶](../../asset_sources/objects/glue/000001/)和[胶带](../../asset_sources/objects/tape/000000/)。各目录 README 说明结构和生成命令。
 
@@ -52,7 +52,7 @@ Object 是父子树的节点。Mesh Object 引用 Mesh 数据块，Empty 没有�
 三个独立关节对象：分别引用外壳根和对应抽屉根
 ```
 
-黑笔采用独立的笔壳、按钮、笔芯三个 Compound 根，按钮和笔芯各通过一个 `SLIDER` 连接笔壳。笔壳及鼻锥的碰撞由闭合凸扇区构成，保留笔芯运动通道；不把空心壳体变成一个实心凸包。按压与伸缩仅指定几何行程，按压自锁、凸轮和弹簧动力学在下一阶段处理。
+黑笔采用笔壳和活动组件两个 Compound 根。后部按钮、笔芯和笔尖属于同一个完整活动子树，通过一个 `SLIDER` 连接笔壳并共同运动。笔壳及鼻锥的碰撞由闭合凸扇区构成，保留笔芯运动通道；不把空心壳体变成一个实心凸包。按压与伸缩仅指定几何行程，按压自锁、凸轮和弹簧动力学在下一阶段处理。
 
 视觉对象不设刚体；碰撞子对象关闭渲染显示。这些子对象提供碰撞形状，不是独立运动的刚体。使用多个基础形状或凸块保留空腔和活动间隙，不能将整只空心抽屉合并后求一个凸包。视觉与碰撞网格可以不同，但接触表面应匹配。
 
@@ -77,6 +77,8 @@ Object 是父子树的节点。Mesh Object 引用 Mesh 数据块，Empty 没有�
 | --- | --- |
 | 盒子 | 外壳底面中心；+X 宽度、+Y 背面、+Z 向上；抽屉沿 −Y 拉出 |
 | 笔 | 笔杆中点下方；+X 指向按钮、+Z 向上，笔尖朝 −X |
+| 胶水与固体胶 | 直立底面中心；+Z 指向尖嘴或白盖，+Y 指向背面，标签朝正面 −Y |
+| 订书机 | 底座底面中心；+X 指向后铰链，+Y 宽度，+Z 向上；上部零位最大打开，只沿 +Y 轴向下按压 |
 
 省略不影响操作的装饰细节，优先使用低面数板件和低分段曲面。验收脚本只报告视觉三角数、碰撞形状数、凸网格顶点和面数总和，不据此判定通过或失败；人工查看时结合用途判断是否需要简化。
 
@@ -105,7 +107,9 @@ blender -b --python-exit-code 1 -P scripts/tutorials/build_modeling_demo.py -- -
 
 编辑资产源目录中的配置：[盒子 preview.json](../../asset_sources/objects/cabinet/000000/preview.json)、[笔 preview.json](../../asset_sources/objects/pen/000000/preview.json)。复现示例可直接使用现有配置。
 
-每个资产提供六视图和四分之三视图。可动资产还须提供能看清活动空间的展开姿态，以及覆盖各关节零位、限位和往返运动的视频。本例三个抽屉依次拉出至 0.173 m，再依次关闭；笔的按钮和笔芯各沿 −X 移动最多 0.003 m，视频覆盖按压、伸芯、按钮释放、再次按压收芯与按钮复位。笔芯在按钮释放后保留位置是预览明确指定的姿态，不代表已实现机械自锁。
+每个资产提供六视图和四分之三视图。可动资产还须提供能看清活动空间的端点姿态，以及覆盖各关节零位、限位和往返运动的视频。本例三个抽屉依次拉出至 0.173 m，再依次关闭；笔的按钮、笔芯和笔尖沿 −X 一同移动最多 0.003 m，再一起返回，视频演示两次按压与复位。订书机零位已是最大打开姿态，只能下压到金属钉槽接触底座的几何限位，不额外向上展开。
+
+订书机上盖下方的金属钉槽包含底板、两侧壁、前挡和连接支架，视觉与碰撞均保留容钉空腔。当前预览只指定关节姿态；订书机的弹簧回弹和两笔的弹簧、自锁动力学留在下一阶段。
 
 键为输出文件名：`.jpg` 表示一张图，`.mp4` 表示由关键帧插值的视频。下面是单个抽屉的配置片段；完整配置还应覆盖其他视图和抽屉：
 
@@ -152,7 +156,7 @@ uv run python scripts/assets/validate_and_preview.py assets/objects/pen/000000/o
 | 资产 | 预期输出 |
 | --- | --- |
 | 盒子 | `acceptance.json`、六视图与四分之三 JPG、`open_three_quarter.jpg`、`open.mp4`（24 FPS，73 帧） |
-| 笔 | `acceptance.json`、六视图与四分之三 JPG、`extended_three_quarter.jpg`、`press_and_extend.mp4`（24 FPS，49 帧） |
+| 笔 | `acceptance.json`、六视图与四分之三 JPG、`pressed_three_quarter.jpg`、`press_and_extend.mp4`（24 FPS，49 帧） |
 
 常用参数：
 
@@ -172,7 +176,7 @@ uv run python scripts/assets/validate_and_preview.py assets/objects/pen/000000/o
 | `status`、`failures` | `status = "passed"` 且 `failures = []` |
 | `samples` | 覆盖配置中的所有图片和视频帧；盒子 81 个样本、笔 57 个样本，各样本 `penetrations = 0` |
 | `complexity` | 仅报告各项总量，基础形状和凸网格分别统计；不参与通过或失败判定 |
-| `bodies`、`joints` | 盒子 4 个刚体、3 个滑动关节，限位约 [0, 0.173] m；笔 3 个刚体、2 个滑动关节，限位约 [−0.003, 0] m |
+| `bodies`、`joints` | 盒子 4 个刚体、3 个滑动关节，限位约 [0, 0.173] m；笔 2 个刚体、1 个滑动关节，限位约 [−0.003, 0] m |
 | `ignored_body_pairs` | 本例为空；其他资产如有排除项，须确认是有意设置 |
 | `preview.status` | 完整渲染后为 `"completed"`；仅运行 `--check-only` 不能完成交付验收 |
 
@@ -195,7 +199,7 @@ uv run python scripts/assets/validate_and_preview.py assets/objects/pen/000000/o
 
 自动报告和人工检查均通过后，按[资产布局](../designs/storage-layout.md)保存：
 
-- `asset_sources/`：生成源码、预览配置、UUID 元数据、简洁 README 与约 600 × 300 的四分之三 JPG 缩略图，随 Git 提交。README 说明结构、坐标、关节和复现命令；缩略图左视觉、右碰撞，通常约 20 KB，优先保证辨识度。
+- `asset_sources/`：生成源码、预览配置、UUID 元数据、简洁 README 与约 600 × 300 的四分之三 JPG 缩略图，随 Git 提交。README 只引用该图，简述外观尺寸、刚体数，以及多组件名称和关节类型、限位、方向；缩略图左视觉、右碰撞，通常约 20 KB，优先保证辨识度。
 - `assets/`：模型、源码与配置副本、验收报告和预览，不提交。
 - `outputs/`：日志、调试和测试结果，不提交。
 

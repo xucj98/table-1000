@@ -1,4 +1,4 @@
-"""White/black retractable pen: shell, push button and movable refill.
+"""White/black retractable pen: shell and one moving button/refill body.
 
 Local +X points to the button; tip is -X; barrel center is Z=0.005 m.
 The black rear housing is fixed; only its small end button translates.
@@ -27,13 +27,11 @@ def build():
          outer_end=0.0049, inner_end=0.0028)
     tube("Black shoulder", 0.0055, 0.0028, 0.003, (0.055, 0, 0.005), black, shell,
          collision=False)
-    button = body("White black pen button", root)
-    cylinder("Black push button", 0.003, 0.007, (0.0715, 0, 0.005), black, button)
-    refill = body("White black pen refill", root)
-    cylinder("Refill shaft", 0.0008, 0.138, (-0.007, 0, 0.005), ink, refill)
-    cylinder("Fine ballpoint", 0.0003, 0.010, (-0.0813, 0, 0.005), metal, refill)
-    joint("button_press", "SLIDER", shell, button, (0.068, 0, 0.005), (-0.003, 0))
-    joint("refill_extend", "SLIDER", shell, refill, (-0.076, 0, 0.005), (-0.003, 0))
+    moving = body("White black pen button and refill", root)
+    cylinder("Black push button", 0.003, 0.007, (0.0715, 0, 0.005), black, moving)
+    cylinder("Refill shaft", 0.0008, 0.144, (-0.004, 0, 0.005), ink, moving)
+    cylinder("Fine ballpoint", 0.0003, 0.010, (-0.0813, 0, 0.005), metal, moving)
+    joint("button_press", "SLIDER", shell, moving, (0.068, 0, 0.005), (-0.003, 0))
 
 
 def main(argv=None):

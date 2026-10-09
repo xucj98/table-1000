@@ -17,6 +17,19 @@ if not (source.parent / "asset_builders.py").exists():
 from asset_builders import asset, body, box, collider, cylinder, generate, joint, material, mesh
 
 
+PIVOT = Vector((0.024, 0, 0.017))
+OPEN_ANGLE = math.radians(12)
+CHANNEL_FRONT = -0.0313
+CHANNEL_BOTTOM = 0.0145
+ANVIL_TOP = 0.00955
+# The front underside of the metal channel meets the anvil top at the stop.
+contact_dx = PIVOT.x - CHANNEL_FRONT
+contact_dz = CHANNEL_BOTTOM - PIVOT.z
+CONTACT_ANGLE = (math.asin((ANVIL_TOP - PIVOT.z) / math.hypot(contact_dx, contact_dz))
+                 - math.atan2(contact_dz, contact_dx))
+PRESS_LIMIT = CONTACT_ANGLE - OPEN_ANGLE
+
+
 def slab(name, length, width, bottom, front_top, rear_top, radius, position, surface, parent,
          rear_width=None):
     contour = []
@@ -47,7 +60,7 @@ def slab(name, length, width, bottom, front_top, rear_top, radius, position, sur
 def build():
     white = material("Ivory white molded plastic", (0.78, 0.80, 0.78), 0.29)
     blue = material("Baby blue upper cover", (0.27, 0.54, 0.72), 0.29)
-    metal = material("Stapler steel", (0.50, 0.54, 0.57), 0.24, metallic=0.92)
+    metal = material("Stapler steel", (0.65, 0.68, 0.70), 0.36, metallic=0.85)
     dark = material("Throat and clinch recess", (0.025, 0.03, 0.035), 0.65)
     root = asset("15_Mini_Stapler", "bottom center of the base", "+X length toward hinge; +Y width; +Z up",
                  "staple mouth at -X")
@@ -66,21 +79,25 @@ def build():
             bevel=0.001)
     cylinder("Recessed pivot axle", 0.0014, 0.022, (0.024, 0, 0.017), metal, base, axis="Y")
     upper = body("Stapler moving upper", root)
-    slab("Complete blue upper cover", 0.069, 0.028, -0.005, 0.004, 0.006, 0.006,
+    slab("Complete blue upper cover", 0.069, 0.028, 0, 0.008, 0.010, 0.006,
          (0.002, 0, 0.024), blue, upper, rear_width=0.020)
-    box("Dark central throat", (0.053, 0.010, 0.001), (-0.004, 0, 0.0185), dark, upper,
-        collision=False)
-    box("Steel magazine spine", (0.056, 0.011, 0.0015), (-0.004, 0, 0.0192), metal, upper)
-    for y in (-0.0062, 0.0062):
-        box("Steel magazine rail", (0.054, 0.0018, 0.0042), (-0.004, y, 0.021), metal, upper)
-    box("Magazine folded nose", (0.004, 0.014, 0.0045), (-0.031, 0, 0.0205), metal, upper)
-    box("Steel driver", (0.0025, 0.009, 0.006), (-0.031, 0, 0.021), metal, upper)
-    box("Blue rear bridge", (0.011, 0.020, 0.005), (0.024, 0, 0.0215), blue, upper)
-    pivot = Vector((0.024, 0, 0.017))
+    channel_length = 0.018 - CHANNEL_FRONT
+    channel_center = (0.018 + CHANNEL_FRONT) / 2
+    box("Steel staple channel floor", (channel_length, 0.0205, 0.0015),
+        (channel_center, 0, CHANNEL_BOTTOM + 0.00075), metal, upper)
+    for side, y in (("left", -0.0095), ("right", 0.0095)):
+        box(f"Steel staple channel {side} wall", (channel_length, 0.0015, 0.0065),
+            (channel_center, y, 0.01925), metal, upper)
+        box(f"Channel to cover {side} bracket", (0.003, 0.0025, 0.0035),
+            (0.012, y, 0.02325), metal, upper)
+    box("Steel channel front stop", (0.0018, 0.0205, 0.008),
+        (CHANNEL_FRONT + 0.0009, 0, 0.0185), metal, upper)
+    box("Steel driver", (0.001, 0.009, 0.005), (-0.0295, 0, 0.022), metal, upper)
+    box("Blue rear bridge", (0.011, 0.020, 0.006), (0.024, 0, 0.022), blue, upper)
     bpy.context.view_layer.update()
-    upper.matrix_basis = (Matrix.Translation(pivot) @ Matrix.Rotation(math.radians(7), 4, "Y")
-                          @ Matrix.Translation(-pivot))
-    joint("upper_press", "HINGE", base, upper, pivot, (-0.27, 0.70), (-math.pi / 2, 0, 0))
+    upper.matrix_basis = (Matrix.Translation(PIVOT) @ Matrix.Rotation(OPEN_ANGLE, 4, "Y")
+                          @ Matrix.Translation(-PIVOT))
+    joint("upper_press", "HINGE", base, upper, PIVOT, (PRESS_LIMIT, 0), (-math.pi / 2, 0, 0))
 
 
 def main(argv=None):

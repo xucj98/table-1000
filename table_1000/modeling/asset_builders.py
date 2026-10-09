@@ -180,11 +180,11 @@ def tube(name, outer, inner, depth, position, surface, parent, axis="X",
 
 
 def label_patch(name, radius, depth, position, surface, parent, angle=math.pi / 2,
-                span=1.12, segments=4):
-    """A thin closed label following the upper surface of an X-axis cylinder."""
+                span=1.12, segments=4, axis="X"):
+    """A thin closed label following a cylindrical surface."""
     count = segments + 1
-    vertices = [(x, r * math.cos(angle - span / 2 + i * span / segments),
-                  r * math.sin(angle - span / 2 + i * span / segments))
+    vertices = [axis_point(x, r * math.cos(angle - span / 2 + i * span / segments),
+                          r * math.sin(angle - span / 2 + i * span / segments), axis)
                 for x, r in ((-depth / 2, radius), (depth / 2, radius),
                              (-depth / 2, radius - 0.00005), (depth / 2, radius - 0.00005))
                 for i in range(count)]

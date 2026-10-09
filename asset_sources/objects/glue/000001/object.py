@@ -1,4 +1,5 @@
 """Yellow cylindrical glue stick and white cap, represented by one rigid body."""
+import math
 from pathlib import Path
 import sys
 
@@ -14,19 +15,21 @@ def build():
     white = material("White cap plastic", (0.78, 0.80, 0.78), 0.29)
     paper = material("Pale paper label", (0.87, 0.88, 0.77), 0.65)
     ink = material("Printed label", (0.009, 0.012, 0.014), 0.75)
-    root = asset("17_Yellow_Solid_Glue", "below tube reference midpoint; center Z=0.014 m",
-                 "+X length toward white cap; +Y width; +Z up", "yellow tube base at -X")
+    root = asset("17_Yellow_Solid_Glue", "bottom center of the upright tube",
+                 "+X width; +Y back; +Z upright toward white cap", "label faces -Y")
     stick = body("Glue stick", root)
-    cylinder("Yellow glue stick body", 0.0125, 0.070, (-0.020, 0, 0.014), yellow, stick)
-    cylinder("Yellow shoulder", 0.0128, 0.004, (0.014, 0, 0.014), yellow, stick)
-    cylinder("White cap", 0.0136, 0.036, (0.034, 0, 0.014), white, stick)
-    cylinder("White cap rim", 0.014, 0.0035, (0.0155, 0, 0.014), white, stick)
-    label_patch("Paper label", 0.0127, 0.042, (-0.020, 0, 0.014), paper, stick)
+    cylinder("Yellow glue stick body", 0.0125, 0.070, (0, 0, 0.035), yellow, stick, axis="Z")
+    cylinder("Yellow shoulder", 0.0128, 0.004, (0, 0, 0.069), yellow, stick, axis="Z")
+    cylinder("White cap", 0.0136, 0.036, (0, 0, 0.089), white, stick, axis="Z")
+    cylinder("White cap rim", 0.014, 0.0035, (0, 0, 0.0705), white, stick, axis="Z")
+    label_patch("Paper label", 0.0127, 0.042, (0, 0, 0.035), paper, stick,
+                axis="Z", angle=-math.pi / 2)
     for i, width in enumerate((0.0005, 0.0009, 0.0004, 0.0007, 0.0004, 0.0008)):
-        label_patch("Barcode line", 0.01278, width, (-0.010 + i * 0.0015, 0, 0.014),
-                    ink, stick, angle=1.32, span=0.5)
-    for x in (-0.033, -0.029, -0.025):
-        label_patch("Label print", 0.01278, 0.0018, (x, 0, 0.014), ink, stick, span=0.75)
+        label_patch("Barcode line", 0.01278, width, (0, 0, 0.045 + i * 0.0015),
+                    ink, stick, angle=-1.82, span=0.5, axis="Z")
+    for z in (0.022, 0.026, 0.030):
+        label_patch("Label print", 0.01278, 0.0018, (0, 0, z), ink, stick, span=0.75,
+                    axis="Z", angle=-math.pi / 2)
 
 
 def main(argv=None):

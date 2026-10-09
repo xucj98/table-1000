@@ -23,26 +23,29 @@
   "pressed_three_quarter.jpg": {
     "camera": [0.82, -0.82, 0.72, 0, 0, 1],
     "joints": {
-      "upper_press": -0.27
+      "upper_press": -0.2992541830008421
     }
   },
-  "open_three_quarter.jpg": {
-    "camera": [0.82, -0.82, 0.72, 0, 0, 1],
+  "pressed_side.jpg": {
+    "camera": [0, -1, 0, 0, 0, 1],
     "joints": {
-      "upper_press": 0.7
+      "upper_press": -0.2992541830008421
     }
   },
-  "press_and_open.mp4": {
+  "press.mp4": {
     "fps": 24,
     "frames": [
       {
         "frame": 0,
-        "camera": [0.5, -1, 0.6, 0, 0, 1]
+        "camera": [0.5, -1, 0.6, 0, 0, 1],
+        "joints": {
+          "upper_press": 0
+        }
       },
       {
         "frame": 12,
         "joints": {
-          "upper_press": -0.27
+          "upper_press": -0.2992541830008421
         }
       },
       {
@@ -54,7 +57,7 @@
       {
         "frame": 36,
         "joints": {
-          "upper_press": 0.7
+          "upper_press": -0.2992541830008421
         }
       },
       {

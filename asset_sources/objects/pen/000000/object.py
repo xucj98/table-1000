@@ -1,7 +1,7 @@
-"""Black retractable ballpoint: hollow barrel, independent button and refill.
+"""Black retractable ballpoint: hollow shell and one moving button/refill body.
 
 Local +X points to the button; tip is -X; barrel center is Z=0.006 m.
-Two native sliders describe travel, without spring or click-lock dynamics.
+One native slider describes travel, without spring or click-lock dynamics.
 """
 from pathlib import Path
 import sys
@@ -30,13 +30,11 @@ def build():
         bevel=0.0008)
     box("Pocket clip bridge", (0.004, 0.0055, 0.003), (0.050, 0.0025, 0.011), black, shell,
         bevel=0.0008)
-    button = body("Black pen button", root)
-    cylinder("Silver push button", 0.003, 0.012, (0.062, 0, 0.006), metal, button)
-    refill = body("Black pen refill", root)
-    cylinder("Refill shaft", 0.0009, 0.124, (-0.009, 0, 0.006), ink, refill)
-    cylinder("Fine ballpoint", 0.00045, 0.010, (-0.0753, 0, 0.006), metal, refill)
-    joint("button_press", "SLIDER", shell, button, (0.056, 0, 0.006), (-0.003, 0))
-    joint("refill_extend", "SLIDER", shell, refill, (-0.071, 0, 0.006), (-0.003, 0))
+    moving = body("Black pen button and refill", root)
+    cylinder("Silver push button", 0.003, 0.012, (0.062, 0, 0.006), metal, moving)
+    cylinder("Refill shaft", 0.0009, 0.127, (-0.0075, 0, 0.006), ink, moving)
+    cylinder("Fine ballpoint", 0.00045, 0.010, (-0.0753, 0, 0.006), metal, moving)
+    joint("button_press", "SLIDER", shell, moving, (0.056, 0, 0.006), (-0.003, 0))
 
 
 def main(argv=None):
