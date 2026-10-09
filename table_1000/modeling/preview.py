@@ -195,12 +195,6 @@ def run_worker(blend, views, output, check_only=False, device="auto"):
     bpy.context.view_layer.update()
 
     checks = GeometryChecks()
-    roots = [obj for obj in scene.objects if obj.parent is None and obj.get("asset_id")]
-    if len(roots) > 1:
-        raise ValueError("multiple asset roots; specify one local reference frame")
-    root = roots[0] if roots else None
-    asset_frame = root.matrix_world.copy() if root else Matrix.Identity(4)
-    asset_inverse = asset_frame.inverted()
     meshes = checks.visuals + checks.colliders
     if not meshes:
         raise ValueError("asset contains no visible meshes")
@@ -256,10 +250,10 @@ def run_worker(blend, views, output, check_only=False, device="auto"):
             if not progressed:
                 raise ValueError("joint dependency cycle")
         for name, transform in transforms.items():
-            pivot = asset_inverse @ rest[name].translation
+            pivot = rest[name].translation
             rotation = Quaternion(transform[3:]).to_matrix().to_4x4()
-            delta = (asset_frame @ Matrix.Translation(Vector(transform[:3]) + pivot)
-                     @ rotation @ Matrix.Translation(-pivot) @ asset_inverse)
+            delta = (Matrix.Translation(Vector(transform[:3]) + pivot)
+                     @ rotation @ Matrix.Translation(-pivot))
             bodies[name].matrix_world = delta @ bodies[name].matrix_world
         bpy.context.view_layer.update()
 
@@ -282,7 +276,7 @@ def run_worker(blend, views, output, check_only=False, device="auto"):
 
     def corners():
         depsgraph = bpy.context.evaluated_depsgraph_get()
-        return [asset_inverse @ obj.evaluated_get(depsgraph).matrix_world @ Vector(corner)
+        return [obj.evaluated_get(depsgraph).matrix_world @ Vector(corner)
                 for obj in meshes for corner in obj.evaluated_get(depsgraph).bound_box]
 
     def box(points):
@@ -330,8 +324,8 @@ def run_worker(blend, views, output, check_only=False, device="auto"):
         data.size = default_span * 1.5
         light = bpy.data.objects.new(name, data)
         scene.collection.objects.link(light)
-        light.location = asset_frame @ (default_center + Vector(offset) * default_span)
-        light.rotation_euler = (asset_frame.to_quaternion() @ (-Vector(offset))).to_track_quat("-Z", "Y").to_euler()
+        light.location = default_center + Vector(offset) * default_span
+        light.rotation_euler = (-Vector(offset)).to_track_quat("-Z", "Y").to_euler()
 
     def camera_rotation(values):
         direction = Vector(values[:3]).normalized()
@@ -342,7 +336,7 @@ def run_worker(blend, views, output, check_only=False, device="auto"):
     def frame_camera(values, center, scale, span):
         rotation = camera_rotation(values)
         direction = Vector(values[:3]).normalized()
-        camera.matrix_world = asset_frame @ Matrix.Translation(center + direction * span * 3) @ rotation.to_4x4()
+        camera.matrix_world = Matrix.Translation(center + direction * span * 3) @ rotation.to_4x4()
         camera.data.ortho_scale = scale
         camera.data.clip_start = max(span * 0.001, 1e-5)
         camera.data.clip_end = max(span * 20, 1)

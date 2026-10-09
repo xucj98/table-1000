@@ -74,28 +74,36 @@ class AcceptanceTests(unittest.TestCase):
         views = {'moved.jpg': [{'frame':0, 'camera':camera, 'joints':{},
                                'transforms':{'body':[.2,0,0,1,0,0,0], 'cap':cap_pose}}],
                  'reset.jpg': [{'frame':0, 'camera':camera, 'joints':{}}]}
-        saved = {}
+        initial = {}
         original_sample = GeometryChecks.sample
         def capture(checks, output, frame, values, transforms=None):
             body, cap = bpy.data.objects['body'], bpy.data.objects['cap']
             self.assertIsNone(body.parent); self.assertIsNone(cap.parent)
-            if output == 'moved.jpg':
-                saved.update({obj.name: obj.matrix_world.copy() for obj in checks.visuals + checks.colliders})
-                self.assertAlmostEqual(body.matrix_world.translation.x, .2, places=6)
-                np.testing.assert_allclose(cap.matrix_world.translation, [-.087,-.045,0], atol=1e-6)
-                self.assertAlmostEqual(cap.matrix_world.to_quaternion().angle, np.pi/2, places=6)
-            else:
-                self.assertAlmostEqual(body.matrix_world.translation.x, 0, places=6)
-                self.assertAlmostEqual(cap.matrix_world.translation.x, -.032, places=6)
-                self.assertAlmostEqual(cap.matrix_world.to_quaternion().angle, 0, places=6)
-                delta = (Matrix.Translation((-.087,-.045,0)) @ Matrix.Rotation(-np.pi/2,4,'Z')
-                         @ Matrix.Translation((.032,0,0)))
-                for obj in checks.visuals + checks.colliders:
-                    if checks.owner[obj.name] == 'cap':
-                        np.testing.assert_allclose(saved[obj.name], delta @ obj.matrix_world, atol=1e-6)
+            for obj in [body, cap] + checks.visuals + checks.colliders:
+                owner = obj.name if obj in (body, cap) else checks.owner[obj.name]
+                delta = Matrix.Identity(4)
+                if output == 'moved.jpg':
+                    if owner == 'body':
+                        delta = Matrix.Translation((.2,0,0))
+                    else:
+                        pivot = initial['cap'].translation
+                        delta = (Matrix.Translation(pivot + Vector(cap_pose[:3]))
+                                 @ Matrix.Rotation(-np.pi/2,4,'Z') @ Matrix.Translation(-pivot))
+                np.testing.assert_allclose(obj.matrix_world, delta @ initial[obj.name], atol=1e-6)
             return original_sample(checks, output, frame, values, transforms)
         with tempfile.TemporaryDirectory(dir=options.output) as tmp, patch.object(GeometryChecks,'sample',capture):
-            run_worker(path, views, Path(tmp), True)
+            # asset_id is identity only: a non-unit body frame must not rotate world-space axes.
+            bpy.ops.wm.open_mainfile(filepath=str(path))
+            bpy.context.scene.rigidbody_world.enabled = False
+            frame = Matrix.Translation((.1,.2,.3)) @ Matrix.Rotation(np.pi/2,4,'Z')
+            for name in ('body', 'cap'):
+                obj = bpy.data.objects[name]
+                obj.matrix_world = frame @ obj.matrix_world
+            bpy.context.view_layer.update()
+            initial.update({obj.name: obj.matrix_world.copy() for obj in bpy.context.scene.objects})
+            saved_path = Path(tmp)/'world-frame.blend'
+            bpy.ops.wm.save_as_mainfile(filepath=str(saved_path))
+            run_worker(saved_path, views, Path(tmp)/'preview', True)
         # Rotating an inserted cap sideways must be seen by the collision check.
         overlapping = {'overlap.jpg': [{'frame':0, 'camera':camera, 'joints':{},
                                        'transforms':{'cap':[0,0,0,2**-.5,0,0,2**-.5]}}]}

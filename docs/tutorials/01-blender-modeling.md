@@ -85,7 +85,7 @@ Object 是父子树的节点。Mesh Object 引用 Mesh 数据块，Empty 没有�
 
 ### 局部坐标与复杂度
 
-按物体常识定义原点和局部坐标，所有部件共用明确的资产参考系。预览使用唯一带 `asset_id` 的顶层对象在保存零位时的坐标系作为固定参考系；没有该对象时使用场景坐标系。带盖笔的 `body` 可直接作为参考根，`cap` 是另一个顶层刚体，无共同父对象或永久关节；`body` 的预览运动不会改变参考系。
+一个资产保存在一个 `.blend` 中，Blender 世界坐标系就是本资产的局部坐标系。按物体常识定义原点和轴向，所有部件共用该坐标系；对象自身的局部坐标或 `asset_id` 不改变预览的参考系。带盖笔的 `body` 和 `cap` 是两棵顶层刚体子树，无共同父对象或永久关节。
 
 | 资产 | 原点和坐标 |
 | --- | --- |
@@ -149,7 +149,7 @@ blender -b --python-exit-code 1 -P scripts/assets/build_assets.py -- --assets ca
 - `camera`：前三个数是资产局部系中从物体指向相机的方向，后三个数是画面向上的参考方向；两者不能平行。相机正交投影、自动居中，动画使用整段共同画幅。
 - 源配置的每个 `camera` 数组保持单行，方便比较视角。
 - `joints`：键为 Blender 约束对象名。每张图或每段视频从零位开始，未指定的关节默认 0。
-- `transforms`：按刚体根名称指定 `[x, y, z, w, qx, qy, qz]`。平移单位为米，四元数为 wxyz，输入会标准化。变换相对保存初始姿态，用固定资产参考系表示；旋转绕所选刚体根的初始原点，整个子树一起运动。每个样本先恢复保存姿态，未指定的刚体默认零平移、单位旋转。与 `joints` 同用时先摆关节，再施加各刚体变换。
+- `transforms`：按刚体根名称指定 `[x, y, z, w, qx, qy, qz]`。平移单位为米，四元数为 wxyz，输入会标准化。变换相对保存初始姿态，平移和旋转轴均用 Blender 世界坐标（本资产局部坐标）表示；旋转绕所选刚体根的初始原点，整个子树一起运动。每个样本先恢复保存姿态，未指定的刚体默认零平移、单位旋转。与 `joints` 同用时先摆关节，再施加各刚体变换。
 - `frames`：首帧编号为 0，后续编号严格递增。省略项沿用上一关键帧；`joints` 按名称合并，`transforms` 按刚体名称保留完整七值姿态，空 `{}` 不表示复位。相机、关节和平移线性插值，旋转使用最短路径 SLERP。首帧必须给相机，复位须显式写 0 或单位姿态。
 - `fps`：视频帧率，也是碰撞粗测采样率；示例使用 24。包含首尾帧，0–48 共 49 帧。未知关节、越界值或插值后无效的相机方向会报错。
 
@@ -240,15 +240,6 @@ uv run python scripts/assets/validate_and_preview.py assets/objects/pen/000001/o
 ```bash
 ffmpeg -hide_banner -loglevel error -y -i assets/objects/pen/000001/preview/three_quarter.jpg \
   -vf scale=480:240 -q:v 2 -frames:v 1 asset_sources/objects/pen/000001/three_quarter.jpg
-```
-
-教程开头的拼图取各完整 JPG 的左半边视觉图：第一排为两件展开的柜架，其后按三列展示三支分帽笔、两支按动笔与订书机、两胶水与胶带。裁去空白、保留完整物体后拼接，作为静态教程附件；这里只展示一次黑色按动笔。紧凑视频和封面可由完整预览转码：
-
-```bash
-ffmpeg -hide_banner -loglevel error -y -i assets/objects/cabinet/000000/preview/open.mp4 \
-  -vf scale=640:320 -an -c:v libx264 -crf 28 -pix_fmt yuv420p -movflags +faststart docs/tutorials/images/cabinet-open.mp4
-ffmpeg -hide_banner -loglevel error -y -i assets/objects/cabinet/000000/preview/open_three_quarter.jpg \
-  -vf scale=640:320 -q:v 3 -frames:v 1 docs/tutorials/images/cabinet-open.jpg
 ```
 
 开发或修改检测器时，可额外运行回归测试；它是代码测试，不替代上述资产验收。回归使用盒子、黑色按动笔和蓝色粗笔，先生成这三个资产：
