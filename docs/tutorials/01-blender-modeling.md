@@ -91,11 +91,13 @@ blender -b --python-exit-code 1 -P asset_sources/objects/cabinet/000000/object.p
 blender -b --python-exit-code 1 -P asset_sources/objects/pen/000001/object.py -- --output assets/objects/pen/000001
 ```
 
-也可用[批量入口](../../scripts/tutorials/build_modeling_demo.py)生成两个示例：
+也可用[批量入口](../../scripts/assets/build_assets.py)生成两个示例：
 
 ```bash
-blender -b --python-exit-code 1 -P scripts/tutorials/build_modeling_demo.py -- --output assets
+blender -b --python-exit-code 1 -P scripts/assets/build_assets.py -- --assets cabinet/000000 pen/000001
 ```
+
+入口默认从 `asset_sources/objects` 递归发现 `object.py`，构建全部资产；`--assets` 选择相对资产目录。`--source` 和 `--output` 可指定源目录和产物根目录，默认产物根目录为 `assets/objects`，输出保留类别和编号的相对层级。
 
 **输出：** 每个产物目录包含 `object.blend`，以及 `object.py`、`preview.json`、`metadata.json` 的副本；日志输出 `MODEL_BUILT`。笔和其他文具还复制共用的 `asset_builders.py`，因此这些源码快照可直接通过产物目录中的 `object.py` 重建。源码和配置的修改应发生在 `asset_sources/`，共用建模函数在 `table_1000/modeling/asset_builders.py` 修改，再重新生成副本。
 
@@ -151,7 +153,7 @@ uv run python scripts/assets/validate_and_preview.py assets/objects/pen/000001/o
 
 脚本先清除旧报告，再检查结构、凸性和配置，统计复杂度，并按视频 FPS 摆姿、检测不同刚体间的穿透，通过后渲染。失败时退出非零；查看终端报错及本次报告（若已生成），修正后重跑。没有本次通过报告即未通过验收。
 
-**输出：** 模型旁的 `preview/` 保存报告与预览，图片和视频均为**左视觉、右碰撞**；右侧按刚体着色。静态 JPG 为 480 × 240；MP4 保持 960 × 480。
+**输出：** 模型旁的 `preview/` 保存报告与预览，图片和视频均为**左视觉、右碰撞**；右侧按刚体着色。JPG 和 MP4 均为 960 × 480。
 
 | 资产 | 预期输出 |
 | --- | --- |

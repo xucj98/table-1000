@@ -336,7 +336,6 @@ def run_worker(blend, views, output, check_only=False, device="auto"):
 
     for name, entry in views.items():
         if name.endswith(".jpg"):
-            scene.render.resolution_x = scene.render.resolution_y = 240
             state = entry[0]
             pose(state["joints"])
             points = corners()
@@ -350,7 +349,6 @@ def run_worker(blend, views, output, check_only=False, device="auto"):
             render_pair(output / name)
             print("PREVIEW_RENDERED", output / name, flush=True)
         else:
-            scene.render.resolution_x = scene.render.resolution_y = 480
             fps, keys = entry
             frames = [interpolate(keys, index) for index in range(keys[-1]["frame"] + 1)]
             all_points = []
@@ -381,7 +379,7 @@ def run_worker(blend, views, output, check_only=False, device="auto"):
             print("PREVIEW_RENDERED", output / name, flush=True)
 
     checks.report["preview"] = {"status": "completed", "device": selected_device, "samples": 16,
-                                "image_panel_size": 240, "video_panel_size": 480}
+                                "panel_size": 480}
     checks.report["timings_seconds"]["total"] = round(time.perf_counter() - started, 3)
     report_path.write_text(json.dumps(checks.report, indent=2)+"\n", encoding="utf-8")
 
