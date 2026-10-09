@@ -81,18 +81,21 @@ def build():
     upper = body("Stapler moving upper", root)
     slab("Complete blue upper cover", 0.069, 0.028, 0, 0.008, 0.010, 0.006,
          (0.002, 0, 0.024), blue, upper, rear_width=0.020)
-    channel_length = 0.018 - CHANNEL_FRONT
-    channel_center = (0.018 + CHANNEL_FRONT) / 2
+    # Butt the floor/walls against the stop, avoiding coincident outer faces.
+    channel_rear_of_stop = CHANNEL_FRONT + 0.0018
+    channel_length = 0.018 - channel_rear_of_stop
+    channel_center = (0.018 + channel_rear_of_stop) / 2
     box("Steel staple channel floor", (channel_length, 0.0205, 0.0015),
-        (channel_center, 0, CHANNEL_BOTTOM + 0.00075), metal, upper)
+        (channel_center, 0, CHANNEL_BOTTOM + 0.00075), metal, upper, bevel=0.0002)
     for side, y in (("left", -0.0095), ("right", 0.0095)):
         box(f"Steel staple channel {side} wall", (channel_length, 0.0015, 0.0065),
-            (channel_center, y, 0.01925), metal, upper)
+            (channel_center, y, 0.01925), metal, upper, bevel=0.0002)
         box(f"Channel to cover {side} bracket", (0.003, 0.0025, 0.0035),
-            (0.012, y, 0.02325), metal, upper)
+            (0.012, y, 0.02325), metal, upper, bevel=0.00015)
     box("Steel channel front stop", (0.0018, 0.0205, 0.008),
-        (CHANNEL_FRONT + 0.0009, 0, 0.0185), metal, upper)
-    box("Steel driver", (0.001, 0.009, 0.005), (-0.0295, 0, 0.022), metal, upper)
+        (CHANNEL_FRONT + 0.0009, 0, 0.0185), metal, upper, bevel=0.0002)
+    box("Steel driver", (0.001, 0.009, 0.005), (-0.0295, 0, 0.022), metal, upper,
+        bevel=0.00015)
     box("Blue rear bridge", (0.011, 0.020, 0.006), (0.024, 0, 0.022), blue, upper)
     bpy.context.view_layer.update()
     upper.matrix_basis = (Matrix.Translation(PIVOT) @ Matrix.Rotation(OPEN_ANGLE, 4, "Y")
