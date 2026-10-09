@@ -10,10 +10,12 @@
 
 ![参考照片](images/reference.jpg)
 
-参考图随教程保存，生成模型和预览不进入 Git。示例源码和配置位于：
+参考图随教程保存；源目录的 README 和四分之三缩略图随 Git 保存，完整模型和预览不进入 Git。示例源码和配置位于：
 
 - [盒子](../../asset_sources/objects/cabinet/000000/)：外壳、三个空心抽屉，共四个刚体。
-- [笔](../../asset_sources/objects/pen/000000/)：一个刚体。
+- [笔](../../asset_sources/objects/pen/000001/)：笔壳与包含按钮、笔芯、笔尖的活动组件，两个刚体与一个滑动关节。
+
+同一照片中的其他文具也提供独立源码：[白黑按动笔](../../asset_sources/objects/pen/000002/)、[订书机](../../asset_sources/objects/stapler/000000/)、[尖嘴胶水](../../asset_sources/objects/glue/000000/)、[固体胶](../../asset_sources/objects/glue/000001/)和[胶带](../../asset_sources/objects/tape/000000/)。各目录 README 展示缩略图并简述资产尺寸、组件与关节。原单刚体黑笔保留在 [pen/000000](../../asset_sources/objects/pen/000000/)，本章使用新增的黑色按动笔 pen/000001。
 
 安装 uv、Blender 和 FFmpeg，并确保终端能找到 `uv`、`blender`、`ffmpeg`。本章实测 Blender 4.5.14 LTS。以下命令均在仓库根目录执行：
 
@@ -27,7 +29,7 @@ uv sync --locked
 
 **输入：** 参考图、以下结构约束和第 4 节的验收要求。
 
-**输出：** 每个资产目录中的 `object.py`、`metadata.json` 和 `preview.json`。预览配置按第 4.1 节设计，可在建模迭代中调整。
+**输出：** 每个资产目录中的 `object.py`、`metadata.json`、`preview.json` 和简洁 `README.md`，验收后保存 `three_quarter.jpg` 缩略图。预览配置按第 4.1 节设计，可在建模迭代中调整。
 
 每个 `object.py` 只生成自己的资产，提供统一入口 `main(argv=None)`，用 `--output` 指定产物目录。修改示例时保留已有 UUID。示例材质使用 Blender 内置节点和脚本参数，无外部纹理依赖。
 
@@ -49,6 +51,8 @@ Object 是父子树的节点。Mesh Object 引用 Mesh 数据块，Empty 没有�
 └─ 下抽屉刚体根（Compound）
 三个独立关节对象：分别引用外壳根和对应抽屉根
 ```
+
+黑笔采用笔壳和活动组件两个 Compound 根。后部按钮、笔芯和笔尖属于同一个完整活动子树，通过一个 `SLIDER` 连接笔壳并共同运动。笔壳及鼻锥的碰撞由闭合凸扇区构成，保留笔芯运动通道；不把空心壳体变成一个实心凸包。按压与伸缩仅指定几何行程，按压自锁、凸轮和弹簧动力学在下一阶段处理。
 
 视觉对象不设刚体；碰撞子对象关闭渲染显示。这些子对象提供碰撞形状，不是独立运动的刚体。使用多个基础形状或凸块保留空腔和活动间隙，不能将整只空心抽屉合并后求一个凸包。视觉与碰撞网格可以不同，但接触表面应匹配。
 
@@ -73,6 +77,8 @@ Object 是父子树的节点。Mesh Object 引用 Mesh 数据块，Empty 没有�
 | --- | --- |
 | 盒子 | 外壳底面中心；+X 宽度、+Y 背面、+Z 向上；抽屉沿 −Y 拉出 |
 | 笔 | 笔杆中点下方；+X 指向按钮、+Z 向上，笔尖朝 −X |
+| 胶水与固体胶 | 直立底面中心；+Z 指向尖嘴或白盖，+Y 指向背面，标签朝正面 −Y |
+| 订书机 | 底座底面中心；+X 指向后铰链，+Y 宽度，+Z 向上；上部零位最大打开，只沿 +Y 轴向下按压 |
 
 省略不影响操作的装饰细节，优先使用低面数板件和低分段曲面。验收脚本只报告视觉三角数、碰撞形状数、凸网格顶点和面数总和，不据此判定通过或失败；人工查看时结合用途判断是否需要简化。
 
@@ -82,16 +88,18 @@ Object 是父子树的节点。Mesh Object 引用 Mesh 数据块，Empty 没有�
 
 ```bash
 blender -b --python-exit-code 1 -P asset_sources/objects/cabinet/000000/object.py -- --output assets/objects/cabinet/000000
-blender -b --python-exit-code 1 -P asset_sources/objects/pen/000000/object.py -- --output assets/objects/pen/000000
+blender -b --python-exit-code 1 -P asset_sources/objects/pen/000001/object.py -- --output assets/objects/pen/000001
 ```
 
-也可用[批量入口](../../scripts/tutorials/build_modeling_demo.py)生成两个示例：
+也可用[批量入口](../../scripts/assets/build_assets.py)生成两个示例：
 
 ```bash
-blender -b --python-exit-code 1 -P scripts/tutorials/build_modeling_demo.py -- --output assets
+blender -b --python-exit-code 1 -P scripts/assets/build_assets.py -- --assets cabinet/000000 pen/000001
 ```
 
-**输出：** 每个产物目录包含 `object.blend`，以及 `object.py`、`preview.json`、`metadata.json` 的副本；日志输出 `MODEL_BUILT`。源码和配置的修改应发生在 `asset_sources/`，不要只修改产物副本。
+入口默认从 `asset_sources/objects` 递归发现 `object.py`，构建全部资产；`--assets` 选择相对资产目录。`--source` 和 `--output` 可指定源目录和产物根目录，默认产物根目录为 `assets/objects`，输出保留类别和编号的相对层级。
+
+**输出：** 每个产物目录包含 `object.blend`，以及 `object.py`、`preview.json`、`metadata.json` 的副本；日志输出 `MODEL_BUILT`。笔和其他文具还复制共用的 `asset_builders.py`，因此这些源码快照可直接通过产物目录中的 `object.py` 重建。源码和配置的修改应发生在 `asset_sources/`，共用建模函数在 `table_1000/modeling/asset_builders.py` 修改，再重新生成副本。
 
 ## 4. 配置预览并验收
 
@@ -99,9 +107,11 @@ blender -b --python-exit-code 1 -P scripts/tutorials/build_modeling_demo.py -- -
 
 ### 4.1 设计 preview.json
 
-编辑资产源目录中的配置：[盒子 preview.json](../../asset_sources/objects/cabinet/000000/preview.json)、[笔 preview.json](../../asset_sources/objects/pen/000000/preview.json)。复现示例可直接使用现有配置。
+编辑资产源目录中的配置：[盒子 preview.json](../../asset_sources/objects/cabinet/000000/preview.json)、[笔 preview.json](../../asset_sources/objects/pen/000001/preview.json)。复现示例可直接使用现有配置。
 
-每个资产提供六视图和四分之三视图。可动资产还须提供能看清空腔的展开姿态，以及覆盖各关节零位、限位和往返运动的视频。本例三个抽屉依次拉出至 0.173 m，再依次关闭；笔没有关节，仅需静态视图。
+每个资产提供六视图和四分之三视图。可动资产还须提供能看清活动空间的端点姿态，以及覆盖各关节零位、限位和往返运动的视频。本例三个抽屉依次拉出至 0.173 m，再依次关闭；笔的按钮、笔芯和笔尖沿 −X 一同移动最多 0.003 m，再一起返回，视频演示两次按压与复位。订书机零位已是最大打开姿态，只能下压到金属钉槽接触底座的几何限位，不额外向上展开。
+
+订书机上盖下方的金属钉槽包含底板、两侧壁、前挡和连接支架，视觉与碰撞均保留容钉空腔。当前预览只指定关节姿态；订书机的弹簧回弹和两笔的弹簧、自锁动力学留在下一阶段。
 
 键为输出文件名：`.jpg` 表示一张图，`.mp4` 表示由关键帧插值的视频。下面是单个抽屉的配置片段；完整配置还应覆盖其他视图和抽屉：
 
@@ -123,6 +133,7 @@ blender -b --python-exit-code 1 -P scripts/tutorials/build_modeling_demo.py -- -
 ```
 
 - `camera`：前三个数是资产局部系中从物体指向相机的方向，后三个数是画面向上的参考方向；两者不能平行。相机正交投影、自动居中，动画使用整段共同画幅。
+- 源配置的每个 `camera` 数组保持单行，方便比较视角。
 - `joints`：键为 Blender 约束对象名。每张图或每段视频从零位开始，未指定的关节默认 0。
 - `frames`：首帧编号为 0，后续编号严格递增。相机和关节值在线性插值前依次合并：省略项沿用上一关键帧，`joints` 按名称合并，空 `{}` 不表示复位；复位须显式写 0。首帧必须给相机。
 - `fps`：视频帧率，也是碰撞粗测采样率；示例使用 24。包含首尾帧，0–48 共 49 帧。未知关节、越界值或插值后无效的相机方向会报错。
@@ -136,18 +147,18 @@ blender -b --python-exit-code 1 -P scripts/tutorials/build_modeling_demo.py -- -
 ```bash
 uv run python scripts/assets/validate_and_preview.py assets/objects/cabinet/000000/object.blend \
   --views asset_sources/objects/cabinet/000000/preview.json
-uv run python scripts/assets/validate_and_preview.py assets/objects/pen/000000/object.blend \
-  --views asset_sources/objects/pen/000000/preview.json
+uv run python scripts/assets/validate_and_preview.py assets/objects/pen/000001/object.blend \
+  --views asset_sources/objects/pen/000001/preview.json
 ```
 
 脚本先清除旧报告，再检查结构、凸性和配置，统计复杂度，并按视频 FPS 摆姿、检测不同刚体间的穿透，通过后渲染。失败时退出非零；查看终端报错及本次报告（若已生成），修正后重跑。没有本次通过报告即未通过验收。
 
-**输出：** 模型旁的 `preview/` 保存报告与预览，图片和视频均为**左视觉、右碰撞**；右侧按刚体着色。
+**输出：** 模型旁的 `preview/` 保存报告与预览，图片和视频均为**左视觉、右碰撞**；右侧按刚体着色。JPG 和 MP4 均为 960 × 480。
 
 | 资产 | 预期输出 |
 | --- | --- |
 | 盒子 | `acceptance.json`、六视图与四分之三 JPG、`open_three_quarter.jpg`、`open.mp4`（24 FPS，73 帧） |
-| 笔 | `acceptance.json`、六视图与四分之三 JPG |
+| 笔 | `acceptance.json`、六视图与四分之三 JPG、`pressed_three_quarter.jpg`、`press_and_extend.mp4`（24 FPS，49 帧） |
 
 常用参数：
 
@@ -165,9 +176,9 @@ uv run python scripts/assets/validate_and_preview.py assets/objects/pen/000000/o
 | 字段 | 通过条件 |
 | --- | --- |
 | `status`、`failures` | `status = "passed"` 且 `failures = []` |
-| `samples` | 覆盖配置中的所有图片和视频帧；盒子 81 个样本、笔 7 个样本，各样本 `penetrations = 0` |
+| `samples` | 覆盖配置中的所有图片和视频帧；盒子 81 个样本、笔 57 个样本，各样本 `penetrations = 0` |
 | `complexity` | 仅报告各项总量，基础形状和凸网格分别统计；不参与通过或失败判定 |
-| `bodies`、`joints` | 盒子 4 个刚体、3 个滑动关节，限位约 [0, 0.173] m；笔 1 个刚体、无关节 |
+| `bodies`、`joints` | 盒子 4 个刚体、3 个滑动关节，限位约 [0, 0.173] m；笔 2 个刚体、1 个滑动关节，限位约 [−0.003, 0] m |
 | `ignored_body_pairs` | 本例为空；其他资产如有排除项，须确认是有意设置 |
 | `preview.status` | 完整渲染后为 `"completed"`；仅运行 `--check-only` 不能完成交付验收 |
 
@@ -175,10 +186,10 @@ uv run python scripts/assets/validate_and_preview.py assets/objects/pen/000000/o
 
 | 总量 | 盒子 | 笔 |
 | --- | ---: | ---: |
-| 视觉三角数 | 412 | 508 |
+| 视觉三角数 | 412 | 1036 |
 | 基础碰撞形状数（BOX） | 21 | 2 |
-| 凸网格数量 | 8 | 3 |
-| 凸网格顶点/面总数 | 64 / 48 | 96 / 54 |
+| 凸网格数量 | 8 | 35 |
+| 凸网格顶点/面总数 | 64 / 48 | 352 / 246 |
 
 `status = "passed"` 只说明自动几何检查通过，不代表人工验收完成。运行失败时，不要用输出目录中旧的图片代替本次结果；终端错误或报告里的 `failures` 可帮助定位问题。
 
@@ -190,11 +201,18 @@ uv run python scripts/assets/validate_and_preview.py assets/objects/pen/000000/o
 
 自动报告和人工检查均通过后，按[资产布局](../designs/storage-layout.md)保存：
 
-- `asset_sources/`：生成源码、预览配置和 UUID 元数据，随 Git 提交；目录下不放 README。
+- `asset_sources/`：生成源码、预览配置、UUID 元数据、简洁 README 与约 480 × 240 的四分之三 JPG 缩略图，随 Git 提交。README 只引用该图，简述外观尺寸、刚体数，以及多组件名称和关节类型、限位、方向；`three_quarter.jpg` 是四分之三视角的 480 × 240 的缩略图，约 5 - 10 KB，左视觉、右碰撞。
 - `assets/`：模型、源码与配置副本、验收报告和预览，不提交。
 - `outputs/`：日志、调试和测试结果，不提交。
 
 若验收期间调整过源目录的 `preview.json`，再执行第 3 节建模命令同步产物副本，并重新运行完整验收，确保留存的模型、配置与报告对应同一版本。PR 中记录自动检查结果及人工检查结论。
+
+从完整预览生成黑笔源目录缩略图：
+
+```bash
+ffmpeg -hide_banner -loglevel error -y -i assets/objects/pen/000001/preview/three_quarter.jpg \
+  -vf scale=480:240 -q:v 2 -frames:v 1 asset_sources/objects/pen/000001/three_quarter.jpg
+```
 
 开发或修改检测器时，可额外运行回归测试；它是代码测试，不替代上述资产验收：
 

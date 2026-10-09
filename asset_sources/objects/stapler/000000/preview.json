@@ -1,0 +1,71 @@
+{
+  "front.jpg": {
+    "camera": [0, -1, 0, 0, 0, 1]
+  },
+  "back.jpg": {
+    "camera": [0, 1, 0, 0, 0, 1]
+  },
+  "left.jpg": {
+    "camera": [-1, 0, 0, 0, 0, 1]
+  },
+  "right.jpg": {
+    "camera": [1, 0, 0, 0, 0, 1]
+  },
+  "top.jpg": {
+    "camera": [0, 0, 1, 0, 1, 0]
+  },
+  "bottom.jpg": {
+    "camera": [0, 0, -1, 0, -1, 0]
+  },
+  "three_quarter.jpg": {
+    "camera": [0.82, -0.82, 0.72, 0, 0, 1]
+  },
+  "pressed_three_quarter.jpg": {
+    "camera": [0.82, -0.82, 0.72, 0, 0, 1],
+    "joints": {
+      "upper_press": -0.2992541830008421
+    }
+  },
+  "pressed_side.jpg": {
+    "camera": [0, -1, 0, 0, 0, 1],
+    "joints": {
+      "upper_press": -0.2992541830008421
+    }
+  },
+  "press.mp4": {
+    "fps": 24,
+    "frames": [
+      {
+        "frame": 0,
+        "camera": [0.5, -1, 0.6, 0, 0, 1],
+        "joints": {
+          "upper_press": 0
+        }
+      },
+      {
+        "frame": 12,
+        "joints": {
+          "upper_press": -0.2992541830008421
+        }
+      },
+      {
+        "frame": 24,
+        "joints": {
+          "upper_press": 0
+        }
+      },
+      {
+        "frame": 36,
+        "joints": {
+          "upper_press": -0.2992541830008421
+        }
+      },
+      {
+        "frame": 48,
+        "joints": {
+          "upper_press": 0
+        }
+      }
+    ]
+  }
+}

@@ -308,18 +308,8 @@ def run_worker(blend, views, output, check_only=False, device="auto"):
     for obj in checks.colliders:
         obj.data.materials.clear()
         obj.data.materials.append(materials[checks.owner[obj.name]])
-        if len(obj.data.vertices) > 16:
-            # Curved hull facets stay flat-shaded; dense wire overlays alias.
-            for face in obj.data.polygons:
-                face.use_smooth = False
-            continue
-        edge = obj.modifiers.new("Collision edges", "WIREFRAME")
-        edge.thickness = default_span * 0.0015
-        edge.use_replace = False
-        edge.material_offset = 1
-        dark = bpy.data.materials.get("Collision edge") or bpy.data.materials.new("Collision edge")
-        dark.diffuse_color = (0.015,0.015,0.015,1)
-        obj.data.materials.append(dark)
+        for face in obj.data.polygons:
+            face.use_smooth = False
 
     def render_pair(destination):
         arrays = []
@@ -388,7 +378,8 @@ def run_worker(blend, views, output, check_only=False, device="auto"):
                                 "-crf", "18", "-movflags", "+faststart", str(output / name)], check=True)
             print("PREVIEW_RENDERED", output / name, flush=True)
 
-    checks.report["preview"] = {"status": "completed", "device": selected_device, "samples": 16, "panel_size": 480}
+    checks.report["preview"] = {"status": "completed", "device": selected_device, "samples": 16,
+                                "panel_size": 480}
     checks.report["timings_seconds"]["total"] = round(time.perf_counter() - started, 3)
     report_path.write_text(json.dumps(checks.report, indent=2)+"\n", encoding="utf-8")
 
