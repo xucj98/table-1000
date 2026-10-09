@@ -15,7 +15,7 @@
 - [盒子](../../asset_sources/objects/cabinet/000000/)：外壳、三个空心抽屉，共四个刚体。
 - [笔](../../asset_sources/objects/pen/000000/)：笔壳与包含按钮、笔芯、笔尖的活动组件，两个刚体与一个滑动关节。
 
-同一照片中的其他文具也提供独立源码：[白黑按动笔](../../asset_sources/objects/pen/000001/)、[订书机](../../asset_sources/objects/stapler/000000/)、[尖嘴胶水](../../asset_sources/objects/glue/000000/)、[固体胶](../../asset_sources/objects/glue/000001/)和[胶带](../../asset_sources/objects/tape/000000/)。各目录 README 说明结构和生成命令。
+同一照片中的其他文具也提供独立源码：[白黑按动笔](../../asset_sources/objects/pen/000001/)、[订书机](../../asset_sources/objects/stapler/000000/)、[尖嘴胶水](../../asset_sources/objects/glue/000000/)、[固体胶](../../asset_sources/objects/glue/000001/)和[胶带](../../asset_sources/objects/tape/000000/)。各目录 README 展示缩略图并简述资产尺寸、组件与关节。
 
 安装 uv、Blender 和 FFmpeg，并确保终端能找到 `uv`、`blender`、`ffmpeg`。本章实测 Blender 4.5.14 LTS。以下命令均在仓库根目录执行：
 
