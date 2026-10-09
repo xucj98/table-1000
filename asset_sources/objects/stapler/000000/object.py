@@ -57,6 +57,36 @@ def slab(name, length, width, bottom, front_top, rear_top, radius, position, sur
     return obj
 
 
+def staple_channel(parent, surface):
+    """One continuous steel trough; separate boxes supply convex collision."""
+    front, stop_rear, rear = CHANNEL_FRONT, CHANNEL_FRONT + 0.0018, 0.018
+    outer, inner = 0.01025, 0.00875
+    bottom, floor_top, top = CHANNEL_BOTTOM, 0.016, 0.0225
+    profile = [(-outer, bottom), (outer, bottom), (outer, top), (inner, top),
+               (inner, floor_top), (-inner, floor_top), (-inner, top), (-outer, top)]
+    vertices = [(front, y, z) for y, z in (profile[0], profile[1], profile[2], profile[7])]
+    vertices += [(stop_rear, y, z) for y, z in profile[3:7]]
+    vertices += [(rear, y, z) for y, z in profile]
+    faces = [(0, 3, 2, 1), (0, 1, 9, 8), (1, 2, 10, 9), (3, 0, 8, 15),
+             (2, 3, 15, 14, 7, 4, 11, 10), (4, 7, 6, 5), (4, 5, 12, 11),
+             (5, 6, 13, 12), (6, 7, 14, 13), tuple(range(8, 16))]
+    obj = mesh("Steel staple channel", vertices, faces, parent, surface)
+    # Bevel outer lower folds and mouth corners, leaving panel rims sharp.
+    weights = obj.data.attributes.new("bevel_weight_edge", "FLOAT", "EDGE")
+    for edge in obj.data.edges:
+        a, b = (obj.data.vertices[i].co for i in edge.vertices)
+        lower_fold = (abs(a.z - bottom) < 1e-7 and abs(b.z - bottom) < 1e-7
+                      and abs(a.y - b.y) < 1e-7 and abs(abs(a.y) - outer) < 1e-7)
+        mouth_corner = (abs(a.x - front) < 1e-7 and abs(b.x - front) < 1e-7
+                        and abs(a.y - b.y) < 1e-7 and abs(abs(a.y) - outer) < 1e-7)
+        weights.data[edge.index].value = float(lower_fold or mouth_corner)
+    modifier = obj.modifiers.new("Steel outer folds", "BEVEL")
+    modifier.limit_method = "WEIGHT"
+    modifier.width = 0.0008
+    modifier.segments = 1
+    return obj
+
+
 def build():
     white = material("Ivory white molded plastic", (0.78, 0.80, 0.78), 0.29)
     blue = material("Baby blue upper cover", (0.27, 0.54, 0.72), 0.29)
@@ -85,17 +115,22 @@ def build():
     channel_rear_of_stop = CHANNEL_FRONT + 0.0018
     channel_length = 0.018 - channel_rear_of_stop
     channel_center = (0.018 + channel_rear_of_stop) / 2
-    box("Steel staple channel floor", (channel_length, 0.0205, 0.0015),
-        (channel_center, 0, CHANNEL_BOTTOM + 0.00075), metal, upper, bevel=0.0002)
+    channel_parts = [box("Steel staple channel floor", (channel_length, 0.0205, 0.0015),
+                         (channel_center, 0, CHANNEL_BOTTOM + 0.00075), metal, upper)]
     for side, y in (("left", -0.0095), ("right", 0.0095)):
-        box(f"Steel staple channel {side} wall", (channel_length, 0.0015, 0.0065),
-            (channel_center, y, 0.01925), metal, upper, bevel=0.0002)
+        channel_parts.append(box(f"Steel staple channel {side} wall", (channel_length, 0.0015, 0.0065),
+                                 (channel_center, y, 0.01925), metal, upper))
         box(f"Channel to cover {side} bracket", (0.003, 0.0025, 0.0035),
-            (0.012, y, 0.02325), metal, upper, bevel=0.00015)
-    box("Steel channel front stop", (0.0018, 0.0205, 0.008),
-        (CHANNEL_FRONT + 0.0009, 0, 0.0185), metal, upper, bevel=0.0002)
-    box("Steel driver", (0.001, 0.009, 0.005), (-0.0295, 0, 0.022), metal, upper,
-        bevel=0.00015)
+            (0.012, y, 0.02325), metal, upper)
+    channel_parts.append(box("Steel channel front stop", (0.0018, 0.0205, 0.008),
+                             (CHANNEL_FRONT + 0.0009, 0, 0.0185), metal, upper))
+    # Retain the convex proxies and replace their visuals with one steel trough.
+    for obj in channel_parts:
+        data = obj.data
+        bpy.data.objects.remove(obj, do_unlink=True)
+        bpy.data.meshes.remove(data)
+    staple_channel(upper, metal)
+    box("Steel driver", (0.001, 0.009, 0.005), (-0.0295, 0, 0.022), metal, upper)
     box("Blue rear bridge", (0.011, 0.020, 0.006), (0.024, 0, 0.022), blue, upper)
     bpy.context.view_layer.update()
     upper.matrix_basis = (Matrix.Translation(PIVOT) @ Matrix.Rotation(OPEN_ANGLE, 4, "Y")
