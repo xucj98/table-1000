@@ -1,6 +1,6 @@
 # 三抽屉塑料盒
 
-![左视觉、右碰撞](three_quarter.jpg)
+![preview](three_quarter.jpg)
 
 白色外壳和烟灰半透明抽屉，约 286 × 276 × 284 mm。
 

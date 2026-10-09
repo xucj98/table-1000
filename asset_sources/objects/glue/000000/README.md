@@ -1,6 +1,6 @@
 # 尖嘴胶水
 
-![左视觉、右碰撞](three_quarter.jpg)
+![preview](three_quarter.jpg)
 
 白色小瓶、黄色标签和尖嘴瓶盖，约 25 × 25 × 95 mm。
 

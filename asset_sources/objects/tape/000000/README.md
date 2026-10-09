@@ -1,6 +1,6 @@
 # 半透明胶带卷
 
-![左视觉、右碰撞](three_quarter.jpg)
+![preview](three_quarter.jpg)
 
 乳白胶带卷和纸芯，约 61 × 61 × 20 mm，中孔内径约 32 mm。
 

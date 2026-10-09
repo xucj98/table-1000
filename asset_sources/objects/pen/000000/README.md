@@ -1,6 +1,6 @@
 # 黑色圆珠笔
 
-![左视觉、右碰撞](three_quarter.jpg)
+![preview](three_quarter.jpg)
 
 黑色漆面笔杆、银色鼻锥与握环，约 149 × 13 × 14 mm。
 

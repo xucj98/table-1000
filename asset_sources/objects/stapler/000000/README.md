@@ -1,6 +1,6 @@
 # 白蓝迷你订书机
 
-![左视觉、右碰撞](three_quarter.jpg)
+![preview](three_quarter.jpg)
 
 白色浅底座、浅蓝上盖和金属钉槽，约 70 × 30 × 43 mm（初始打开姿态）。
 

@@ -1,6 +1,6 @@
 # 白黑色按动圆珠笔
 
-![左视觉、右碰撞](three_quarter.jpg)
+![preview](three_quarter.jpg)
 
 白色笔杆、黑色后壳与长鼻锥，约 162 × 11 × 11 mm。
 

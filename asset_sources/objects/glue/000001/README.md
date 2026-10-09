@@ -1,6 +1,6 @@
 # 黄色固体胶
 
-![左视觉、右碰撞](three_quarter.jpg)
+![preview](three_quarter.jpg)
 
 黄色圆筒胶棒、白色盖和纸质标签，约 28 × 28 × 107 mm。
 
