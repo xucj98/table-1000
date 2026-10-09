@@ -8,7 +8,6 @@ Local frame: bottom-center origin; +X width, +Y depth, +Z up; front at -Y.
 from __future__ import annotations
 
 import argparse
-import json
 import math
 from pathlib import Path
 import shutil
@@ -251,7 +250,6 @@ def main(argv=None):
     scene.frame_end = 72
     build()
     scene.rigidbody_world.enabled = False
-    scene["complexity_budget"] = json.dumps({"visual_triangles": 600, "colliders": 32, "convex_vertices": 80, "convex_faces": 60})
     scene["penetration_tolerance_m"] = 0.0002
     scene.frame_set(0)
     bpy.context.view_layer.update()

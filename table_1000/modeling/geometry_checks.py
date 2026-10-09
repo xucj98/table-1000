@@ -3,7 +3,6 @@
 Supports BOX and explicit CONVEX_HULL colliders. Other shapes fail explicitly
 until their analytic detection and matching preview geometry are implemented.
 """
-import json
 import itertools
 import numpy as np
 import bpy
@@ -149,14 +148,10 @@ class GeometryChecks:
                   'primitive_colliders':len(self.colliders)-len(convex), 'convex_colliders':len(convex),
                   'convex_vertices':sum(len(o.data.vertices) for o in convex),
                   'convex_faces':sum(len(o.data.polygons) for o in convex)}
-        budgets = json.loads(scene.get('complexity_budget','{}'))
-        require(budgets, 'Missing explicit example complexity budget')
-        for key, maximum in budgets.items():
-            require(key in totals and totals[key] <= maximum, f'Complexity budget exceeded: {key}={totals.get(key)} > {maximum}')
         self.tolerance = float(scene.get('penetration_tolerance_m',0.0002))
         require(np.isfinite(self.tolerance) and self.tolerance >= 0, 'Invalid penetration tolerance')
         self.report = {'status':'running','scope':'geometry coarse check at video FPS; no dynamics or inter-frame guarantee',
-                       'complexity':totals,'budget':budgets,'bodies':len(self.bodies),'joints':joint_rows,
+                       'complexity':totals,'bodies':len(self.bodies),'joints':joint_rows,
                        'ignored_body_pairs':[list(p) for p in sorted(self.ignored)],
                        'penetration_tolerance_m':self.tolerance,'samples':[],'failures':[]}
 

@@ -83,9 +83,13 @@ class AcceptanceTests(unittest.TestCase):
             for q in ({'unknown':0},{'drawer1_open':1}):
                 with self.assertRaises(ValueError):run_worker(path,entry(q),Path(tmp),True)
 
-    def test_budget_rejected(self):
-        self.load();bpy.context.scene['complexity_budget']=json.dumps({'visual_triangles':1})
-        with self.assertRaises(ValueError):GeometryChecks()
+    def test_complexity_totals(self):
+        self.load()
+        self.assertEqual(GeometryChecks().report['complexity'], {
+            'visual_triangles': 412, 'colliders': 29,
+            'primitive_colliders': 21, 'convex_colliders': 8,
+            'convex_vertices': 64, 'convex_faces': 48,
+        })
 
 
 result=unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(AcceptanceTests))

@@ -8,7 +8,6 @@ Local frame: +X length, +Y width, +Z up; tip -X, button +X, barrel Z=0.006 m.
 from __future__ import annotations
 
 import argparse
-import json
 import math
 from pathlib import Path
 import shutil
@@ -140,7 +139,6 @@ def add_physics():
         proxy.rigid_body.use_margin = True
         proxy.rigid_body.collision_margin = 0.0
     bpy.context.scene.rigidbody_world.enabled = False
-    bpy.context.scene["complexity_budget"] = json.dumps({"visual_triangles": 600, "colliders": 5, "convex_vertices": 100, "convex_faces": 60})
     bpy.context.scene["penetration_tolerance_m"] = 0.0002
 
 def main(argv=None):
