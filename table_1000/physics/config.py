@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from table_1000.assets.references import expand_mapping, expand_names
+from table_1000.physics.plots import source_parts
 
 
 def merge(base, override):
@@ -50,12 +51,15 @@ def test_configs(config, model):
             target_field = 'joint' if kind in ('joint_lock', 'joint_drive') else 'body'
             if kind not in ('force', 'torque', 'fixture', 'joint_lock', 'joint_drive'):
                 raise ValueError(f'Unsupported action type: {kind}')
+            frames = keyframes(action['keyframes'], duration, dt)
+            if kind in ('force', 'torque') and kind not in frames[0]:
+                raise ValueError(f'{kind} action needs {kind} in its first keyframe')
             targets = expand_names(action[target_field], joints if target_field == 'joint' else bodies)
             action_names[action_name] = []
             for target in targets:
                 resolved = deepcopy(action)
                 resolved[target_field] = target
-                resolved['keyframes'] = keyframes(action['keyframes'], duration, dt)
+                resolved['keyframes'] = deepcopy(frames)
                 label = action_name if len(targets) == 1 else f'{action_name}[{target}]'
                 if label in actions:
                     raise ValueError(f'Duplicate action label: {label}')
@@ -63,6 +67,7 @@ def test_configs(config, model):
                 action_names[action_name].append(label)
         test['actions'] = actions
         observe = test.get('observe')
+        requested_plots = observe.get('plots', []) if observe is not None else []
         if observe is None:
             observe = {'rigid_bodies': sorted(bodies), 'joints': sorted(joints), 'actions': list(actions)}
         else:
@@ -72,6 +77,33 @@ def test_configs(config, model):
             observe = {'rigid_bodies': expand_names(observe.get('rigid_bodies', []), bodies),
                        'joints': expand_names(observe.get('joints', []), joints),
                        'actions': [label for key in requested for label in action_names[key]]}
+        observe['plots'] = []
+        for source in requested_plots:
+            category, target, field, component = source_parts(source)
+            if category in ('rigid_bodies', 'joints'):
+                targets = expand_names(target, bodies if category == 'rigid_bodies' else joints)
+            elif category == 'actions':
+                if target not in action_names and target not in actions:
+                    raise ValueError(f'Unknown plotted action: {target}')
+                targets = action_names.get(target, [target])
+            else:
+                targets = [target]
+            for target in targets:
+                if category == 'actions':
+                    action = actions[target]
+                    fields = {'force': {'active', 'force', 'point'}, 'torque': {'active', 'torque'},
+                              'fixture': {'active', 'position', 'rotation', 'position_error', 'rotation_error'},
+                              'joint_lock': {'active', 'target_position'}, 'joint_drive': {'active', 'target_position'}}[action['type']]
+                    if action['type'] == 'fixture' and action.get('mode') == 'spring':
+                        fields |= {'force', 'torque'}
+                    if field not in fields:
+                        raise ValueError(f'Unknown action plot quantity: {source}')
+                resolved = f'{category}.{target}.{field}' + (f'.{component}' if component else '')
+                if resolved in observe['plots']:
+                    raise ValueError(f'Duplicate plot source: {resolved}')
+                observe['plots'].append(resolved)
+                if category in observe and target not in observe[category]:
+                    observe[category].append(target)
         test['observe'] = observe
         result[name] = test
     return result

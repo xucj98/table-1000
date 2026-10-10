@@ -135,7 +135,9 @@ class Actions:
                     if 'path' in fixture:
                         self.runtime.stage.RemovePrim(fixture['path'])
                 if action['type'] in ('force', 'torque'):
-                    record['value'] = np.zeros(3)
+                    record[action['type']] = np.zeros(3)
+                elif action['type'] == 'fixture' and action.get('mode') == 'spring':
+                    record.update(force=np.zeros(3), torque=np.zeros(3))
                 if name in self.joint_actions:
                     self.restore_joint(name)
                 continue
@@ -149,7 +151,7 @@ class Actions:
             if kind in ('force', 'torque'):
                 if action['frame'] not in ('world', 'body'):
                     raise ValueError('Force frame must be world or body')
-                value = np.asarray(target['value'])
+                value = np.asarray(target[kind])
                 if action['frame'] == 'body':
                     value = state['rotation'] @ value
                 point = state['com']
@@ -164,7 +166,7 @@ class Actions:
                     record['point'] = point
                 else:
                     self.runtime.apply_force(key, np.zeros(3), torque=value)
-                record['value'] = value
+                record[kind] = value
             elif kind == 'fixture':
                 if action.get('mode', 'fixed') == 'fixed':
                     target = self.fixed(name, action, state, target)
