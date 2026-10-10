@@ -23,9 +23,9 @@
   "open_three_quarter.jpg": {
     "camera": [0.82, -0.82, 0.72, 0, 0, 1],
     "joints": {
-      "drawer1_open": 0.173,
-      "drawer2_open": 0.173,
-      "drawer3_open": 0.173
+      "cabinet.drawer1.slide": 0.173,
+      "cabinet.drawer2.slide": 0.173,
+      "cabinet.drawer3.slide": 0.173
     }
   },
   "open.mp4": {
@@ -35,45 +35,45 @@
         "frame": 0,
         "camera": [0.82, -0.82, 0.72, 0, 0, 1],
         "joints": {
-          "drawer1_open": 0,
-          "drawer2_open": 0,
-          "drawer3_open": 0
+          "cabinet.drawer1.slide": 0,
+          "cabinet.drawer2.slide": 0,
+          "cabinet.drawer3.slide": 0
         }
       },
       {
         "frame": 12,
         "joints": {
-          "drawer1_open": 0.173
+          "cabinet.drawer1.slide": 0.173
         }
       },
       {
         "frame": 24,
         "joints": {
-          "drawer2_open": 0.173
+          "cabinet.drawer2.slide": 0.173
         }
       },
       {
         "frame": 36,
         "joints": {
-          "drawer3_open": 0.173
+          "cabinet.drawer3.slide": 0.173
         }
       },
       {
         "frame": 48,
         "joints": {
-          "drawer1_open": 0
+          "cabinet.drawer1.slide": 0
         }
       },
       {
         "frame": 60,
         "joints": {
-          "drawer2_open": 0
+          "cabinet.drawer2.slide": 0
         }
       },
       {
         "frame": 72,
         "joints": {
-          "drawer3_open": 0
+          "cabinet.drawer3.slide": 0
         }
       }
     ]

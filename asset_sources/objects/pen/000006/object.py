@@ -1,12 +1,6 @@
 """Build this capped pen as two independent top-level rigid-body subtrees."""
-from pathlib import Path
-import sys
-
-source = Path(__file__).resolve()
-sys.path.insert(0, str(source.parent))
-if not (source.parent / "asset_builders.py").exists():
-    sys.path.insert(0, str(source.parents[4] / "table_1000/modeling"))
-from asset_builders import capped_pen, generate
+import bpy
+from table_1000.modeling.asset_builders import capped_pen, generate, group_part
 
 PROFILE = {'geometry': {'segments': 16,
               'seat_x_m': -0.032,
@@ -34,7 +28,17 @@ PROFILE = {'geometry': {'segments': 16,
 
 
 def build():
-    capped_pen("pen/000003", PROFILE)
+    capped_pen("pen/000006", PROFILE)
+    for root_name, part_name, visual_name in [
+        ("body", "barrel", "Barrel"), ("body", "label", "Pale paper label"),
+        ("body", "neck", "Neck"), ("body", "tip", "Nib"),
+        ("cap", "shell", "Cap shell"), ("cap", "lip", "Cap lip"), ("cap", "end", "Cap end"),
+    ]:
+        owner = bpy.data.objects[root_name]
+        visual = bpy.data.objects[visual_name]
+        collisions = sorted([obj for obj in owner.children if obj.name == "Collision_" + visual_name
+                             or obj.name.startswith("Collision_" + visual_name + "_")], key=lambda obj: obj.name)
+        group_part(root_name + "." + part_name, owner, [visual], collisions)
 
 
 def main(argv=None):

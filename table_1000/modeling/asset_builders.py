@@ -1,7 +1,6 @@
 """Small Blender modeling helpers shared by the stationery asset sources.
 
-The builder copies this module beside object.py so generated source snapshots
-can be rebuilt without importing the repository package.
+Generated source snapshots import these helpers from the repository package.
 """
 
 from __future__ import annotations
@@ -60,6 +59,28 @@ def body(name, root):
     obj["rigid_body_root"] = True
     rigid_settings(obj, "COMPOUND")
     return obj
+
+
+def part(name, root):
+    """A nested Compound semantic component, owned by its independent body."""
+    obj = body(name, root)
+    del obj["rigid_body_root"]
+    obj["semantic_part"] = True
+    return obj
+
+
+def group_part(name, root, visuals, colliders):
+    """Put authored geometry under a part without changing its saved world pose."""
+    bpy.context.view_layer.update()
+    node = part(name, root)
+    bpy.context.view_layer.update()
+    for role, objects in [("visual", visuals), ("collision", colliders)]:
+        for i, obj in enumerate(objects, 1):
+            world = obj.matrix_world.copy()
+            obj.parent = node
+            obj.matrix_world = world
+            obj.name = name + "." + role + (str(i) if len(objects) > 1 else "")
+    return node
 
 
 def mesh(name, vertices, faces, parent, surface=None, shape=None):
@@ -306,8 +327,11 @@ def generate(build, source_file, argv=None):
     destination = output / "object.blend"
     bpy.ops.wm.save_as_mainfile(filepath=str(destination))
     source = Path(source_file).resolve()
-    for original in (source, source.parent / "metadata.json", source.parent / "preview.json",
-                     Path(__file__).resolve()):
+    originals = [source, *(source.parent / name for name in ("metadata.json", "preview.json", "README.md"))]
+    thumbnail = source.parent / "three_quarter.jpg"
+    if thumbnail.exists():
+        originals.append(thumbnail)
+    for original in originals:
         target = output / original.name
         if original != target:
             shutil.copyfile(original, target)
