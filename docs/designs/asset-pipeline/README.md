@@ -59,10 +59,10 @@ object.blend + physics.json + 可选 behavior.py
 | 位置 | 内容 | Git |
 | --- | --- | --- |
 | `asset_sources/objects/<category>/<id>/` | object.py、preview.json、metadata.json、README.md、three_quarter.jpg；第二阶段增加 physics.json、physics_test.json、可选 behavior.py | 提交 |
-| `assets/objects/<category>/<id>/` | object.blend、object.usdz、源码及配置快照、可选 runtime/、preview/ | 忽略 |
+| `assets/objects/<category>/<id>/` | object.blend、object.usdz、源码及配置快照、README.md、已有 three_quarter.jpg、可选 runtime/、preview/ | 忽略 |
 | `outputs/` | 物理测试视频、轨迹、报告与日志 | 忽略 |
 
-源码快照包含重建所需的共用模块。外部资源引用须注明版本、来源和许可，不使用私有绝对路径。
+源码快照重建依赖同版本的 `table_1000` 包，共用模块不复制到资产目录。外部资源引用须注明版本、来源和许可，不使用私有绝对路径。
 
 ### README 与缩略图
 
