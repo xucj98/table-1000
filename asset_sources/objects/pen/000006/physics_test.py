@@ -212,9 +212,8 @@ def exchanged_caps(ctx: TestContext):
                         state['forces'][i]=stiffness*(target-cap['position'])-damping*origin_velocity
                     else: state['forces'][i]=np.zeros(3)
             ctx.session.actions=actions
-            ctx.plots('phase','cap_fixtures_active','asset.cap.position.x','asset.cap.position.y','asset.cap.position.z',
-                'asset.fixture_force_estimate.x','pen_b.fixture_force_estimate.x',
-                'asset.cap_fit.opening','pen_b.cap_fit.opening','asset.paired_body','pen_b.paired_body')
+            ctx.plots('asset.cap_fit.opening','pen_b.cap_fit.opening',
+                'asset.paired_body','pen_b.paired_body','cap_fixtures_active')
             ctx.run(7)
         state.update(gripped=0,phase=7)
         ctx.run(2)
@@ -282,9 +281,8 @@ def loose_cap_rotation(ctx: TestContext):
                 for grip,orient in grippers:
                     orient.Set(Gf.Quatf(cos(angle/2),Gf.Vec3f(0,sin(angle/2),0)))
         ctx.session.actions=actions
-        ctx.plots('body_target_angle','asset.body_angle','loose.body_angle','asset.body.angular_velocity.y',
-            'loose.body.angular_velocity.y','asset.cap_fit.opening','loose.cap_fit.opening',
-            'asset.cap_fit.engaged','loose.cap_fit.engaged','asset.cap_fit.retention_force','loose.cap_fit.retention_force')
+        ctx.plots('asset.body_angle','asset.cap_fit.opening',
+            'loose.cap.position.z','asset.cap_fit.retention_force')
         ctx.run(6)
     ctx.session.actions=original
     ctx.experiment_details={'initial_opening_m':{'asset':0.,'loose':.028},
