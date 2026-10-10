@@ -10,12 +10,17 @@ asset_sources/
     preview.json
     README.md
     three_quarter.jpg
-    physics.json
+    physics.json          # 第二阶段
+    physics_test.json     # 第二阶段
+    behavior.py           # 可选运行时行为
   scenes/scene-000000/
 assets/
   objects/<category>/000000/
     object.blend
     object.usdz
+    physics.json
+    physics_test.json
+    runtime/              # 可选：运行时描述与行为源码
     preview/
   scenes/scene-000000/
 ```
@@ -24,7 +29,7 @@ assets/
 
 ## 资产定义与产物
 
-`object.py` 只生成自己的资产；统一执行入口调用其 `main(argv)`，通过 `--output` 指定产物目录。`preview.json` 定义预览，`physics.json` 定义物理属性；尚未做到相应阶段时不要求提供对应配置。
+文件接口分别见 [object.py](modeling.md)、[preview.json](preview.md)、[physics.json](physics.md)、[behavior.py](behaviors.md) 和 [physics_test.json](physics-tests.md)。尚未进入相应阶段时不要求提供对应配置。
 
 每个源目录的简洁 `README.md` 只引用一张 `three_quarter.jpg`，并简述外观、尺寸和刚体数；多组件资产列出组件名称以及关节类型、限位和运动方向。复现命令、碰撞实现和阶段说明放在教程或设计文档。`three_quarter.jpg` 是四分之三视角的 480 × 240 的缩略图，约 5 - 10 KB，左视觉、右碰撞。
 
@@ -49,3 +54,9 @@ assets/
 当前只保留 `uuid`。其他字段仅在出现明确使用方和需求时增加，并同步更新本文与读取方。
 
 `metadata.json` 表示对象身份，不是仿真器格式的加载依赖。几何、层级、关节、接触、材质和物理行为由对应资产文件表示。
+
+## 第二阶段留存
+
+第二阶段的 `physics.json`、`physics_test.json` 和可选 `behavior.py` 随资产源码提交 Git。构建时复制配置，打包行为模块及其本地依赖，生成 `object.usdz`；生成的整个资产目录可搬移使用。`physics_test.json` 由人工或 Agent 编写，构建器不自动猜测测试动作。
+
+运行时包的格式见[行为插件](behaviors.md)。测试视频、轨迹与报告保存到 `outputs/`，不写回源码或提交 Git。第二阶段构建器须保留第一阶段的模型与预览，不覆盖第一阶段 `preview/acceptance.json`。
