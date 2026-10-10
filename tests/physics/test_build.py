@@ -47,7 +47,7 @@ class PhysicsBatchTest(unittest.TestCase):
                     self.assertEqual(build.call_args_list, [call(output/ref, source/ref, output/ref) for ref in references])
                     simulation_app.assert_called_once()
                     self.assertEqual(simulation_app.call_args.args[0]['active_gpu'], 3)
-                    app.close.assert_called_once()
+                    app.close.assert_called_once_with(wait_for_replicator=False)
 
 
 if __name__ == '__main__':

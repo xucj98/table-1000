@@ -175,4 +175,4 @@ def main(argv=None):
         for reference in references:
             build(output / reference, source / reference, output / reference)
     finally:
-        app.close()
+        app.close(wait_for_replicator=False)
