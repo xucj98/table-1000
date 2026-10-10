@@ -167,7 +167,7 @@ class TestContext:
         joint.CreateLocalPos1Attr(Gf.Vec3f(0));joint.CreateLocalRot1Attr(Gf.Quatf(1))
         for axis in ['transX','transY','transZ','rotX','rotY','rotZ']:
             limit = UsdPhysics.LimitAPI.Apply(joint.GetPrim(),axis)
-            limit.CreateLowAttr(1);limit.CreateHighAttr(-1)
+            limit.CreateLowAttr(-float('inf'));limit.CreateHighAttr(float('inf'))
             drive = UsdPhysics.DriveAPI.Apply(joint.GetPrim(),axis)
             factor = 180/np.pi if axis.startswith('rot') else 1
             drive.CreateTypeAttr('force');drive.CreateTargetPositionAttr(0)

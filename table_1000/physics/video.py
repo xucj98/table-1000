@@ -36,6 +36,9 @@ class Camera:
                            if any(abs(float(component)) > 0 for field in ('force','torque') for component in value.get(field,[])))
         draw.text((10, 5), f'Isaac 5.1 | {ctx.name} | t={runtime.time:.2f}s | 1x', fill='black')
         draw.text((10, 20), f'Actions: {active or "none"}', fill='black')
+        if getattr(ctx, 'video_annotation', None):
+            draw.rectangle((0, 35, self.size[0], 54), fill='white')
+            draw.text((10, 38), ctx.video_annotation(), fill='black')
         return image
 
     def close(self):

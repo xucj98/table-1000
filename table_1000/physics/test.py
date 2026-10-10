@@ -143,6 +143,8 @@ def run_video(asset,name,test,output,app,startup,rtf,gpu):
                  'preparation':{'process_startup_seconds':startup,'construction_seconds':construction,'initialization_render_warmup_reset_seconds':ctx.preparation_seconds,'physical_warmup_seconds':ctx.warmup_seconds},
                  'independent_no_render_vs_video_final_max_scalar_error':max(errors)},
             'reaction_forces':'not sampled; recorded test forces are not contact or fixture reaction forces'}
+        if getattr(ctx, 'experiment_details', None):
+            result['experiment'] = ctx.experiment_details
         if getattr(ctx,'ground_config',None):
             result['ground_contact']=ground_clearance(json.loads((asset.parent/'model.json').read_text()),
                 ctx.rows,ctx.session.instances,ctx.ground_config['z'])
