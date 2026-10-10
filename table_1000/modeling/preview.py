@@ -442,8 +442,10 @@ def main(argv=None):
     blend = args.object.resolve()
     views_path = args.views.resolve() if args.views else None
     output = (args.output or blend.parent / "preview").resolve()
-    # A failed rerun must not leave a previous successful report behind.
-    (output / "acceptance.json").unlink(missing_ok=True)
+    # The output is a dedicated preview directory, including custom --output.
+    if output.exists():
+        shutil.rmtree(output)
+    output.mkdir(parents=True)
     views = read_views(views_path)
     if args.worker:
         run_worker(blend, views, output, args.check_only, args.device)
