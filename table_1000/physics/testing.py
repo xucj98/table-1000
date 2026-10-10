@@ -267,6 +267,11 @@ class TestContext:
                 self.warmup_seconds = time.perf_counter()-start
                 start = time.perf_counter()
                 self.session.active = False
+                # Restore native fixture targets before rebuilding physics.
+                # Otherwise a warmup kinematic clamp retains its moved pose
+                # while the constrained asset is restored to its initial pose.
+                if self.session.actions:
+                    self.session.actions(0.,self.dt)
                 self.world.reset();self.session.initialize()
                 for name,state in saved.items():
                     self.session.instances[name].restore(state)
