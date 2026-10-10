@@ -198,17 +198,18 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('asset', type=Path, help='object.usdz or its directory')
     parser.add_argument('--config', type=Path)
-    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--output', type=Path, help='Results directory; defaults to the asset physics_test directory')
     parser.add_argument('--tests', nargs='+')
     parser.add_argument('--gpu', type=int, default=0)
     args = parser.parse_args(argv)
     asset = args.asset.resolve();asset = asset / 'object.usdz' if asset.is_dir() else asset
+    output = (args.output or asset.parent / 'physics_test').resolve()
     model = json.loads((asset.parent / 'model.json').read_text())
     config = json.loads((args.config or asset.parent / 'physics_test.json').read_text())
     tests = test_configs(config, model)
     if args.tests:
         tests = {name: tests[name] for name in args.tests}
-    args.output.mkdir(parents=True, exist_ok=True)
+    output.mkdir(parents=True, exist_ok=True)
     start = time.perf_counter()
     from isaacsim import SimulationApp
     app = SimulationApp({'headless': True, 'create_new_stage': False, 'active_gpu': args.gpu, 'physics_gpu': args.gpu,
@@ -216,12 +217,14 @@ def main(argv=None):
     startup = time.perf_counter() - start
     try:
         for name, test in tests.items():
-            old_report = args.output / Path(name).stem / 'acceptance.json'
-            old_report.unlink(missing_ok=True)
-            run_test(asset, name, test, args.output.resolve(), startup)
+            directory = output / Path(name).stem
+            if directory.exists():
+                shutil.rmtree(directory)
+            (output / name).unlink(missing_ok=True)
+            run_test(asset, name, test, output, startup)
     except Exception:
         traceback.print_exc()
-        failed = args.output / Path(name).stem / 'acceptance.json'
+        failed = output / Path(name).stem / 'acceptance.json'
         failed.parent.mkdir(parents=True, exist_ok=True)
         failed.write_text(json.dumps({'execution_status': 'failed', 'review_status': 'pending',
                                       'config': test, 'error': traceback.format_exc()}, indent=2) + '\n')

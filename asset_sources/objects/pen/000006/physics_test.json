@@ -40,25 +40,24 @@
       ],
       "fps": 25
     },
-    "actions": {
-      "hold_body": {
-        "type": "fixture",
-        "body": "body",
-        "mode": "fixed",
-        "keyframes": [
-          {
-            "time": 0
-          },
-          {
-            "time": 1.72
-          }
-        ]
-      }
-    }
+    "actions": {}
   },
   "tests": {
     "pull.mp4": {
       "actions": {
+        "hold_body": {
+          "type": "fixture",
+          "body": "body",
+          "mode": "fixed",
+          "keyframes": [
+            {
+              "time": 0
+            },
+            {
+              "time": 1.72
+            }
+          ]
+        },
         "pull_cap": {
           "type": "force",
           "body": "cap",
@@ -116,6 +115,19 @@
         }
       },
       "actions": {
+        "hold_body": {
+          "type": "fixture",
+          "body": "body",
+          "mode": "fixed",
+          "keyframes": [
+            {
+              "time": 0
+            },
+            {
+              "time": 3
+            }
+          ]
+        },
         "push_cap": {
           "type": "force",
           "body": "cap",
@@ -160,16 +172,6 @@
               ]
             }
           ]
-        },
-        "hold_body": {
-          "keyframes": [
-            {
-              "time": 0
-            },
-            {
-              "time": 3
-            }
-          ]
         }
       },
       "duration": 3,
@@ -183,6 +185,399 @@
           -0.01,
           0,
           0.15
+        ]
+      }
+    },
+    "pressure_hold.mp4": {
+      "simulation": {
+        "backend": "isaac",
+        "dt": 0.004,
+        "gravity": [
+          0,
+          0,
+          0
+        ]
+      },
+      "duration": 3,
+      "ground": null,
+      "initial": {
+        "position": [
+          0,
+          0,
+          0.15
+        ],
+        "rigid_bodies": {
+          "cap": {
+            "position": [
+              -0.052,
+              0,
+              0.15
+            ]
+          }
+        },
+        "joints": {}
+      },
+      "camera": {
+        "position": [
+          0.15,
+          -0.4,
+          0.35
+        ],
+        "target": [
+          -0.01,
+          0,
+          0.15
+        ],
+        "up": [
+          0,
+          0,
+          1
+        ],
+        "resolution": [
+          960,
+          480
+        ],
+        "fps": 25
+      },
+      "actions": {
+        "hold_body": {
+          "type": "fixture",
+          "body": "body",
+          "mode": "fixed",
+          "keyframes": [
+            {
+              "time": 0
+            },
+            {
+              "time": 3
+            }
+          ]
+        },
+        "push_cap": {
+          "type": "force",
+          "body": "cap",
+          "frame": "world",
+          "keyframes": [
+            {
+              "time": 0,
+              "value": [
+                0,
+                0,
+                0
+              ]
+            },
+            {
+              "time": 0.8,
+              "value": [
+                0.5,
+                0,
+                0
+              ]
+            },
+            {
+              "time": 1.2,
+              "value": [
+                0.5,
+                0,
+                0
+              ]
+            },
+            {
+              "time": 1.6,
+              "value": [
+                4.5,
+                0,
+                0
+              ]
+            },
+            {
+              "time": 2,
+              "value": [
+                4.5,
+                0,
+                0
+              ]
+            },
+            {
+              "time": 2.1,
+              "value": [
+                0,
+                0,
+                0
+              ]
+            }
+          ]
+        }
+      },
+      "observe": {
+        "rigid_bodies": [
+          "body",
+          "cap"
+        ],
+        "joints": [],
+        "actions": [
+          "hold_body",
+          "push_cap"
+        ]
+      }
+    },
+    "drop_0.2m_4ms.mp4": {
+      "simulation": {
+        "dt": 0.004,
+        "gravity": [
+          0,
+          0,
+          -9.81
+        ]
+      },
+      "duration": 2,
+      "ground": {
+        "z": 0,
+        "static_friction": 0.35,
+        "dynamic_friction": 0.35,
+        "restitution": 0
+      },
+      "initial": {
+        "position": [
+          0,
+          0,
+          0.2
+        ],
+        "rotation": [
+          0.9238795325112867,
+          0,
+          0.3826834323650898,
+          0
+        ],
+        "linear_velocity": [
+          0,
+          0,
+          0
+        ],
+        "angular_velocity": [
+          0,
+          0,
+          0
+        ]
+      },
+      "camera": {
+        "position": [
+          0.18,
+          -1.1,
+          0.3
+        ],
+        "target": [
+          0,
+          0,
+          0.12
+        ]
+      }
+    },
+    "drop_0.5m_4ms.mp4": {
+      "simulation": {
+        "dt": 0.004,
+        "gravity": [
+          0,
+          0,
+          -9.81
+        ]
+      },
+      "duration": 2,
+      "ground": {
+        "z": 0,
+        "static_friction": 0.35,
+        "dynamic_friction": 0.35,
+        "restitution": 0
+      },
+      "initial": {
+        "position": [
+          0,
+          0,
+          0.5
+        ],
+        "rotation": [
+          0.9238795325112867,
+          0,
+          0.3826834323650898,
+          0
+        ],
+        "linear_velocity": [
+          0,
+          0,
+          0
+        ],
+        "angular_velocity": [
+          0,
+          0,
+          0
+        ]
+      },
+      "camera": {
+        "position": [
+          0.3,
+          -2.3,
+          0.6
+        ],
+        "target": [
+          0,
+          0,
+          0.27
+        ]
+      }
+    },
+    "drop_1m_4ms.mp4": {
+      "simulation": {
+        "dt": 0.004,
+        "gravity": [
+          0,
+          0,
+          -9.81
+        ]
+      },
+      "duration": 2,
+      "ground": {
+        "z": 0,
+        "static_friction": 0.35,
+        "dynamic_friction": 0.35,
+        "restitution": 0
+      },
+      "initial": {
+        "position": [
+          0,
+          0,
+          1
+        ],
+        "rotation": [
+          0.9238795325112867,
+          0,
+          0.3826834323650898,
+          0
+        ],
+        "linear_velocity": [
+          0,
+          0,
+          0
+        ],
+        "angular_velocity": [
+          0,
+          0,
+          0
+        ]
+      },
+      "camera": {
+        "position": [
+          0.5,
+          -4.2,
+          1.0
+        ],
+        "target": [
+          0,
+          0,
+          0.54
+        ]
+      }
+    },
+    "drop_1m_2ms.mp4": {
+      "simulation": {
+        "dt": 0.002,
+        "gravity": [
+          0,
+          0,
+          -9.81
+        ]
+      },
+      "duration": 2,
+      "ground": {
+        "z": 0,
+        "static_friction": 0.35,
+        "dynamic_friction": 0.35,
+        "restitution": 0
+      },
+      "initial": {
+        "position": [
+          0,
+          0,
+          1
+        ],
+        "rotation": [
+          0.9238795325112867,
+          0,
+          0.3826834323650898,
+          0
+        ],
+        "linear_velocity": [
+          0,
+          0,
+          0
+        ],
+        "angular_velocity": [
+          0,
+          0,
+          0
+        ]
+      },
+      "camera": {
+        "position": [
+          0.5,
+          -4.2,
+          1.0
+        ],
+        "target": [
+          0,
+          0,
+          0.54
+        ]
+      }
+    },
+    "drop_1m_1ms.mp4": {
+      "simulation": {
+        "dt": 0.001,
+        "gravity": [
+          0,
+          0,
+          -9.81
+        ]
+      },
+      "duration": 2,
+      "ground": {
+        "z": 0,
+        "static_friction": 0.35,
+        "dynamic_friction": 0.35,
+        "restitution": 0
+      },
+      "initial": {
+        "position": [
+          0,
+          0,
+          1
+        ],
+        "rotation": [
+          0.9238795325112867,
+          0,
+          0.3826834323650898,
+          0
+        ],
+        "linear_velocity": [
+          0,
+          0,
+          0
+        ],
+        "angular_velocity": [
+          0,
+          0,
+          0
+        ]
+      },
+      "camera": {
+        "position": [
+          0.5,
+          -4.2,
+          1.0
+        ],
+        "target": [
+          0,
+          0,
+          0.54
         ]
       }
     }
