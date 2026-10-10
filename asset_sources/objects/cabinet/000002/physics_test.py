@@ -103,7 +103,7 @@ def pull_cabinet(ctx: TestContext):
 def gravity_tilt(ctx: TestContext, degrees):
     angle = math.radians(degrees)
     ctx.initial(position=(0, 0, .15), rotation=(math.cos(angle/2), math.sin(angle/2), 0, 0))
-    ctx.camera(position=(.95, -1.25, .8), target=(0, -.12, .24))
+    ctx.camera(position=(1.25, -1.65, 1.0), target=(0, -.15, .19))
     ctx.video_annotation = lambda: f'Housing fixed at {degrees} deg | gravity only | no drawer force'
     for index in (1, 2, 3):
         joint = _joint(ctx, index)
