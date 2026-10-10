@@ -31,11 +31,10 @@ export MKL_NUM_THREADS=1
 运行构建：
 
 ```bash
-"$ISAAC_PYTHON" scripts/assets/build_physics.py assets/objects/pen/000006 \
-  --source asset_sources/objects/pen/000006 --gpu 0
+"$ISAAC_PYTHON" scripts/assets/build_physics.py --assets pen/000006 --gpu 0
 ```
 
-`--gpu` 选择可用显卡。产物默认写入资产目录，包括 `geometry.usdc`、生成的 `physics.usda`、`object.usdz`、源码快照及 `physics_build.json`。检查报告：本例应有 **2 个刚体、7 个部件、36 个碰撞形状**，构建器自动核对质量和碰撞材料绑定。
+`--source`、`--output` 默认为 `asset_sources/objects`、`assets/objects`；模型从输出根下对应资产目录读取。`--assets` 可指定多个相对资产目录，省略时构建所有包含 `physics.py` 的资产。`--gpu` 选择可用显卡。产物写入对应资产目录，包括 `geometry.usdc`、生成的 `physics.usda`、`object.usdz`、源码快照及 `physics_build.json`。检查报告：本例应有 **2 个刚体、7 个部件、36 个碰撞形状**，构建器自动核对质量和碰撞材料绑定。
 
 带行为资产另生成 `object.usda`，引用 USDZ 并挂载旁置脚本。使用时加载该入口，保留整个资产目录；测试入口已启用官方脚本组件，详见[行为分发](../designs/asset-pipeline/behaviors.md#分发)。
 
@@ -71,7 +70,7 @@ physics_test/
 
 `--output DIR` 可指定其他输出目录。重跑会先清理所选测试的旧结果，其他测试保留。
 
-**验收分两步：** 查看完整视频和关注曲线，判断是否符合实验预期；查看 `result.json` 中的执行状态、实际条件及无渲染/含视频两种 RTF。标准条件与计时方法见 [RTF 基准](../designs/asset-pipeline/physics-tests.md#rtf-基准)。执行完成不等于人工验收通过。
+**验收分两步：** 查看完整视频和关注曲线，判断是否符合实验预期；查看 `result.json` 中的执行状态、实际条件及无渲染/含视频两种 RTF。标准条件与计时方法见 [RTF 基准](../designs/asset-pipeline/physics-tests.md#rtf-基准)。
 
 当前笔示例的拔合和自由运动测试通过，合帽缝隙约 0.409 mm。持续施压仍有抖动；跌落仅通过宏观粗测，步长结果未收敛。保持力是未标定的等效模型，GUI 加载尚未验证。
 
