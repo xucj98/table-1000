@@ -43,7 +43,7 @@ uv sync --locked
 
 **输出：** 每个资产目录中的 `object.py`、`metadata.json`、`preview.json` 和简洁 `README.md`，验收后保存 `three_quarter.jpg` 缩略图。预览配置按第 4.1 节设计，可在建模迭代中调整。
 
-编写前阅读 [object.py 与模型规范](../designs/asset-pipeline/modeling.md)，按其要求定义刚体子树、视觉与碰撞几何、坐标系和关节。资产目录及 UUID 按[布局规范](../designs/asset-pipeline/layout.md)保存。
+编写前阅读 [object.py 与模型规范](../designs/asset-pipeline/modeling.md)，按其要求定义刚体子树、视觉与碰撞几何、坐标系和关节。资产文件按[布局规范](../designs/asset-pipeline/README.md#资产布局)保存。
 
 本例盒子包含外壳和三个空心抽屉，抽屉沿 −Y 拉出；黑色按动笔包含笔壳和活动组件，按钮、笔芯、笔尖共同沿 −X 移动。空腔应在碰撞几何中保留。示例材质使用 Blender 内置节点和脚本参数，无外部纹理依赖。
 
@@ -124,11 +124,20 @@ uv run python scripts/assets/validate_and_preview.py assets/objects/pen/000001/o
 
 **再人工查看预览结果。** 打开资产 `preview/` 中生成的 JPG 和 MP4，人工确认结果是否符合要求。
 
+从模型导出资产树：
+
+```bash
+blender -b --python-exit-code 1 -P scripts/assets/export_asset_tree.py -- \
+  assets/objects/cabinet/000000/object.blend --output outputs/cabinet-tree.txt
+```
+
+加 `--compact` 可按[压缩规则](../designs/asset-pipeline/modeling.md#资产树导出)缩写重复组件。将核对后的资产树放入对象 README，并按[部件命名要求](../designs/asset-pipeline/modeling.md#部件命名与资产树)确认部件及其刚体归属。
+
 不通过时，记录失败项、图片名或视频帧号：形状、结构或复杂度问题修改 `object.py` 并重新生成；视角和运动覆盖问题修改 `preview.json`。随后重新执行自动检查与人工查看。
 
 ## 5. 留存成果
 
-自动报告和人工检查均通过后，按[布局规范](../designs/asset-pipeline/layout.md)留存源码、配置、README 和缩略图；模型、完整预览与报告保留在生成目录。
+自动报告和人工检查均通过后，按[布局规范](../designs/asset-pipeline/README.md#资产布局)留存源码、配置、README 和缩略图；模型、完整预览与报告保留在生成目录。
 
 若验收期间调整过源目录的 `preview.json`，再执行第 3 节建模命令同步产物副本，并重新运行完整验收，确保留存的模型、配置与报告对应同一版本。PR 中记录自动检查结果及人工检查结论。
 

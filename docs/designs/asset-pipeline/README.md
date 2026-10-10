@@ -1,49 +1,93 @@
 # 资产生产规范
 
-这里集中定义对象资产的源码接口、配置格式、构建产物与验收约定。操作手册说明如何执行流程，通过链接引用本目录，不另维护一套字段定义。规范目录使用 `asset-pipeline`，覆盖源码、导出和测试三个阶段，不绑定某个仿真器。
+本目录规定 Table-1000 对象资产的文件结构与接口，覆盖从 Blender 建模到物理仿真资产的生产和验收。
 
-| 文档 | 内容 | 状态 |
-| --- | --- | --- |
-| [目录与留存](layout.md) | 资产编号、元数据、源码与生成物、Git 边界 | 第一阶段已实现；第二阶段布局为设计 |
-| [object.py 与 object.blend](modeling.md) | 建模入口、刚体子树、坐标系、视觉与碰撞、关节 | 已实现 |
-| [preview.json](preview.md) | 几何姿态、相机、关键帧、检查与预览 | 已实现 |
-| [physics.json](physics.md) | 质量、材料、驱动与 USDZ 导出 | 设计稿，尚未实现统一入口 |
-| [behavior.py](behaviors.md) | 随资产分发的可选运行时行为 | 设计稿，尚未实现统一加载器 |
-| [physics_test.json](physics-tests.md) | 初始状态、受力动作、视频和物理验收 | 设计稿，尚未实现统一测试器 |
+README 说明整体流程、文件分工和存储位置。各文件的字段、单位、默认值与约束见对应规范；具体执行命令见[操作手册](../../tutorials/README.md)。
 
-## 两阶段流程
+## 生产流程
+
+两个阶段都按“源码 → 构建产物 → 测试结果”组织。
+
+**第一阶段：建模与形状验收。** `object.py` 生成包含视觉、碰撞几何和关节的 `object.blend`；`preview.json` 指定观察视角和几何姿态，供验收工具检查并渲染图片、视频。
 
 ```text
-第一阶段
-object.py + metadata.json + preview.json
-    → 构建 → object.blend + 源码/配置快照
-    → validate_and_preview → JPG / MP4 + acceptance.json
-
-第二阶段（设计）
-object.blend + physics.json + 可选 behavior.py + physics_test.json
-    → 构建 → object.usdz + 可选 runtime/ + 配置快照
-    → 物理仿真测试 → MP4 + acceptance.json + trace.csv
+object.py
+    ──构建──> object.blend
+            + preview.json
+            └──检查与渲染──> JPG / MP4 / acceptance.json
 ```
 
-两类测试配置都属于输入源码，构建时复制，不根据模型自动生成验收意图。第一阶段验证形状和运动空间；第二阶段验证物理参数与行为。第一阶段通过不等于物理模型通过。
+**第二阶段：物理属性与运动验收。** 在模型上补充 `physics.json`，必要时提供 `behavior.py`，生成 USDZ 与运行时行为包；`physics_test.json` 指定初态、外力和观察方式，驱动物理仿真测试。
 
-## 数据归属
+```text
+object.blend + physics.json + 可选 behavior.py
+    ──构建──> object.usdz + 可选 runtime/
+            + physics_test.json
+            └──仿真测试──> MP4 / trace.csv / acceptance.json
+```
 
-| 内容 | 唯一来源 |
-| --- | --- |
-| 几何、刚体划分、保存零位、关节类型/连接/轴/锚点/限位、禁碰关系 | `object.py` 生成的 `object.blend` |
-| 预览相机与指定姿态 | `preview.json` |
-| 质量、质心/惯量覆盖、材料、驱动、行为绑定 | `physics.json` |
-| 原生物理属性不能表达的附加力或状态转换 | 可选 `behavior.py` |
-| 实验初态、重力、地面、步长、外力与观察方式 | `physics_test.json` |
-| 对象身份 | `metadata.json` |
+模型保存刚体划分、几何和关节定义；物理配置补充质量、材料与驱动。两类测试配置分别描述几何预览和受力实验，均作为资产源码保存。第一阶段已实现；第二阶段的文件格式与接口目前为草案。
 
-同一参数不在多个文件重复定义。仿真导出不能重新猜测建模阶段的刚体与关节，也不再次自动分解已经明确给出的凸碰撞网格。
+## 文件分工
 
-## 坐标、单位与职责
+| 文件 | 内容 | 规范 |
+| --- | --- | --- |
+| `object.py`、`object.blend` | 建模入口、坐标系、刚体子树、视觉与碰撞、关节 | [建模](modeling.md) |
+| `preview.json` | 几何姿态、相机、关键帧与预览输出 | [几何预览](preview.md) |
+| `physics.json`、`object.usdz` | 质量、接触材料、驱动与仿真导出 | [物理属性](physics.md) |
+| `behavior.py`、`runtime/manifest.json` | 随资产加载的附加力或状态转换 | [行为插件](behaviors.md) |
+| `physics_test.json` | 实验初态、测试动作、视频与结果记录 | [物理测试](physics-tests.md) |
+| `metadata.json` | 现有 UUID 字段；身份与版本规则待定 | 见下文 |
 
-资产坐标系和刚体/关节坐标见[模型规范](modeling.md)。JSON 和行为接口统一采用米、千克、秒、弧度、牛顿和牛顿米；四元数顺序为 `[w, qx, qy, qz]`。导出器/后端适配器负责转换 USD 或引擎 API 的单位，例如旋转限位和驱动参数涉及的角度单位；转换不能只改目标角而漏掉刚度与阻尼。
+统一单位：m、kg、s、rad、N、N·m；四元数顺序为 `[w, qx, qy, qz]`。各文件另行注明坐标系。后端适配器负责单位转换。
 
-核心包保持轻量；Blender、OpenUSD 导出器和仿真后端在各自环境执行。`scripts/` 只提供薄入口，共用实现放在 `table_1000/`，具体模块做到时再确定。本项目负责资产和资产测试，不重复实现 robot-bridge 的策略或机器人控制能力。
+## 名称压缩表示
 
-第一阶段的执行步骤见[第一章](../../tutorials/01-blender-modeling.md)。第二阶段先实现普通抽屉和带盖笔的构建、加载与受力测试，再按实际需要扩展字段；本目录的第二阶段示例目前不是可执行命令或已完成的验收证据。
+资产树与支持范围引用的配置共用 `name1..N` 表示法：`cabinet.drawer1..3` 展开为 `cabinet.drawer1`、`cabinet.drawer2`、`cabinet.drawer3`，包含首尾。范围后可接名称后缀，例如 `cabinet.drawer1..3.handle`。
+
+- 每个名称最多一个递增整数范围，不支持通配符或正则表达式；补零编号须保持相同宽度，例如 `collision00..15`。
+- 配置中各对象分别获得相同配置，例如 `drawer1..3` 的 `mass: 0.12` 表示每个抽屉均为 0.12 kg。
+- 配置展开后的名称必须存在且符合引用类型。同一字段内不得重复引用同一对象；需要不同配置时拆开范围单独填写。
+- 资产树自动压缩仅合并同父级、名称仅连续显式编号不同、角色/碰撞类型/材质及归一化子树结构相同的对象；`.001` 自动后缀不参与归并。不按外观猜测同类部件。手写配置范围不要求各对象几何相同。
+
+压缩只影响文字展示或配置书写，模型中的对象仍各自使用完整名称，实际层级不变。具体配置文件注明哪些字段支持范围引用。
+
+## 资产布局
+
+对象路径为 `objects/<category>/<六位编号>`，场景路径为 `scenes/scene-<六位编号>`；编号从 `000000` 开始。
+
+| 位置 | 内容 | Git |
+| --- | --- | --- |
+| `asset_sources/objects/<category>/<id>/` | object.py、preview.json、metadata.json、README.md、three_quarter.jpg；第二阶段增加 physics.json、physics_test.json、可选 behavior.py | 提交 |
+| `assets/objects/<category>/<id>/` | object.blend、object.usdz、源码及配置快照、可选 runtime/、preview/ | 忽略 |
+| `outputs/` | 物理测试视频、轨迹、报告与日志 | 忽略 |
+
+源码快照包含重建所需的共用模块。外部资源引用须注明版本、来源和许可，不使用私有绝对路径。
+
+### README 与缩略图
+
+`README.md` 包含 `![preview](three_quarter.jpg)`、简短外观与尺寸说明、资产树及刚体数；有关节时说明类型、限位和方向。部件名称遵循[建模规范](modeling.md#部件命名与资产树)。
+
+资产树用 `[rigid]` 标注刚体根，子节点可使用局部名称，重复组件可用[名称压缩表示](#名称压缩表示)，例如：
+
+```text
+cabinet
+  housing [rigid]
+    rubber_pad1..4
+  drawer1..3 [rigid]
+    handle
+```
+
+资产树展示所有刚体及其部件，省略部件下的视觉与碰撞网格；使用空格缩进表示实际父子层级，森林保留多个根节点。
+
+`three_quarter.jpg` 是四分之三视角的 480 × 240 的缩略图，约 5 - 10 KB，左视觉、右碰撞。
+
+### metadata.json
+
+现有格式：
+
+```json
+{"uuid": "<object-uuid>"}
+```
+
+UUID 的用途、修改规则及资产版本/发布机制尚未确定；此处仅记录现有格式。

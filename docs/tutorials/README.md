@@ -10,4 +10,4 @@
 | 04 编写专家轨迹脚本 | 待发布 |
 | 05 渲染专家轨迹视频 | 待发布 |
 
-标准批量构建入口是 [`scripts/assets/build_assets.py`](../../scripts/assets/build_assets.py)，资产验收与预览入口是 [`scripts/assets/validate_and_preview.py`](../../scripts/assets/validate_and_preview.py)，实现在 `table_1000/modeling/`，回归测试在对应的 `tests/modeling/`。单资产定义位于 `asset_sources/objects/`；批量构建默认发现全部资产，也可用 `--assets` 指定相对资产目录。资产按[存储布局](../designs/asset-pipeline/layout.md)分别保存源码、配置和生成产物。第一章实测环境为 Blender 4.5.14 LTS，后续章节逐块编写与复现。
+标准批量构建入口是 [`scripts/assets/build_assets.py`](../../scripts/assets/build_assets.py)，资产验收与预览入口是 [`scripts/assets/validate_and_preview.py`](../../scripts/assets/validate_and_preview.py)，实现在 `table_1000/modeling/`，回归测试在对应的 `tests/modeling/`。单资产定义位于 `asset_sources/objects/`；批量构建默认发现全部资产，也可用 `--assets` 指定相对资产目录。资产按[存储布局](../designs/asset-pipeline/README.md#资产布局)分别保存源码、配置和生成产物。第一章实测环境为 Blender 4.5.14 LTS，后续章节逐块编写与复现。

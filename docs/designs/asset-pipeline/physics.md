@@ -1,12 +1,10 @@
-# physics.json 与物理资产导出
+# physics.json 与 object.usdz
 
-状态：第二阶段设计稿。已有实验不等于本规范的构建器和加载器已实现。
+状态：草案。
 
-## 输入与引用
+定义质量、接触材料、驱动及行为绑定。`rigid_bodies`、`colliders`、`joints` 为并列的顶层字段，分别引用 Blender 刚体根、部件节点、约束对象的全局唯一完整名称。部件所属刚体由 `object.blend` 的父子层级确定，不在 JSON 中重复声明。
 
-`physics.json` 位于资产源目录，补充第一阶段模型的物理参数。`bodies` 使用 Blender 刚体根名称，`joints` 使用约束对象名称。这些名称在该资产内稳定，不使用场景绝对路径；实例化时由加载器解析为本实例的 USD Prim。
-
-下面的数值仅演示格式，必须通过实验评估，不能视为真实材料标定：
+## 格式
 
 ```json
 {
@@ -15,55 +13,105 @@
       "static_friction": 0.4,
       "dynamic_friction": 0.3,
       "restitution": 0.05
+    },
+    "rubber": {
+      "static_friction": 0.8,
+      "dynamic_friction": 0.6,
+      "restitution": 0.1
     }
   },
   "defaults": {"material": "plastic"},
-  "bodies": {
-    "housing": {"mass_kg": 0.8},
-    "drawer1": {"mass_kg": 0.12},
-    "drawer2": {"mass_kg": 0.12},
-    "drawer3": {"mass_kg": 0.12}
+  "rigid_bodies": {
+    "cabinet.housing": {"mass": 0.8},
+    "cabinet.drawer1..3": {"mass": 0.12}
+  },
+  "colliders": {
+    "cabinet.housing.rubber_pad1..4": {"material": "rubber"}
   },
   "joints": {
-    "drawer1_open": {
-      "drive": {"target": 0, "stiffness": 0, "damping": 0.2, "max_force": 10}
+    "cabinet.drawer1..3.slide": {
+      "drive": {"target_position": 0, "stiffness": 0, "damping": 0.2, "max_force": 10}
     }
   }
 }
 ```
 
-## 字段
-
 | 字段 | 含义 |
 | --- | --- |
 | `materials` | 命名接触材料；静摩擦、动摩擦、恢复系数均无量纲，区别于视觉材质 |
 | `defaults.material` | 未单独指定时，所有刚体碰撞形状使用的材料名 |
-| `bodies` | 覆盖所有刚体；每个刚体明确给出 `mass_kg`，不沿用 Blender 的占位质量 |
-| `bodies.<name>.material` | 可选，覆盖该刚体的默认接触材料 |
-| `bodies.<name>.center_of_mass_m` | 可选，刚体根局部坐标中的质心 `[x, y, z]` |
-| `bodies.<name>.inertia_kg_m2` | 可选，关于质心、按刚体根局部轴表示的对称 3×3 惯量矩阵 |
+| `rigid_bodies` | 仅配置刚体属性；覆盖所有刚体；每个刚体明确给出 `mass`，不沿用 Blender 的占位质量 |
+| `rigid_bodies.<name>.mass` | 整个刚体的总质量，kg |
+| `rigid_bodies.<name>.center_of_mass` | 可选，刚体根局部坐标中的质心 `[x, y, z]`，m |
+| `rigid_bodies.<name>.inertia` | 可选，关于质心的主惯量与主轴方向，见下文 |
+| `colliders.<part_name>.material` | 可选，将该部件下所有碰撞网格统一绑定到指定接触材料 |
 | `joints` | 可选，给模型中已有的关节补充驱动参数，不重复定义连接和几何限位 |
 | `behaviors`、`interfaces` | 可选，见[行为插件](behaviors.md) |
 | `backends.<name>` | 可选，仅供对应后端读取的已支持参数，不是任意 USD 属性透传 |
 
-质心和惯量覆盖需一起提供。未提供时由导出器或后端根据碰撞形状和总质量计算，并在报告中记录实际采用值；这是均匀密度近似，碰撞块重叠会影响计算，不能宣称等同于真实质量分布。导出器负责把惯量矩阵转换成 USD 的主惯量与主轴表示。
+`rigid_bodies`、`colliders`、`joints` 的名称键支持[名称压缩表示](README.md#名称压缩表示)。
 
-接触材料会与另一接触面的材料共同决定接触响应。具体组合规则由后端适配器明确写入并记录；不能认为仅指定笔的摩擦系数就确定了它与所有表面的摩擦行为。首版按刚体分配材料，需要不同接触面的独立材料时再扩展。
+## 质量属性
 
-`drive` 使用力驱动：滑动关节的目标单位为 m、刚度为 N/m、阻尼为 N·s/m、最大力为 N；转动关节分别为 rad、N·m/rad、N·m·s/rad、N·m。省略 `drive` 表示不配置驱动。`stiffness = 0` 不产生回位弹力，正阻尼仍会耗散运动；它不能代替静摩擦阈值。普通弹簧优先用原生 drive，按动笔的按压自锁等离散状态行为使用插件。
+`mass`、`center_of_mass`、`inertia` 仅绑定刚体，描述整个刚体的总质量、质心和惯量；不在视觉网格或碰撞形状上单独配置。
 
-重力、地面、是否临时固定资产、仿真步长及测试施力属于测试或场景配置，不写进资产固有属性。模型中没有永久关节的两个部件，不因测试需要而导出永久连接。
+总质量必填。质心与惯量覆盖一起提供；省略时按该刚体的碰撞形状和总质量采用均匀密度近似计算。不同接触材料不改变质量分布。
 
-## 导出产物
+`inertia` 格式：
 
-构建器读入 `object.blend` 与本配置：
+```json
+{
+  "diagonal_inertia": [0.001, 0.002, 0.0025],
+  "principal_axes": [1, 0, 0, 0]
+}
+```
 
-1. 沿用视觉网格、材质、凸碰撞形状和刚体子树，把每个刚体映射为一个 USD 刚体节点；森林在 USD 资产总 Xform 下仍保持独立刚体。
-2. 沿用关节的类型、轴、锚点、限位和禁碰关系，加入物理参数。凸块逐块导出，不把空腔整体包成一个凸包。
-3. 写出 `object.usdz`，复制 `physics.json`、`physics_test.json`；存在附加行为时生成[运行时包](behaviors.md#分发与自动加载)。
+- `diagonal_inertia`：必填，沿三个主轴的主惯量，单位 kg·m²。
+- `principal_axes`：主轴坐标系相对于刚体根局部坐标系的旋转，单位四元数，顺序为 `wxyz`；省略时为 `[1, 0, 0, 0]`，即两套轴向一致。
 
-USD 资产的总 Xform 表示整个资产的坐标与场景放置位置，本身不是额外刚体。USDZ 应包含使用的视觉资源，搬移资产目录后仍可加载；外部 Python 不塞入标准 USDZ。
+## 接触材料
 
-导出本身检查刚体数、关节连接、单位、限位、碰撞形状映射和资源可解析性。仿真器实际加载后的值也需记录，避免仅验证写入文件就误认为后端接受了所有参数。对不可表示的功能明确报告不支持，不静默丢弃。
+`colliders` 的键为部件完整名称，不带 `.collision`。配置作用于该部件下所有 `geometry_role = "collision"` 的网格，不改变视觉材质。仅视觉部件无需配置。材料优先级为：
 
-不同引擎的碰撞烹饪、接触偏移、求解器和材料组合可能不同。第一阶段几何通过不保证物理接触无穿透；测试记录实际步长、求解设置和接触参数。若导出或引擎改变了凸几何，报告该近似，不声称无损转换。
+`colliders.<part_name>.material` → `defaults.material`。
+
+同一刚体的不同部件可使用不同材料；同一部件内需要不同接触材料时，拆为不同部件。示例中四个脚垫使用橡胶，其余部件使用默认塑料。两接触面的材料组合规则由后端明确设置并记录。
+
+## drive
+
+省略表示无驱动。配置时采用力驱动：
+
+| 字段 | 滑动关节 | 转动关节 |
+| --- | --- | --- |
+| `target_position` | m | rad |
+| `stiffness` | N/m | N·m/rad |
+| `damping` | N·s/m | N·m·s/rad |
+| `max_force` | N | N·m |
+
+## Isaac Sim / USD 映射
+
+字段统一使用 snake_case，单位由本规范约定，不写入字段名。
+
+| 本规范 | USD 属性 |
+| --- | --- |
+| `mass` | `physics:mass` |
+| `center_of_mass` | `physics:centerOfMass` |
+| `inertia.diagonal_inertia` | `physics:diagonalInertia` |
+| `inertia.principal_axes` | `physics:principalAxes` |
+| `static_friction` / `dynamic_friction` | `physics:staticFriction` / `physics:dynamicFriction` |
+| `restitution` | `physics:restitution` |
+| `drive.target_position` | `drive:<轴>:physics:targetPosition` |
+| `drive.stiffness` / `damping` / `max_force` | 对应 DriveAPI 的 `stiffness` / `damping` / `maxForce` |
+
+显式惯量直接写入主惯量与主轴方向；自动计算得到惯量矩阵时，先分解为这两项。转动驱动的角度与刚度、阻尼须按 USD 的角度单位转换。驱动类型固定为 `force`，`target_position` 明确表示位置目标。
+
+参考：[MassAPI](https://openusd.org/release/api/class_usd_physics_mass_a_p_i.html)、[DriveAPI](https://openusd.org/release/api/class_usd_physics_drive_a_p_i.html)、[Isaac Sim PhysicsMaterial](https://docs.isaacsim.omniverse.nvidia.com/5.1.0/py/source/extensions/isaacsim.core.api/docs/index.html)。
+
+## object.usdz
+
+- 资产总 Xform 表示资产坐标系，不作为额外刚体。
+- 每个刚体子树映射为一个刚体 Xform；部件映射为普通 Xform，不添加 RigidBodyAPI。保留部件下的多个碰撞形状，凸块逐块导出。
+- 质量属性写入刚体节点；按上述优先级解析接触材料并绑定到各碰撞形状。
+- 几何、关节类型/连接/轴/锚点/限位及禁碰关系来自 `object.blend`；质量、材料和驱动来自 `physics.json`。
+- 包含所用视觉资源；Python 行为采用独立[运行时包](behaviors.md#分发与自动加载)。
+- 导出器负责坐标与单位转换；后端不支持的属性报错。

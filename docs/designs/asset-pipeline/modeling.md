@@ -1,57 +1,50 @@
 # object.py 与 object.blend
 
-状态：第一阶段已实现。统一入口见 [build_assets.py](../../../scripts/assets/build_assets.py)，检查实现见 [geometry_checks.py](../../../table_1000/modeling/geometry_checks.py)。
+## 入口
 
-## 源码接口
+`main(argv=None)`，参数 `--output DIR`。在 Blender Python 中执行，每个脚本生成一个资产的 `object.blend`。
 
-每个 `object.py` 只生成所在目录的一个资产，提供 `main(argv=None)`，通过 `--output DIR` 接收产物目录。执行环境是 Blender 自带 Python；共用建模实现可放在 `table_1000/modeling/`，不能依赖其他资产先执行。
+## 坐标与结构
 
-参考图片供人工或 AI 编写建模代码。运行 `object.py` 时读取脚本中的几何与材质参数、同目录 `metadata.json` 和 `preview.json`，不要求 Blender 自动识别照片；输出是 `object.blend` 及[布局规范](layout.md)要求的源码与配置快照。修改已有资产时保留 UUID。生成时不执行动力学测试。
+- 一个资产一个 `.blend`；Blender 世界坐标系作为资产局部坐标系，原点与轴向按物体常识定义。
+- 米制：`unit_settings.system = "METRIC"`、`scale_length = 1`；应用对象缩放和碰撞修改器。
+- 每个刚体对应一棵明确标识的完整子树，整体允许树或森林。
+- 每个刚体至少包含一个部件；部件包含一个或多个视觉或碰撞网格，允许仅视觉部件。视觉与碰撞不要求一一对应；空腔与活动间隙必须保留。
 
-尺寸和不可见结构可依据图片与常识推断。按可独立运动的刚体拆分部件，视觉与碰撞在这一阶段同时建模。质量、接触材料和驱动参数以第二阶段的 [physics.json](physics.md) 为准，不把建模时 Blender 的默认物理值视为已标定参数。
-
-## 刚体与几何
-
-每个刚体对应一棵明确标识的完整子树，视觉与碰撞几何都有唯一的刚体归属。整体允许树或森林，不要求统一总根或固定层数。
-
-Object 是父子树的节点。Mesh Object 引用 Mesh 数据块，Empty 没有网格数据。当前实现使用 Blender **Compound**：刚体根是零顶点 Mesh Object，直接子级的碰撞形状共同构成一个刚体，根本身不增加实心几何。
-
-```text
-盒子组织节点（可选 Empty，不定义资产坐标系）
-├─ 外壳刚体根（Compound）
-│  ├─ 视觉对象：壳体、背板、隔板等
-│  └─ 碰撞对象：凸壳体分段、盒形板件等
-├─ 上抽屉刚体根（Compound）
-│  ├─ 视觉对象：前板、侧壁、底板、背板、拉手等
-│  └─ 碰撞对象：对应板件与拉手
-├─ 中抽屉刚体根（Compound）
-└─ 下抽屉刚体根（Compound）
-三个独立关节对象：分别引用外壳根和对应抽屉根
-```
-
-视觉对象不设刚体；碰撞对象必须是刚体根的直接子级，并关闭渲染显示。这些子对象提供碰撞形状，不是独立运动的刚体。使用多个基础形状或凸块保留空腔和活动间隙，不能将整只空心抽屉合并后求一个凸包。视觉与碰撞网格可以不同，但接触表面应匹配。
-
-| 信息 | 脚本约定 |
+| 对象 | 要求 |
 | --- | --- |
-| 刚体身份 | 根对象 `rigid_body_root = True`，碰撞形状 `COMPOUND` |
-| 几何用途 | 子对象 `geometry_role = "visual"` 或 `"collision"` |
-| 关节 | 原生 Rigid Body Constraint，`preview_joint = True`；约束对象名作为关节名 |
-| 零位与限位 | 保存模型时的装配姿态为零位；滑动用米、转动用弧度，限位须包含零位 |
-| 禁碰关系 | 关节 `disable_collisions`；示例三个关节均不禁碰 |
-| 穿透容差 | Scene 的 `penetration_tolerance_m`，示例为 0.0002 m |
+| 刚体根 | 零顶点 Mesh Object；`rigid_body_root = True`；`collision_shape = "COMPOUND"` |
+| 部件节点 | 刚体根的直接子级；零顶点 Mesh Object；`semantic_part = True`；`collision_shape = "COMPOUND"`；不标记 `rigid_body_root` |
+| 视觉对象 | `geometry_role = "visual"`；部件节点的子级；有网格面和材质；不设刚体；渲染可见 |
+| 碰撞对象 | `geometry_role = "collision"`；部件节点的子级；设置刚体碰撞形状；`hide_render = True` |
+| 碰撞形状 | 当前支持 `BOX`、显式闭合凸网格 `CONVEX_HULL`；`use_margin = True`、`collision_margin = 0` |
+| Scene | `penetration_tolerance_m`，单位 m，默认 0.0002 |
 
-使用米制，Scene 的 `unit_settings.system = "METRIC"`、`scale_length = 1`；应用对象缩放和碰撞修改器。当前粗测支持 `BOX` 和显式闭合凸网格 `CONVEX_HULL`，不自动分解凹网格；碰撞形状须开启裕量设置并设为零。预览支持滑动关节 `SLIDER` 和旋转关节 `HINGE`，关节连接须无环，每个运动刚体只能有一个上游关节。
+TODO：用现成碰撞引擎替换当前粗测，扩展其他基础形状支持。
 
-**TODO：接入现成碰撞引擎的查询接口，替换自写检测并支持其他基础形状。当前形状限制是实现限制，不是长期资产规范。**
+## 部件命名与资产树
 
-## 局部坐标与复杂度
+具有独立功能或材质的部件须独立命名，对象名称在该资产内全局唯一。采用点号分隔的完整名称，例如 `cabinet.drawer1.handle`；重复组件显式编号，不依赖 Blender 自动添加的 `.001` 后缀。
 
-一个资产保存在一个 `.blend` 中，Blender 世界坐标系就是本资产的局部坐标系。按物体常识定义原点和轴向，所有部件共用该坐标系；对象自身的局部坐标或 `asset_id` 不改变预览的参考系。带盖笔的 `body` 和 `cap` 是两棵顶层刚体子树，无共同父对象或永久关节。
+名称各段使用英文字母、数字和下划线。点号是命名分隔符，实际父子关系由 Object 的 `parent` 定义；资产前缀不要求创建共同根对象，森林仍然允许。
 
-省略不影响操作的装饰细节，优先使用低面数板件和低分段曲面。验收脚本只报告视觉三角数、碰撞形状数、凸网格顶点和面数总和，不据此判定通过或失败；人工查看时结合用途判断是否需要简化。
+同一部件使用独立视觉与碰撞对象时，分别命名为 `cabinet.drawer1.handle.visual`、`cabinet.drawer1.handle.collision`；多个凸块使用 `.collision1`、`.collision2` 等。它们共同挂在 `cabinet.drawer1.handle` 部件节点下。部件的 Compound 聚合其碰撞几何，整个部件仍属于上层刚体，不拥有独立的质量、运动或关节。需要不同接触材料的区域须有独立碰撞对象。
 
-## 关节坐标
+对象 README 提供[资产树](README.md#readme-与缩略图)，标明刚体与部件。第一阶段验收核对部件划分、完整名称、刚体归属及 README 与模型的一致性。此项为新增验收要求，当前自动检查器尚未检查命名语义与 README 一致性，由人工核对；已有资产需在采用此规范时整理名称。
 
-约束对象名是稳定的关节名；`object1` 为上游刚体、`object2` 为运动刚体。`SLIDER` 沿约束对象局部 X 轴平移，`HINGE` 绕约束对象局部 Z 轴旋转；通过约束对象的姿态定义实际运动方向。保存姿态对应关节坐标 0，启用限位时必须包含 0。关节连接图与 Blender 的父子树是两种关系，关节不会把一个独立刚体变成另一个刚体的子树。
+## 资产树导出
 
-导出器必须使用这里的刚体划分、关节连接、轴、锚点和限位，不能从视觉对象名称重新推断。零顶点 Compound 根在 USD 中可映射成刚体 Xform，其碰撞子对象映射成该刚体的多个碰撞形状；不导出无用的空网格。
+从 `object.blend` 的实际 `parent` 层级导出树或森林，刚体根标注 `[rigid]`。默认展示组织节点、刚体根和部件，用两个空格缩进表示每级父子关系；子节点名称省略与实际父节点相同的前缀。`--geometry` 额外展示视觉与碰撞网格。相机、灯光和独立关节辅助对象不展示；旧资产没有部件标记时只展示组织节点与刚体根。
+
+默认不压缩编号；可选压缩遵循[名称压缩表示](README.md#名称压缩表示)。压缩输出同时生成 `<输出名>.expanded.txt`，保留完整展开名称以便核对。
+
+## 关节
+
+原生 Rigid Body Constraint，`preview_joint = True`，对象名作为关节名；`object1` 为上游刚体、`object2` 为运动刚体。
+
+| 类型 | 运动轴 | 单位 | 限位字段 |
+| --- | --- | --- | --- |
+| `SLIDER` | 约束对象局部 X | m | `use_limit_lin_x`、`limit_lin_x_lower/upper` |
+| `HINGE` | 约束对象局部 Z | rad | `use_limit_ang_z`、`limit_ang_z_lower/upper` |
+
+保存装配姿态为零位；启用限位时须包含 0。关节连接无环，每个运动刚体最多一个上游关节。`disable_collisions` 定义两连接刚体之间的禁碰关系。
