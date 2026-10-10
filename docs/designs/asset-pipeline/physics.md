@@ -56,6 +56,6 @@ Stage 使用米、千克和 Z 向上。USDA 属性遵循原生 Schema 单位，�
 
 可直接编辑 USDA，也可通过官方 `pxr.UsdPhysics`、`pxr.PhysxSchema` API 或 Isaac 编辑器修改该层。几何重建不覆盖源物理层。Python 只是编辑工具，不同时维护另一份权威 JSON 配置。
 
-USDZ 包含组合后的物理资产与视觉资源；可选行为脚本的挂载和交付见[行为规范](behaviors.md)。构建需重新打开产物核对刚体、碰撞、关节和材质绑定，并使用适用于该类资产的官方验证规则；机器人专用规则不作为普通物体的强制条件。
+USDZ 包含组合后的物理资产与视觉资源；带行为时通过外层 `object.usda` 引用 USDZ，具体挂载和交付见[行为规范](behaviors.md)。构建需重新打开产物核对刚体、碰撞、关节和材质绑定，并使用适用于该类资产的官方验证规则；机器人专用规则不作为普通物体的强制条件。
 
 参考：[Isaac 资产分层](https://docs.isaacsim.omniverse.nvidia.com/5.1.0/robot_setup/asset_structure.html)、[MassAPI](https://openusd.org/release/api/class_usd_physics_mass_a_p_i.html)、[DriveAPI](https://openusd.org/release/api/class_usd_physics_drive_a_p_i.html)、[资产验证](https://docs.isaacsim.omniverse.nvidia.com/5.1.0/robot_setup/asset_validation.html)。

@@ -1,12 +1,12 @@
 # behavior.py
 
-本规范规定目标接口；官方脚本组件在项目所用 Isaac 版本上的接入需实际验证。
+Isaac Sim 5.1 无界面应用已验证官方脚本加载、物理步回调及停止/重启/卸载；完整资产迁移和 GUI 路径仍待验收。
 
 `behavior.py` 为可选的资产行为源码，负责原生物理属性不能表达的附加力或状态转换。普通刚体及原生关节能够表达的行为无需脚本。
 
 ## 挂载与生命周期
 
-`physics.usda` 使用官方 Python Scripting 组件在资产节点上引用行为脚本。行为继承当前 Isaac 版本提供的 `BehaviorScript`，由官方组件负责实例化、加载和销毁。应用入口统一启用所需扩展及脚本执行；场景和测试只加载资产，不逐个导入行为代码。
+构建生成的外层 `object.usda` 使用官方 Python Scripting 组件，在资产根节点上引用同目录的 `behavior.py`。行为继承当前 Isaac 版本提供的 `BehaviorScript`，由官方组件负责实例化、加载和销毁。应用入口统一启用所需扩展及脚本执行；场景和测试只加载资产，不逐个导入行为代码。
 
 每个挂载实例独立保存状态。开始仿真时建立所需的物理步订阅，停止/复位时恢复行为状态，卸载时释放订阅及跨实例引用。`on_update` 是时间线更新，不等同于物理步；施力逻辑使用官方 PhysX 物理步回调，保证每个实际物理步只执行一次。
 
@@ -23,9 +23,23 @@
 
 ## 分发
 
-交付单位为整个资产目录：`object.usdz`、`behavior.py` 及实际需要的资产本地依赖。包内不得引用源工作区的绝对路径；公共工具依赖同版本 `table_1000`，不逐资产复制。
+行为资产交付整个目录：`object.usda` 为加载入口，引用 `object.usdz` 并挂载旁置 `behavior.py`。物理属性与行为参数来自源 `physics.usda`；脚本引用只写在生成的外层入口，不打入 USDZ。
 
-标准 USDZ 不承载 Python 可执行脚本。原生脚本引用需在打包后仍能定位目录旁的代码；具体落盘形式以当前 Isaac 的实际解析结果为准。若必须增加外层 USD 入口承载脚本引用，应明确该入口，不能声称直接打开 USDZ 就能自动运行。
+```usda
+#usda 1.0
+(
+    defaultPrim = "Asset"
+)
+def Xform "Asset" (
+    prepend references = @object.usdz@
+    prepend apiSchemas = ["OmniScriptingAPI"]
+)
+{
+    uniform asset[] omni:scripting:scripts = [@behavior.py@]
+}
+```
+
+Isaac Sim 5.1 的官方加载器实测不能执行 `archive.usdz[behavior.py]` 包内路径，因此不将脚本打包进 USDZ。无行为资产可直接加载 `object.usdz`。引用使用相对路径；公共工具依赖同版本 `table_1000`，不逐资产复制。
 
 验收包括独立目录加载、同资产多实例、跨实例行为、停止/重置/卸载，以及 GUI 与无界面应用的加载。未完成的路径明确标为未支持，不以自定义加载器成功代替官方组件验证。
 
