@@ -23,7 +23,7 @@ Isaac Sim 5.1 无界面应用已通过带盖笔的官方脚本加载、物理步
 
 ## 分发
 
-行为资产交付整个目录：`object.usda` 为加载入口，引用 `object.usdz` 并挂载旁置 `behavior.py`。物理属性与行为参数来自源 `physics.usda`；脚本引用只写在生成的外层入口，不打入 USDZ。
+行为资产交付整个目录：`object.usda` 为加载入口，引用 `object.usdz` 并挂载旁置 `behavior.py`。物理属性与行为参数由 `physics.py` 写入生成的 `physics.usda`；脚本引用只写在生成的外层入口，不打入 USDZ。
 
 ```usda
 #usda 1.0

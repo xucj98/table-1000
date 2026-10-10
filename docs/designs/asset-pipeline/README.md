@@ -17,10 +17,11 @@ object.py
             └──检查与渲染──> JPG / MP4 / acceptance.json
 ```
 
-**第二阶段：物理属性与运动验收。** 将模型导出为 USD 几何层，组合 `physics.usda`，必要时挂载 `behavior.py`；`physics_test.py` 使用公共工具与官方 API 执行单资产（含多实例）实验，输出视频、曲线和 RTF。
+**第二阶段：物理属性与运动验收。** 将模型导出为 USD 几何层，由 `physics.py` 生成 `physics.usda` 并组合，必要时挂载 `behavior.py`；`physics_test.py` 使用公共工具与官方 API 执行单资产（含多实例）实验，输出视频、曲线和 RTF。
 
 ```text
-object.blend ──导出──> geometry.usdc + physics.usda
+object.blend ──导出──> geometry.usdc
+physics.py ──配置──> physics.usda
     ──组合与打包──> object.usdz + 可选 object.usda / behavior.py
                   + physics_test.py
                   └──仿真测试──> MP4 / trace.csv / plots.jpg / result.json
@@ -34,7 +35,7 @@ object.blend ──导出──> geometry.usdc + physics.usda
 | --- | --- | --- |
 | `object.py`、`object.blend` | 建模入口、坐标系、刚体子树、视觉与碰撞、关节 | [建模](modeling.md) |
 | `preview.json` | 几何姿态、相机、关键帧与预览输出 | [几何预览](preview.md) |
-| `physics.usda`、`object.usdz` | 质量、接触材料、驱动与仿真导出 | [物理属性](physics.md) |
+| `physics.py`、`physics.usda`、`object.usdz` | 质量、接触材料、驱动与仿真导出 | [物理属性](physics.md) |
 | `behavior.py` | 随资产加载的附加力或状态转换 | [行为插件](behaviors.md) |
 | `physics_test.py` | 实验初态、测试动作、视频与结果记录 | [物理测试](physics-tests.md) |
 | `metadata.json` | 现有 UUID 字段；身份与版本规则待定 | 见下文 |
@@ -57,8 +58,8 @@ object.blend ──导出──> geometry.usdc + physics.usda
 
 | 位置 | 内容 | Git |
 | --- | --- | --- |
-| `asset_sources/objects/<category>/<id>/` | object.py、preview.json、metadata.json、README.md、three_quarter.jpg；第二阶段增加 physics.usda、physics_test.py、可选 behavior.py | 提交 |
-| `assets/objects/<category>/<id>/` | object.blend、geometry.usdc、object.usdz、源码及配置快照、README.md、已有 three_quarter.jpg、可选 object.usda 与行为依赖、preview/、physics_test/ | 忽略 |
+| `asset_sources/objects/<category>/<id>/` | object.py、preview.json、metadata.json、README.md、three_quarter.jpg；第二阶段增加 physics.py、physics_test.py、可选 behavior.py | 提交 |
+| `assets/objects/<category>/<id>/` | object.blend、geometry.usdc、physics.usda、object.usdz、源码及配置快照、README.md、已有 three_quarter.jpg、可选 object.usda 与行为依赖、preview/、physics_test/ | 忽略 |
 | `outputs/` | 临时实验结果与日志 | 忽略 |
 
 源码快照重建依赖同版本的 `table_1000` 包，共用模块不复制到资产目录。外部资源引用须注明版本、来源和许可，不使用私有绝对路径。

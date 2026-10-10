@@ -24,7 +24,7 @@ export MKL_NUM_THREADS=1
 
 | 文件 | 编写内容 |
 | --- | --- |
-| [physics.usda](../../asset_sources/objects/pen/000006/physics.usda) | 按[物理属性规范](../designs/asset-pipeline/physics.md)配置质量、惯量、接触材料与驱动 |
+| [physics.py](../../asset_sources/objects/pen/000006/physics.py) | 按[物理属性规范](../designs/asset-pipeline/physics.md)通过官方 API 配置质量、接触材料与驱动；质心和惯量可由引擎计算 |
 | [behavior.py](../../asset_sources/objects/pen/000006/behavior.py)（可选） | 按[行为规范](../designs/asset-pipeline/behaviors.md)补充原生物理无法表达的行为；本例为笔帽等效保持力 |
 | [physics_test.py](../../asset_sources/objects/pen/000006/physics_test.py) | 按[测试规范](../designs/asset-pipeline/physics-tests.md)定义初态、相机、受力或夹具、时长及关注曲线，将测试函数登记到 `TESTS` |
 
@@ -35,7 +35,7 @@ export MKL_NUM_THREADS=1
   --source asset_sources/objects/pen/000006 --gpu 0
 ```
 
-`--gpu` 选择可用显卡。产物默认写入资产目录，包括 `geometry.usdc`、`object.usdz`、源码快照及 `physics_build.json`。检查报告：本例应有 **2 个刚体、7 个部件、36 个碰撞形状**，构建器自动核对质量和碰撞材料绑定。
+`--gpu` 选择可用显卡。产物默认写入资产目录，包括 `geometry.usdc`、生成的 `physics.usda`、`object.usdz`、源码快照及 `physics_build.json`。检查报告：本例应有 **2 个刚体、7 个部件、36 个碰撞形状**，构建器自动核对质量和碰撞材料绑定。
 
 带行为资产另生成 `object.usda`，引用 USDZ 并挂载旁置脚本。使用时加载该入口，保留整个资产目录；测试入口已启用官方脚本组件，详见[行为分发](../designs/asset-pipeline/behaviors.md#分发)。
 
@@ -48,7 +48,7 @@ export MKL_NUM_THREADS=1
   --script asset_sources/objects/pen/000006/physics_test.py --tests pull close --gpu 0
 ```
 
-去掉 `--tests pull close` 运行全部测试。省略 `--script` 时使用资产目录中的测试快照；修改物理层或行为后需重新构建。
+去掉 `--tests pull close` 运行全部测试。省略 `--script` 时使用资产目录中的测试快照；修改 `physics.py` 或行为后需重新构建。
 
 | 测试 | 内容 |
 | --- | --- |
