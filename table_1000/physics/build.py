@@ -1,6 +1,7 @@
 """Export Blender geometry and compose a native USD physics layer."""
 
 import argparse
+import importlib.util
 import json
 from pathlib import Path
 import shutil
@@ -8,6 +9,13 @@ import subprocess
 import tempfile
 import time
 
+
+def author_physics(source, output):
+    spec = importlib.util.spec_from_file_location('asset_physics', source / 'physics.py')
+    physics = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(physics)
+    physics.author(output / 'geometry.usdc', output / 'physics.usda')
+    shutil.copyfile(source / 'physics.py', output / 'physics.py')
 
 
 def author_geometry(model, destination):
@@ -99,7 +107,7 @@ def build(asset, source, output):
                         '--', '--blend', str(asset / 'object.blend'), '--output', str(model_path)], check=True)
         model = json.loads(model_path.read_text())
         paths = author_geometry(model, output / 'geometry.usdc')
-        shutil.copyfile(source / 'physics.usda', output / 'physics.usda')
+        author_physics(source, output)
         composed = Usd.Stage.CreateInMemory()
         composed.GetRootLayer().subLayerPaths = [str(output / 'physics.usda'), str(output / 'geometry.usdc')]
         composed.SetDefaultPrim(composed.GetPrimAtPath('/Asset'))
@@ -140,7 +148,7 @@ def build(asset, source, output):
     (output / 'model.json').write_text(json.dumps(model) + '\n')
     report = {'rigid_bodies': len(rigid), 'parts': sum(node['part'] for node in model['nodes']),
               'colliders': len(materials), 'physics_materials': materials, 'paths': paths,
-              'geometry_layer': 'geometry.usdc', 'physics_layer': 'physics.usda',
+              'geometry_layer': 'geometry.usdc', 'physics_source': 'physics.py', 'physics_layer': 'physics.usda',
               'entry': 'object.usda' if scripts else 'object.usdz',
               'behavior_scripts': [path.path for path in scripts],
               'build_wall_seconds': time.perf_counter() - started}
