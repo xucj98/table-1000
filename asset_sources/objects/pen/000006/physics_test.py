@@ -129,6 +129,7 @@ def drop_zero_friction(ctx, *, height, dt):
             '3 N triangular seating barrier over the 0–2 mm opening interval',
             'unchanged radial/angular fit elasticity and damping, which may couple through rigid-body rotation',
             'gravity; no test force or fixture'],
+        'interpretation':'Retained seating barrier can initiate release during free fall; disengagement alone is not evidence of impact opening.',
         'camera_change':{'position_direction':'Original drop camera',
             'original_focal_length_mm':28,'reason':'Widened to include the complete cap trajectory and keep it clear of the caption' if height in (.2,1) else 'Original focal length'},
         'fully_disengaged':any(not bool(row['asset.cap_fit.engaged']) for row in ctx.rows[1:]),
