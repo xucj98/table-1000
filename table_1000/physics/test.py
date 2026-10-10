@@ -10,6 +10,7 @@ import time
 import traceback
 import numpy as np
 from table_1000.physics.config import test_configs
+from table_1000.physics.plots import plots, plot_trace
 
 
 def initial_state(runtime, instance, config):
@@ -39,14 +40,18 @@ def record(runtime, instance, actions, observe):
     row = {'time': runtime.time}
     for name in observe['rigid_bodies']:
         state = runtime.state(instance.body_key(name))
-        for field, labels in [('position', 'xyz'), ('quaternion', 'wxyz'), ('velocity', ('vx', 'vy', 'vz', 'wx', 'wy', 'wz'))]:
+        for field, labels in [('position', 'xyz'), ('quaternion', 'wxyz')]:
             for label, value in zip(labels, state[field]):
-                row[f'rigid_bodies.{name}.{label if field == "velocity" else field + "." + label}'] = float(value)
+                row[f'rigid_bodies.{name}.{field}.{label}'] = float(value)
+        for field, values in [('linear_velocity', state['velocity'][:3]), ('angular_velocity', state['velocity'][3:])]:
+            for label, value in zip('xyz', values):
+                row[f'rigid_bodies.{name}.{field}.{label}'] = float(value)
     for name in observe['actions']:
         for field, value in actions.records.get(name, {'active': 0}).items():
             array = np.asarray(value).reshape(-1)
+            labels = 'wxyz' if field == 'rotation' else 'xyz'
             for i, component in enumerate(array):
-                row[f'actions.{name}.{field}' + (f'.{i}' if len(array) > 1 else '')] = float(component)
+                row[f'actions.{name}.{field}' + (f'.{labels[i]}' if len(array) > 1 else '')] = float(component)
     from table_1000.physics.joints import frames
     for name in observe['joints']:
         info = frames(instance, name)
@@ -97,26 +102,6 @@ class Camera:
     def close(self):
         self.rgb.detach()
         self.product.destroy()
-
-
-def plots(rows, output):
-    import matplotlib
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
-    columns = sorted(set().union(*(row.keys() for row in rows)))
-    groups = [('positions', [key for key in columns if '.position.' in key]),
-              ('velocities', [key for key in columns if key.startswith('rigid_bodies.') and key.rsplit('.', 1)[-1] in ('vx', 'vy', 'vz', 'wx', 'wy', 'wz')]),
-              ('actions', [key for key in columns if key.startswith('actions.') and '.value' in key]),
-              ('behaviors', [key for key in columns if key.startswith('behaviors.')])]
-    groups.append(('joints', [key for key in columns if key.startswith('joints.')]))
-    for title, selected in groups:
-        if not selected:
-            continue
-        fig, ax = plt.subplots(figsize=(10, 5))
-        for key in selected:
-            ax.plot([row['time'] for row in rows], [row.get(key, 0) for row in rows], label=key)
-        ax.set_xlabel('Simulation time (s)');ax.set_title(title);ax.legend(fontsize=6)
-        fig.tight_layout();fig.savefig(output / (title + '.png'));plt.close(fig)
 
 
 def run_test(asset, name, config, output, startup):
@@ -180,7 +165,8 @@ def run_test(asset, name, config, output, startup):
     start = time.perf_counter()
     subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-y', '-framerate', str(config['camera']['fps']), '-i', str(frames / '%05d.jpg'), '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '20', str(output / name)], check=True)
     times['render_encode_seconds'] += time.perf_counter() - start
-    plots(rows, directory)
+    model = json.loads((asset.parent / 'model.json').read_text())
+    plots(rows, config['observe']['plots'], directory, model, config['actions'])
     acceptance = {'execution_status': 'completed', 'review_status': 'pending', 'config': config, 'engine': 'Isaac Sim 5.1 / CPU PhysX TGS',
                   'behavior_load': instance.load_evidence, 'runtime_manifest': str(instance.manifest_path),
                   'physics': json.loads((asset.parent / 'physics_build.json').read_text()), 'timing': times,
@@ -200,6 +186,7 @@ def main(argv=None):
     parser.add_argument('--config', type=Path)
     parser.add_argument('--output', type=Path, help='Results directory; defaults to the asset physics_test directory')
     parser.add_argument('--tests', nargs='+')
+    parser.add_argument('--plots-only', action='store_true', help='Redraw configured plots from existing CSV traces without simulation')
     parser.add_argument('--gpu', type=int, default=0)
     args = parser.parse_args(argv)
     asset = args.asset.resolve();asset = asset / 'object.usdz' if asset.is_dir() else asset
@@ -210,6 +197,10 @@ def main(argv=None):
     if args.tests:
         tests = {name: tests[name] for name in args.tests}
     output.mkdir(parents=True, exist_ok=True)
+    if args.plots_only:
+        for name, test in tests.items():
+            plot_trace(output / Path(name).stem / 'trace.csv', test['observe']['plots'], model, test['actions'])
+        return
     start = time.perf_counter()
     from isaacsim import SimulationApp
     app = SimulationApp({'headless': True, 'create_new_stage': False, 'active_gpu': args.gpu, 'physics_gpu': args.gpu,

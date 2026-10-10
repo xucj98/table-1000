@@ -65,7 +65,7 @@
           "keyframes": [
             {
               "time": 0,
-              "value": [
+              "force": [
                 0,
                 0,
                 0
@@ -73,7 +73,7 @@
             },
             {
               "time": 0.8,
-              "value": [
+              "force": [
                 -1,
                 0,
                 0
@@ -84,7 +84,7 @@
             },
             {
               "time": 1.212,
-              "value": [
+              "force": [
                 -2.5,
                 0,
                 0
@@ -92,7 +92,7 @@
             },
             {
               "time": 1.216,
-              "value": [
+              "force": [
                 0,
                 0,
                 0
@@ -100,6 +100,22 @@
             }
           ]
         }
+      },
+      "observe": {
+        "plots": [
+          "actions.pull_cap.force.x",
+          "rigid_bodies.cap.position.x",
+          "rigid_bodies.cap.linear_velocity.x"
+        ],
+        "rigid_bodies": [
+          "body",
+          "cap"
+        ],
+        "joints": [],
+        "actions": [
+          "hold_body",
+          "pull_cap"
+        ]
       }
     },
     "close.mp4": {
@@ -135,7 +151,7 @@
           "keyframes": [
             {
               "time": 0,
-              "value": [
+              "force": [
                 0,
                 0,
                 0
@@ -143,7 +159,7 @@
             },
             {
               "time": 0.8,
-              "value": [
+              "force": [
                 0.5,
                 0,
                 0
@@ -154,7 +170,7 @@
             },
             {
               "time": 1.4,
-              "value": [
+              "force": [
                 2.5,
                 0,
                 0
@@ -165,7 +181,7 @@
             },
             {
               "time": 1.408,
-              "value": [
+              "force": [
                 0,
                 0,
                 0
@@ -185,6 +201,22 @@
           -0.01,
           0,
           0.15
+        ]
+      },
+      "observe": {
+        "plots": [
+          "actions.push_cap.force.x",
+          "rigid_bodies.cap.position.x",
+          "rigid_bodies.cap.linear_velocity.x"
+        ],
+        "rigid_bodies": [
+          "body",
+          "cap"
+        ],
+        "joints": [],
+        "actions": [
+          "hold_body",
+          "push_cap"
         ]
       }
     },
@@ -260,7 +292,7 @@
           "keyframes": [
             {
               "time": 0,
-              "value": [
+              "force": [
                 0,
                 0,
                 0
@@ -268,7 +300,7 @@
             },
             {
               "time": 0.8,
-              "value": [
+              "force": [
                 0.5,
                 0,
                 0
@@ -276,7 +308,7 @@
             },
             {
               "time": 1.2,
-              "value": [
+              "force": [
                 0.5,
                 0,
                 0
@@ -284,7 +316,7 @@
             },
             {
               "time": 1.6,
-              "value": [
+              "force": [
                 4.5,
                 0,
                 0
@@ -292,7 +324,7 @@
             },
             {
               "time": 2,
-              "value": [
+              "force": [
                 4.5,
                 0,
                 0
@@ -300,7 +332,7 @@
             },
             {
               "time": 2.1,
-              "value": [
+              "force": [
                 0,
                 0,
                 0
@@ -318,6 +350,11 @@
         "actions": [
           "hold_body",
           "push_cap"
+        ],
+        "plots": [
+          "actions.push_cap.force.x",
+          "rigid_bodies.cap.position.x",
+          "rigid_bodies.cap.linear_velocity.x"
         ]
       }
     },
@@ -371,6 +408,19 @@
           0,
           0.12
         ]
+      },
+      "observe": {
+        "plots": [
+          "rigid_bodies.cap.position.z",
+          "rigid_bodies.cap.linear_velocity.z",
+          "behaviors.cap_fit.opening"
+        ],
+        "rigid_bodies": [
+          "body",
+          "cap"
+        ],
+        "joints": [],
+        "actions": []
       }
     },
     "drop_0.5m_4ms.mp4": {
@@ -423,6 +473,19 @@
           0,
           0.27
         ]
+      },
+      "observe": {
+        "plots": [
+          "rigid_bodies.cap.position.z",
+          "rigid_bodies.cap.linear_velocity.z",
+          "behaviors.cap_fit.opening"
+        ],
+        "rigid_bodies": [
+          "body",
+          "cap"
+        ],
+        "joints": [],
+        "actions": []
       }
     },
     "drop_1m_4ms.mp4": {
@@ -475,6 +538,19 @@
           0,
           0.54
         ]
+      },
+      "observe": {
+        "plots": [
+          "rigid_bodies.cap.position.z",
+          "rigid_bodies.cap.linear_velocity.z",
+          "behaviors.cap_fit.opening"
+        ],
+        "rigid_bodies": [
+          "body",
+          "cap"
+        ],
+        "joints": [],
+        "actions": []
       }
     },
     "drop_1m_2ms.mp4": {
@@ -527,6 +603,19 @@
           0,
           0.54
         ]
+      },
+      "observe": {
+        "plots": [
+          "rigid_bodies.cap.position.z",
+          "rigid_bodies.cap.linear_velocity.z",
+          "behaviors.cap_fit.opening"
+        ],
+        "rigid_bodies": [
+          "body",
+          "cap"
+        ],
+        "joints": [],
+        "actions": []
       }
     },
     "drop_1m_1ms.mp4": {
@@ -579,6 +668,19 @@
           0,
           0.54
         ]
+      },
+      "observe": {
+        "plots": [
+          "rigid_bodies.cap.position.z",
+          "rigid_bodies.cap.linear_velocity.z",
+          "behaviors.cap_fit.opening"
+        ],
+        "rigid_bodies": [
+          "body",
+          "cap"
+        ],
+        "joints": [],
+        "actions": []
       }
     }
   }
