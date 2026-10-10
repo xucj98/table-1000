@@ -21,12 +21,12 @@ object.py
 
 ```text
 object.blend ──导出──> geometry.usdc + physics.usda
-    ──组合与打包──> object.usdz + 可选 behavior.py
+    ──组合与打包──> object.usdz + 可选 object.usda / behavior.py
                   + physics_test.py
                   └──仿真测试──> MP4 / trace.csv / plots.jpg / result.json
 ```
 
-模型保存刚体划分、几何和关节定义；物理配置补充质量、材料与驱动。几何预览配置与物理测试脚本均作为资产源码保存。第一阶段已实现；第二阶段正从原 JSON 流程迁移到本规范。
+模型保存刚体划分、几何和关节定义；物理配置补充质量、材料与驱动。带行为资产使用生成的 `object.usda` 作为加载入口，见[行为分发](behaviors.md#分发)。几何预览配置与物理测试脚本均作为资产源码保存。第一阶段已实现；第二阶段正从原 JSON 流程迁移到本规范。
 
 ## 文件分工
 
@@ -58,7 +58,7 @@ object.blend ──导出──> geometry.usdc + physics.usda
 | 位置 | 内容 | Git |
 | --- | --- | --- |
 | `asset_sources/objects/<category>/<id>/` | object.py、preview.json、metadata.json、README.md、three_quarter.jpg；第二阶段增加 physics.usda、physics_test.py、可选 behavior.py | 提交 |
-| `assets/objects/<category>/<id>/` | object.blend、geometry.usdc、object.usdz、源码及配置快照、README.md、已有 three_quarter.jpg、可选行为依赖、preview/、physics_test/ | 忽略 |
+| `assets/objects/<category>/<id>/` | object.blend、geometry.usdc、object.usdz、源码及配置快照、README.md、已有 three_quarter.jpg、可选 object.usda 与行为依赖、preview/、physics_test/ | 忽略 |
 | `outputs/` | 临时实验结果与日志 | 忽略 |
 
 源码快照重建依赖同版本的 `table_1000` 包，共用模块不复制到资产目录。外部资源引用须注明版本、来源和许可，不使用私有绝对路径。
