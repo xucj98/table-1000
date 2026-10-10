@@ -17,16 +17,16 @@ object.py
             └──检查与渲染──> JPG / MP4 / acceptance.json
 ```
 
-**第二阶段：物理属性与运动验收。** 在模型上补充 `physics.json`，必要时提供 `behavior.py`，生成 USDZ 与运行时行为包；`physics_test.json` 指定初态、外力和观察方式，驱动物理仿真测试。
+**第二阶段：物理属性与运动验收。** 将模型导出为 USD 几何层，组合 `physics.usda`，必要时挂载 `behavior.py`；`physics_test.py` 使用公共工具与官方 API 执行单资产（含多实例）实验，输出视频、曲线和 RTF。
 
 ```text
-object.blend + physics.json + 可选 behavior.py
-    ──构建──> object.usdz + 可选 runtime/
-            + physics_test.json
-            └──仿真测试──> MP4 / trace.csv / acceptance.json
+object.blend ──导出──> geometry.usdc + physics.usda
+    ──组合与打包──> object.usdz + 可选 behavior.py
+                  + physics_test.py
+                  └──仿真测试──> MP4 / trace.csv / plots.jpg / result.json
 ```
 
-模型保存刚体划分、几何和关节定义；物理配置补充质量、材料与驱动。两类测试配置分别描述几何预览和受力实验，均作为资产源码保存。第一阶段已实现；第二阶段的文件格式与接口目前为草案。
+模型保存刚体划分、几何和关节定义；物理配置补充质量、材料与驱动。几何预览配置与物理测试脚本均作为资产源码保存。第一阶段已实现；第二阶段正从原 JSON 流程迁移到本规范。
 
 ## 文件分工
 
@@ -34,23 +34,22 @@ object.blend + physics.json + 可选 behavior.py
 | --- | --- | --- |
 | `object.py`、`object.blend` | 建模入口、坐标系、刚体子树、视觉与碰撞、关节 | [建模](modeling.md) |
 | `preview.json` | 几何姿态、相机、关键帧与预览输出 | [几何预览](preview.md) |
-| `physics.json`、`object.usdz` | 质量、接触材料、驱动与仿真导出 | [物理属性](physics.md) |
-| `behavior.py`、`runtime/manifest.json` | 随资产加载的附加力或状态转换 | [行为插件](behaviors.md) |
-| `physics_test.json` | 实验初态、测试动作、视频与结果记录 | [物理测试](physics-tests.md) |
+| `physics.usda`、`object.usdz` | 质量、接触材料、驱动与仿真导出 | [物理属性](physics.md) |
+| `behavior.py` | 随资产加载的附加力或状态转换 | [行为插件](behaviors.md) |
+| `physics_test.py` | 实验初态、测试动作、视频与结果记录 | [物理测试](physics-tests.md) |
 | `metadata.json` | 现有 UUID 字段；身份与版本规则待定 | 见下文 |
 
-统一单位：m、kg、s、rad、N、N·m；四元数顺序为 `[w, qx, qy, qz]`。各文件另行注明坐标系。后端适配器负责单位转换。
+统一单位：m、kg、s、rad、N、N·m；四元数顺序为 `[w, qx, qy, qz]`。各文件另行注明坐标系。USD 原生属性遵循各 Schema 的单位，详见[物理属性](physics.md)。
 
 ## 名称压缩表示
 
-资产树与所有脚本中的对象名称引用共用 `name1..N` 表示法：`cabinet.drawer1..3` 展开为 `cabinet.drawer1`、`cabinet.drawer2`、`cabinet.drawer3`，包含首尾。范围后可接名称后缀，例如 `cabinet.drawer1..3.handle`。
+资产树与项目公共名称解析工具支持 `name1..N` 表示法：`cabinet.drawer1..3` 展开为 `cabinet.drawer1`、`cabinet.drawer2`、`cabinet.drawer3`，包含首尾。范围后可接名称后缀，例如 `cabinet.drawer1..3.handle`。
 
 - 每个名称最多一个递增整数范围，不支持通配符或正则表达式；补零编号须保持相同宽度，例如 `collision00..15`。
-- 配置中各对象分别获得相同配置，例如 `drawer1..3` 的 `mass: 0.12` 表示每个抽屉均为 0.12 kg。
 - 配置展开后的名称必须存在且符合引用类型。同一字段内不得重复引用同一对象；需要不同配置时拆开范围单独填写。
 - 资产树自动压缩仅合并同父级、名称仅连续显式编号不同、角色/碰撞类型/材质及归一化子树结构相同的对象；`.001` 自动后缀不参与归并。不按外观猜测同类部件。手写配置范围不要求各对象几何相同。
 
-压缩只影响文字展示或配置书写，模型中的对象仍各自使用完整名称，实际层级不变。所有脚本通过统一公共解析工具展开名称引用，不在各入口重复实现；此规则适用于引用对象的名称键、名称值和名称列表，不处理动作名、文件名等普通字符串。
+压缩只影响文字展示或配置书写，模型中的对象仍各自使用完整名称，实际层级不变。需要范围展开的脚本共用公共解析工具，不处理动作名、文件名等普通字符串。USDA 使用原生 USD 语法和实际 prim 路径，不直接支持此缩写。
 
 ## 资产布局
 
@@ -58,8 +57,8 @@ object.blend + physics.json + 可选 behavior.py
 
 | 位置 | 内容 | Git |
 | --- | --- | --- |
-| `asset_sources/objects/<category>/<id>/` | object.py、preview.json、metadata.json、README.md、three_quarter.jpg；第二阶段增加 physics.json、physics_test.json、可选 behavior.py | 提交 |
-| `assets/objects/<category>/<id>/` | object.blend、object.usdz、源码及配置快照、README.md、已有 three_quarter.jpg、可选 runtime/、preview/、physics_test/ | 忽略 |
+| `asset_sources/objects/<category>/<id>/` | object.py、preview.json、metadata.json、README.md、three_quarter.jpg；第二阶段增加 physics.usda、physics_test.py、可选 behavior.py | 提交 |
+| `assets/objects/<category>/<id>/` | object.blend、geometry.usdc、object.usdz、源码及配置快照、README.md、已有 three_quarter.jpg、可选行为依赖、preview/、physics_test/ | 忽略 |
 | `outputs/` | 临时实验结果与日志 | 忽略 |
 
 源码快照重建依赖同版本的 `table_1000` 包，共用模块不复制到资产目录。外部资源引用须注明版本、来源和许可，不使用私有绝对路径。

@@ -1,40 +1,32 @@
 # behavior.py
 
-状态：草案。定义资产的附加力与状态转换，由统一加载器按实例运行。
+本规范规定目标接口；官方脚本组件在项目所用 Isaac 版本上的接入需实际验证。
 
-行为声明、绑定、参数和装配接口统一见 [physics.json：行为与装配接口](physics.md#行为与装配接口)。
+`behavior.py` 为可选的资产行为源码，负责原生物理属性不能表达的附加力或状态转换。普通刚体及原生关节能够表达的行为无需脚本。
 
-## 生命周期
+## 挂载与生命周期
 
-```python
-class Behavior:
-    def __init__(self, context, bindings, parameters): ...
-    def reset(self): ...
-    def before_step(self, dt): ...
-    def after_step(self, dt): ...
-    def close(self): ...
-```
+`physics.usda` 使用官方 Python Scripting 组件在资产节点上引用行为脚本。行为继承当前 Isaac 版本提供的 `BehaviorScript`，由官方组件负责实例化、加载和销毁。应用入口统一启用所需扩展及脚本执行；场景和测试只加载资产，不逐个导入行为代码。
 
-每个实例独立保存状态。复位后调用 `reset`；每个物理步前后分别调用 `before_step`、`after_step`；移除实例时调用 `close`。
+每个挂载实例独立保存状态。开始仿真时建立所需的物理步订阅，停止/复位时恢复行为状态，卸载时释放订阅及跨实例引用。`on_update` 是时间线更新，不等同于物理步；施力逻辑使用官方 PhysX 物理步回调，保证每个实际物理步只执行一次。
 
-`context` 提供状态读取、施力/力矩、关节驱动及兼容接口查询；具体方法签名待实现确定。状态与施力采用世界坐标和 SI 单位，每次施力只在当前物理步有效。
+公共代码仅封装反复使用的状态访问、订阅清理等辅助功能，不另建脚本加载器、manifest 协议或通用装配接口注册器。兼容性、配对数量、发现条件、释放条件均属于具体行为；笔帽配对不能成为所有资产必须实现的接口。
 
-内部作用成对施力并计入作用点力矩，脱离后保持力归零。插件不修改刚体姿态、不增加隐藏子步；测试外力与夹具由 `physics_test.json` 定义。
+## 行为规则
 
-## 分发与自动加载
+- 默认参数放在行为代码中；需要逐资产调整的参数作为 USDA 自定义属性，含义和单位由该行为说明。
+- 当前实例的对象通过相对路径或保存的原始对象名定位，不硬编码场景实例路径。
+- 同类资产可共享行为模块。跨实例作用由对应行为协调，确保一组内力只计算一次；不得预设只能与自身原配部件作用。
+- 内部作用成对施力，并计入作用点力矩；脱离后相应保持力归零。
+- 不通过写入姿态或隐藏子步伪造物理结果。测试夹具和外力属于测试脚本，不属于资产行为。
+- 额外观测量由行为提供只读访问，测试可按需采样，不要求所有行为实现同一种配对状态。
 
-构建产物包含 `object.usdz` 和可选 `runtime/`，后者保存行为代码、本地依赖与 `manifest.json`：
+## 分发
 
-```json
-{
-  "physics": "../physics.json",
-  "modules": {"behavior.py": "behavior.py"},
-  "supported_backends": ["isaac"]
-}
-```
+交付单位为整个资产目录：`object.usdz`、`behavior.py` 及实际需要的资产本地依赖。包内不得引用源工作区的绝对路径；公共工具依赖同版本 `table_1000`，不逐资产复制。
 
-`physics` 和 `modules` 的路径相对 manifest；`supported_backends` 列出支持的后端。
+标准 USDZ 不承载 Python 可执行脚本。原生脚本引用需在打包后仍能定位目录旁的代码；具体落盘形式以当前 Isaac 的实际解析结果为准。若必须增加外层 USD 入口承载脚本引用，应明确该入口，不能声称直接打开 USDZ 就能自动运行。
 
-USD 资产根的 `customData.table1000.runtime` 保存字符串 `runtime/manifest.json`，相对来源 USDZ 所在目录解析。仿真程序创建一次 `table_1000.physics.runtime.Runtime(world)`，通过 `Runtime.load()` 加载资产；运行时读取该入口、实例化行为并注册 PhysX 物理步回调，场景无需单独导入资产脚本。声明的行为无法加载时应报错。
+验收包括独立目录加载、同资产多实例、跨实例行为、停止/重置/卸载，以及 GUI 与无界面应用的加载。未完成的路径明确标为未支持，不以自定义加载器成功代替官方组件验证。
 
-[标准 USDZ](https://openusd.org/release/spec_usdz.html)不包含 Python；交付单位为整个资产目录。当前已实现 Python 运行时，尚未提供 Isaac/Kit Extension；直接在 Isaac 编辑器打开 USDZ 不会执行行为。
+参考：[Isaac 行为脚本](https://docs.isaacsim.omniverse.nvidia.com/5.1.0/replicator_tutorials/tutorial_replicator_modular_scripting.html)、[官方脚本组件生命周期](https://docs.omniverse.nvidia.com/extensions/latest/ext_python-scripting-component/user_manual.html)。
