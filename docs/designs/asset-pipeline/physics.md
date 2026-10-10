@@ -46,7 +46,7 @@
 | `rigid_bodies.<name>.inertia` | 可选，关于质心的主惯量与主轴方向，见下文 |
 | `colliders.<part_name>.material` | 可选，将该部件下所有碰撞网格统一绑定到指定接触材料 |
 | `joints` | 可选，给模型中已有的关节补充驱动参数，不重复定义连接和几何限位 |
-| `behaviors`、`interfaces` | 可选，见[行为插件](behaviors.md) |
+| `behaviors`、`interfaces` | 可选，声明行为实例与装配接口，见[行为与装配接口](#行为与装配接口) |
 | `backends.<name>` | 可选，仅供对应后端读取的已支持参数，不是任意 USD 属性透传 |
 
 ## 质量属性
@@ -85,6 +85,55 @@
 | `stiffness` | N/m | N·m/rad |
 | `damping` | N·s/m | N·m·s/rad |
 | `max_force` | N | N·m |
+
+## 行为与装配接口
+
+`behaviors` 是可选的顶层字典，键为资产内唯一的行为实例名；省略时不加载附加行为。每项通过 `entry` 指定 Python 类，`bindings` 绑定模型对象或装配接口，`parameters` 提供该插件的参数。
+
+| 字段 | 含义 |
+| --- | --- |
+| `entry` | 资产源目录内的 `文件.py:类名` |
+| `bindings` | 插件逻辑名称到本资产刚体、关节或接口名的映射 |
+| `parameters` | 插件参数，字段由对应插件定义 |
+
+`interfaces` 是可选的顶层字典，键为资产内唯一的接口名。接口归属某个刚体，供行为跨资产查找兼容部件；它不创建物理关节。下面是笔盖配置节选，`parameters` 的完整必需项由 `CapFit` 定义：
+
+```json
+{
+  "interfaces": {
+    "tip": {
+      "body": "body",
+      "role": "male",
+      "compatible": "marker_18mm",
+      "pose": [-0.032, 0, 0, 1, 0, 0, 0]
+    },
+    "cap_mouth": {
+      "body": "cap",
+      "role": "female",
+      "compatible": "marker_18mm",
+      "pose": [0, 0, 0, 1, 0, 0, 0]
+    }
+  },
+  "behaviors": {
+    "cap_fit": {
+      "entry": "behavior.py:CapFit",
+      "bindings": {"interface": "cap_mouth"},
+      "parameters": {"static_retention_N": 2, "dynamic_retention_N": 1.4}
+    }
+  }
+}
+```
+
+| 字段 | 含义 |
+| --- | --- |
+| `body` | 所属刚体根名称 |
+| `role` | `male` 或 `female` |
+| `compatible` | 兼容类别 |
+| `pose` | 刚体根局部位姿 `[x, y, z, w, qx, qy, qz]`；+X 为插合轴，对齐时两接口同向 |
+
+配对条件为兼容类别及相对姿态。注册器保证同一仿真环境内一对一配对，脱离后释放；每对只计算一次内力，不限于原资产内的部件。
+
+行为不转换为 USD 原生物理属性，而是随资产打包并由统一运行时加载。生命周期与分发规则见[行为插件](behaviors.md)。
 
 ## Isaac Sim / USD 映射
 
