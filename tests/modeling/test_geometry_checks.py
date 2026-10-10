@@ -1,6 +1,6 @@
 """Regression checks for geometric rejection, joint poses and sparse keyframes.
 
-Run inside Blender; --assets-root needs cabinet/000000, pen/000001, pen/000003 and pen/000006.
+Run inside Blender; --assets-root needs cabinet/000002, pen/000001 and pen/000006.
 """
 import argparse
 import json
@@ -24,7 +24,7 @@ options.output.mkdir(parents=True,exist_ok=True)
 
 class AcceptanceTests(unittest.TestCase):
     def load(self):
-        bpy.ops.wm.open_mainfile(filepath=str(options.assets_root/'cabinet/000000/object.blend'))
+        bpy.ops.wm.open_mainfile(filepath=str(options.assets_root/'cabinet/000002/object.blend'))
         bpy.context.scene.rigidbody_world.enabled=False
         bpy.context.view_layer.update()
 
@@ -44,7 +44,7 @@ class AcceptanceTests(unittest.TestCase):
     def test_collision_and_filter(self):
         self.load();checks=GeometryChecks()
         self.assertFalse(checks.sample('closed',0,{}))
-        first=bpy.data.objects['drawer1_open'].rigid_body_constraint.object2
+        first=bpy.data.objects['cabinet.drawer1.slide'].rigid_body_constraint.object2
         first.location.z-=.06
         bpy.context.view_layer.update()
         self.assertTrue(checks.sample('intentional_overlap',1,{}))
@@ -68,7 +68,7 @@ class AcceptanceTests(unittest.TestCase):
             np.testing.assert_allclose(interpolate(keys,25)['transforms']['cap'][3:], [0,0,0,1])
 
     def test_transform_subtree_saved_pivot_and_reset(self):
-        path = options.assets_root/'pen/000003/object.blend'
+        path = options.assets_root/'pen/000006/object.blend'
         camera = [1,-1,1,0,0,1]
         cap_pose = [-.055,-.045,0,2**-.5,0,0,-2**-.5]
         views = {'moved.jpg': [{'frame':0, 'camera':camera, 'joints':{},
@@ -155,23 +155,25 @@ class AcceptanceTests(unittest.TestCase):
         with self.assertRaises(ValueError):convex_data(o)
 
     def test_pose_and_invalid_joint(self):
-        path=options.assets_root/'cabinet/000000/object.blend'
+        path=options.assets_root/'cabinet/000002/object.blend'
         with tempfile.TemporaryDirectory(dir=options.output) as tmp:
             entry=lambda q:{'pose.jpg':[{'frame':0,'camera':[1,-1,1,0,0,1],'joints':q}]}
-            run_worker(path,entry({'drawer1_open':.08}),Path(tmp),True)
-            body=bpy.data.objects['drawer1_open'].rigid_body_constraint.object2
+            run_worker(path,entry({'cabinet.drawer1.slide':.08}),Path(tmp),True)
+            body=bpy.data.objects['cabinet.drawer1.slide'].rigid_body_constraint.object2
             self.assertAlmostEqual(body.matrix_world.translation.y,-.213,places=5)
-            other=bpy.data.objects['drawer2_open'].rigid_body_constraint.object2
+            self.assertAlmostEqual(body.matrix_world.translation.z,.237,places=5)
+            other=bpy.data.objects['cabinet.drawer2.slide'].rigid_body_constraint.object2
             self.assertAlmostEqual(other.matrix_world.translation.y,-.133,places=5)
-            for q in ({'unknown':0},{'drawer1_open':1}):
+            self.assertAlmostEqual(other.matrix_world.translation.z,.146,places=5)
+            for q in ({'unknown':0},{'cabinet.drawer1.slide':1}):
                 with self.assertRaises(ValueError):run_worker(path,entry(q),Path(tmp),True)
 
     def test_complexity_totals(self):
         self.load()
         self.assertEqual(GeometryChecks().report['complexity'], {
-            'visual_triangles': 412, 'colliders': 29,
-            'primitive_colliders': 21, 'convex_colliders': 8,
-            'convex_vertices': 64, 'convex_faces': 48,
+            'visual_triangles': 588, 'colliders': 33,
+            'primitive_colliders': 21, 'convex_colliders': 12,
+            'convex_vertices': 160, 'convex_faces': 104,
         })
 
     def test_pen_button_and_refill_share_slider(self):
@@ -189,8 +191,12 @@ class AcceptanceTests(unittest.TestCase):
                 self.assertEqual(c.type,'SLIDER')
                 self.assertAlmostEqual(c.object2.matrix_world.translation.x,values['button_press'],places=6)
                 self.assertAlmostEqual(c.object1.matrix_world.translation.x,0,places=6)
-                for name in ('Silver push button','Refill shaft','Fine ballpoint'):
-                    self.assertEqual(bpy.data.objects[name].parent,c.object2)
+                for part in ('button', 'shaft', 'tip'):
+                    node = bpy.data.objects['pen.refill.' + part]
+                    self.assertTrue(node.get('semantic_part'))
+                    self.assertEqual(node.parent, c.object2)
+                    for obj in node.children:
+                        self.assertEqual(checks.owner[obj.name], c.object2.name)
 
 
 result=unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(AcceptanceTests))

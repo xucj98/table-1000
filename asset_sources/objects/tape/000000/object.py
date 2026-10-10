@@ -1,12 +1,8 @@
 """Hollow milky tape roll, one compound body with an open cardboard core."""
-from pathlib import Path
-import sys
 
-source = Path(__file__).resolve()
-sys.path.insert(0, str(source.parent))
-if not (source.parent / "asset_builders.py").exists():
-    sys.path.insert(0, str(source.parents[4] / "table_1000/modeling"))
-from asset_builders import asset, body, generate, material, tube
+import bpy
+
+from table_1000.modeling.asset_builders import asset, body, generate, material, tube, group_part
 
 
 def build():
@@ -17,6 +13,27 @@ def build():
     roll = body("Tape roll", root)
     tube("Wound tape", 0.0305, 0.0173, 0.020, (0, 0, 0.0102), tape, roll, axis="Z")
     tube("Cardboard inner core", 0.0173, 0.0158, 0.0204, (0, 0, 0.0102), core, roll, axis="Z")
+
+    organize_parts()
+
+
+def organize_parts():
+    """Group the original geometry while preserving every saved world pose."""
+    root = bpy.data.objects['09_Tape_Roll']
+    root.name = 'tape'
+    root["asset_id"] = 'tape/000000'
+    owner = bpy.data.objects['Tape roll']
+    owner.name = 'tape.roll'
+    for component, names in [
+        ('winding', ['Wound tape']),
+        ('core', ['Cardboard inner core']),
+    ]:
+        visuals = [bpy.data.objects[name] for name in names]
+        collisions = sorted([obj for obj in owner.children
+                             if any(obj.name == "Collision_" + name
+                                    or obj.name.startswith("Collision_" + name + "_")
+                                    for name in names)], key=lambda obj: obj.name)
+        group_part(owner.name + "." + component, owner, visuals, collisions)
 
 
 def main(argv=None):

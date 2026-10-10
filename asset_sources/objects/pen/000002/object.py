@@ -3,14 +3,10 @@
 Local +X points to the button; tip is -X; barrel center is Z=0.005 m.
 The black rear housing is fixed; only its small end button translates.
 """
-from pathlib import Path
-import sys
 
-source = Path(__file__).resolve()
-sys.path.insert(0, str(source.parent))
-if not (source.parent / "asset_builders.py").exists():
-    sys.path.insert(0, str(source.parents[4] / "table_1000/modeling"))
-from asset_builders import asset, body, cylinder, generate, joint, material, tube
+import bpy
+
+from table_1000.modeling.asset_builders import asset, body, cylinder, generate, joint, material, tube, group_part
 
 
 def build():
@@ -32,6 +28,42 @@ def build():
     cylinder("Refill shaft", 0.0008, 0.144, (-0.004, 0, 0.005), ink, moving)
     cylinder("Fine ballpoint", 0.0003, 0.010, (-0.0813, 0, 0.005), metal, moving)
     joint("button_press", "SLIDER", shell, moving, (0.068, 0, 0.005), (-0.003, 0))
+
+    organize_parts()
+
+
+def organize_parts():
+    """Group the original geometry while preserving every saved world pose."""
+    root = bpy.data.objects['16_White_Black_Pen']
+    root.name = 'pen'
+    root["asset_id"] = 'pen/000002'
+    owner = bpy.data.objects['White black pen shell']
+    owner.name = 'pen.shell'
+    for component, names in [
+        ('barrel', ['White barrel']),
+        ('rear_housing', ['Black rear housing']),
+        ('nose', ['Black tapered nose']),
+        ('shoulder', ['Black shoulder']),
+    ]:
+        visuals = [bpy.data.objects[name] for name in names]
+        collisions = sorted([obj for obj in owner.children
+                             if any(obj.name == "Collision_" + name
+                                    or obj.name.startswith("Collision_" + name + "_")
+                                    for name in names)], key=lambda obj: obj.name)
+        group_part(owner.name + "." + component, owner, visuals, collisions)
+    owner = bpy.data.objects['White black pen button and refill']
+    owner.name = 'pen.refill'
+    for component, names in [
+        ('button', ['Black push button']),
+        ('shaft', ['Refill shaft']),
+        ('tip', ['Fine ballpoint']),
+    ]:
+        visuals = [bpy.data.objects[name] for name in names]
+        collisions = sorted([obj for obj in owner.children
+                             if any(obj.name == "Collision_" + name
+                                    or obj.name.startswith("Collision_" + name + "_")
+                                    for name in names)], key=lambda obj: obj.name)
+        group_part(owner.name + "." + component, owner, visuals, collisions)
 
 
 def main(argv=None):
