@@ -33,6 +33,16 @@ def frames(instance, name):
 
 
 def set_initial(instance, targets):
+    if instance.articulation:
+        positions = instance.articulation.get_dof_positions().copy()
+        for name, target in targets.items():
+            index = instance.articulation.shared_metatype.dof_names.index(instance.joint(name).GetName())
+            positions[0, index] = target
+        indices = np.array([0], dtype=np.int32)
+        instance.articulation.set_dof_positions(positions, indices)
+        instance.articulation.set_dof_velocities(np.zeros_like(positions), indices)
+        instance.session.refresh()
+        return
     for name, target in targets.items():
         info = frames(instance, name)
         a, b = info['anchors']

@@ -42,6 +42,11 @@ class Asset:
                             if prim.IsA(UsdPhysics.Joint)]
         self.indices = {name: i for i, name in enumerate(self.body_names)}
         self.view = RigidPrim([self.paths[name] for name in self.body_names], name=name, reset_xform_properties=False)
+        roots = [prim for prim in Usd.PrimRange(session.stage.GetPrimAtPath(path))
+                 if prim.HasAPI(UsdPhysics.ArticulationRootAPI)]
+        self.articulation_root = str(roots[0].GetPath()) if roots else None
+        self.articulation = None
+        self.root_index = self.indices[roots[0].GetCustomDataByKey('table1000:name')] if roots else None
 
     def body(self, name):
         from table_1000.assets.references import expand_names
@@ -61,10 +66,43 @@ class Asset:
         return next(iter(ScriptManager.get_instance()._prim_to_scripts[self.path].values()))
 
     def initialize(self):
+        if self.articulation_root:
+            from isaacsim.core.simulation_manager import SimulationManager
+            self.articulation = SimulationManager.get_physics_sim_view().create_articulation_view(self.articulation_root)
         self.view.initialize()
         self.local_com = np.asarray(self.view.get_coms()[0]).reshape(-1, 3)
         self.local_inertia = np.asarray(self.view.get_inertias()).reshape(-1, 3, 3)
         self.mass = np.asarray(self.view.get_masses()).reshape(-1)
+
+    def restore_body_poses(self, positions, quaternions):
+        if self.articulation:
+            # Reduced coordinates forbid writes to non-root link transforms.
+            i = self.root_index
+            transforms = np.c_[positions[i:i+1], quaternions[i:i+1, [1, 2, 3, 0]]].astype(np.float32)
+            self.articulation.set_root_transforms(transforms, np.array([0], dtype=np.int32))
+        else:
+            self.view.set_world_poses(positions, quaternions)
+
+    def restore_body_velocities(self, velocities):
+        if self.articulation:
+            i = self.root_index
+            self.articulation.set_root_velocities(velocities[i:i+1], np.array([0], dtype=np.int32))
+        else:
+            self.view.set_velocities(velocities)
+
+    def snapshot(self):
+        state = (*self.view.get_world_poses(), self.view.get_velocities())
+        if self.articulation:
+            state += (self.articulation.get_dof_positions().copy(), self.articulation.get_dof_velocities().copy())
+        return state
+
+    def restore(self, state):
+        self.restore_body_poses(state[0], state[1])
+        self.restore_body_velocities(state[2])
+        if self.articulation:
+            indices = np.array([0], dtype=np.int32)
+            self.articulation.set_dof_positions(state[3], indices)
+            self.articulation.set_dof_velocities(state[4], indices)
 
 
 _sessions = {}

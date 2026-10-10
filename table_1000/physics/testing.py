@@ -112,14 +112,14 @@ class TestContext:
         from table_1000.physics.joints import set_initial
         for instance in self.session.instances.values():
             config = self.initials.get(instance.name, {})
-            instance.view.set_world_poses(*saved[instance.name])
+            instance.restore_body_poses(*saved[instance.name])
             self.session.refresh()
             set_initial(instance, config.get('joints', {}))
             pos, quat = instance.view.get_world_poses()
             for name, values in config.get('bodies', {}).items():
                 i = instance.indices[name]
                 pos[i] = values.get('position', pos[i]);quat[i] = values.get('rotation', quat[i])
-            instance.view.set_world_poses(pos.astype(np.float32), quat.astype(np.float32))
+            instance.restore_body_poses(pos.astype(np.float32), quat.astype(np.float32))
             self.session.refresh()
             centers = np.array([instance.body(name).state['com'] for name in instance.body_names])
             omega, linear = config.get('angular_velocity', np.zeros(3)), config.get('linear_velocity', np.zeros(3))
@@ -127,7 +127,7 @@ class TestContext:
             for name, values in config.get('bodies', {}).items():
                 i = instance.indices[name]
                 velocity[i,:3] = values.get('linear_velocity', velocity[i,:3]);velocity[i,3:] = values.get('angular_velocity', velocity[i,3:])
-            instance.view.set_velocities(velocity.astype(np.float32))
+            instance.restore_body_velocities(velocity.astype(np.float32))
         self.session.time = 0.;self.session.steps = 0
         self.session.callback_steps = 0
         self.session.refresh()
@@ -146,6 +146,8 @@ class TestContext:
         path = '/World/Fixtures/fixture_' + str(self.fixture_counter)
         self.fixture_counter += 1
         joint = UsdPhysics.FixedJoint.Define(self.session.stage,path)
+        if body.instance.articulation:
+            joint.CreateExcludeFromArticulationAttr(True)
         joint.CreateBody1Rel().SetTargets([body.path])
         joint.CreateLocalPos0Attr(Gf.Vec3f(*pos));joint.CreateLocalRot0Attr(Gf.Quatf(q[0],Gf.Vec3f(*q[1:])))
         joint.CreateLocalPos1Attr(Gf.Vec3f(0));joint.CreateLocalRot1Attr(Gf.Quatf(1))
@@ -258,15 +260,15 @@ class TestContext:
         self.ensure_initialized()
         if not self.rows:
             if self.warmup:
-                saved = {name:(*a.view.get_world_poses(),a.view.get_velocities()) for name,a in self.session.instances.items()}
+                saved = {name:a.snapshot() for name,a in self.session.instances.items()}
                 start = time.perf_counter()
                 for _ in range(round(1/self.dt)): self.session.step(self.world)
                 self.warmup_seconds = time.perf_counter()-start
                 start = time.perf_counter()
                 self.session.active = False
                 self.world.reset();self.session.initialize()
-                for name,(p,q,v) in saved.items():
-                    a = self.session.instances[name];a.view.set_world_poses(p,q);a.view.set_velocities(v)
+                for name,state in saved.items():
+                    self.session.instances[name].restore(state)
                 self.session.steps = 0;self.session.time = 0.;self.session.refresh()
                 self.session.callback_steps = 0
                 self.preparation_seconds += time.perf_counter()-start
