@@ -28,6 +28,7 @@ class Actions:
     def __init__(self, runtime, instance, definitions):
         self.runtime, self.instance, self.definitions = runtime, instance, deepcopy(definitions)
         self.fixtures, self.records = {}, {}
+        self.fixture_counter = 0
         self.joint_actions, self.activated = {}, set()
 
     def activate(self, name, action):
@@ -102,7 +103,8 @@ class Actions:
             q = target.setdefault('rotation', state['quaternion'].copy())
             if not np.allclose(pos, state['position'], atol=1e-6) or not np.allclose(rotation(q), state['rotation'], atol=1e-6):
                 raise ValueError('Fixed fixture target must match the enabling pose')
-            path = '/World/Fixtures/fixture_' + str(len(self.fixtures))
+            path = '/World/Fixtures/fixture_' + str(self.fixture_counter)
+            self.fixture_counter += 1
             joint = UsdPhysics.FixedJoint.Define(self.runtime.stage, path)
             joint.CreateBody1Rel().SetTargets([self.instance.paths[action['body']]])
             joint.CreateLocalPos0Attr(Gf.Vec3f(*pos))
