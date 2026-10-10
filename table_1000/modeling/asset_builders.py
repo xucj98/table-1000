@@ -62,6 +62,28 @@ def body(name, root):
     return obj
 
 
+def part(name, root):
+    """A nested Compound semantic component, owned by its independent body."""
+    obj = body(name, root)
+    del obj["rigid_body_root"]
+    obj["semantic_part"] = True
+    return obj
+
+
+def group_part(name, root, visuals, colliders):
+    """Put authored geometry under a part without changing its saved world pose."""
+    bpy.context.view_layer.update()
+    node = part(name, root)
+    bpy.context.view_layer.update()
+    for role, objects in [("visual", visuals), ("collision", colliders)]:
+        for i, obj in enumerate(objects, 1):
+            world = obj.matrix_world.copy()
+            obj.parent = node
+            obj.matrix_world = world
+            obj.name = name + "." + role + (str(i) if len(objects) > 1 else "")
+    return node
+
+
 def mesh(name, vertices, faces, parent, surface=None, shape=None):
     data = bpy.data.meshes.new(name + "_mesh")
     data.from_pydata(vertices, [], faces)

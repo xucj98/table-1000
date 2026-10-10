@@ -97,11 +97,19 @@ class GeometryChecks:
             while root and root not in self.bodies:
                 root = root.parent
             require(root is not None, f'Geometry without body owner: {obj.name}')
+            if obj.get('semantic_part'):
+                require(len(obj.data.vertices) == 0 and obj.rigid_body and obj.rigid_body.collision_shape == 'COMPOUND',
+                        f'Semantic part must be an empty Compound: {obj.name}')
+                continue
             self.owner[obj.name] = root.name
             role = obj.get('geometry_role')
             require(role in {'visual', 'collision'}, f'Missing geometry role: {obj.name}')
             if role == 'collision':
-                require(obj.parent == root, f'Compound colliders must be direct children: {obj.name}')
+                ancestor = obj.parent
+                while ancestor != root:
+                    require(ancestor.get('semantic_part') and ancestor.rigid_body and ancestor.rigid_body.collision_shape == 'COMPOUND',
+                            f'Collision ancestor must be a Compound part: {obj.name}')
+                    ancestor = ancestor.parent
                 require(obj.rigid_body and obj.rigid_body.collision_shape in {'BOX', 'CONVEX_HULL'},
                         f'Unsupported collision shape: {obj.name}')
                 require(obj.hide_render, f'Collision mesh must be hidden in asset render: {obj.name}')

@@ -1,7 +1,9 @@
 """Export the actual Object.parent forest, optionally compacting numbered siblings.
 
-Names remain complete; dots never add hierarchy. Compact output also retains a
-fully expanded sibling file. Blender is only required by the command entry point.
+Legacy assets without semantic parts show their organization and rigid roots.
+Children display names relative to their actual parent; dots never add hierarchy.
+Compact output retains an expanded file with full names for exact references.
+Blender is only required by the command entry point.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ def asset_forest(objects):
     objects = {obj.name: obj for obj in objects}
     retained = set()
     for obj in objects.values():
-        if obj.get("geometry_role") not in {"visual", "collision"} and not obj.get("rigid_body_root"):
+        if obj.get("geometry_role") not in {"visual", "collision"} and not obj.get("rigid_body_root") and not obj.get("semantic_part"):
             continue
         while obj is not None:
             if obj.type not in {"CAMERA", "LIGHT"} and not obj.rigid_body_constraint:
@@ -43,7 +45,7 @@ def _relative_name(name, parent):
 
 def _signature(node):
     obj, children = node
-    return (obj.type, bool(obj.get("rigid_body_root")), obj.get("geometry_role"),
+    return (obj.type, bool(obj.get("rigid_body_root")), bool(obj.get("semantic_part")), obj.get("geometry_role"),
             obj.rigid_body.collision_shape if obj.rigid_body else None,
             tuple(slot.material.name if slot.material else None for slot in obj.material_slots),
             tuple(sorted((child[0].name.startswith(obj.name + "."),
@@ -89,24 +91,26 @@ def _siblings(nodes, compact):
     return sorted(displayed, key=lambda item: item[0][0].name)
 
 
-def format_tree(forest, compact=False):
-    """Render full names and [rigid] labels without modifying Blender objects."""
+def format_tree(forest, compact=False, geometry=False, full_names=False):
+    """Render actual hierarchy and [rigid] labels without modifying objects."""
     lines = []
 
-    def visit(nodes, indent="", parent_name=None, displayed_parent=None, roots=False):
-        siblings = _siblings(nodes, compact)
-        for i, (node, name) in enumerate(siblings):
+    def visible(node):
+        obj, children = node
+        return geometry or obj.get("rigid_body_root") or obj.get("semantic_part") or any(visible(child) for child in children)
+
+    def visit(nodes, indent="", parent_name=None, displayed_parent=None):
+        siblings = _siblings([node for node in nodes if visible(node)], compact)
+        for node, name in siblings:
             obj, children = node
             if parent_name and name.startswith(parent_name + "."):
-                name = displayed_parent + name[len(parent_name):]
-            last = i == len(siblings) - 1
-            connector = "" if roots else ("└── " if last else "├── ")
+                name = (displayed_parent + name[len(parent_name):] if full_names
+                        else name[len(parent_name) + 1:])
             marker = " [rigid]" if obj.get("rigid_body_root") else ""
-            lines.append(indent + connector + name + marker)
-            visit(children, indent + ("" if roots else ("    " if last else "│   ")),
-                  obj.name, name)
+            lines.append(indent + name + marker)
+            visit(children, indent + "  ", obj.name, name)
 
-    visit(forest, roots=True)
+    visit(forest)
     return "\n".join(lines) + "\n"
 
 
@@ -114,6 +118,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("blend", type=Path)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--geometry", action="store_true",
+                        help="Include visual/collision meshes; default shows organization, rigid roots and semantic parts")
     parser.add_argument("--compact", action="store_true",
                         help="Compact matching consecutive siblings; also write OUTPUT.stem.expanded.txt")
     if argv is None:
@@ -124,15 +130,15 @@ def main(argv=None):
     bpy.ops.wm.open_mainfile(filepath=str(args.blend.resolve()), load_ui=False)
     forest = asset_forest(bpy.context.scene.objects)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    expanded = format_tree(forest)
     if args.compact:
         full_path = args.output.with_name(args.output.stem + ".expanded" + args.output.suffix)
-        full_path.write_text(expanded, encoding="utf-8")
+        full_path.write_text(format_tree(forest, geometry=args.geometry, full_names=True), encoding="utf-8")
         text = ("# Compact display: only consecutive explicit integer siblings with matching\n"
                 "# roles, collision types, materials and normalized child trees are merged.\n"
                 "# Dot-number suffixes are preserved; dots never create parent nodes.\n"
-                f"# Complete names and objects: {full_path.name}\n\n" + format_tree(forest, True))
+                f"# View: {'geometry' if args.geometry else 'parts'}; expanded full names: {full_path.name}\n\n"
+                + format_tree(forest, True, args.geometry))
     else:
-        text = expanded
+        text = format_tree(forest, geometry=args.geometry)
     args.output.write_text(text, encoding="utf-8")
     print("ASSET_TREE_EXPORTED", args.output.resolve(), flush=True)

@@ -1,6 +1,6 @@
 """Regression checks for geometric rejection, joint poses and sparse keyframes.
 
-Run inside Blender; --assets-root needs cabinet/000000, pen/000001 and pen/000003.
+Run inside Blender; --assets-root needs cabinet/000000, pen/000001, pen/000003 and pen/000006.
 """
 import argparse
 import json
@@ -112,6 +112,26 @@ class AcceptanceTests(unittest.TestCase):
                 run_worker(path, overlapping, Path(tmp), True)
             report = json.loads((Path(tmp)/'acceptance.json').read_text())
             self.assertTrue(report['failures'])
+
+    def test_nested_semantic_parts_and_penetration(self):
+        path = options.assets_root/'pen/000006/object.blend'
+        camera = [1,-1,1,0,0,1]
+        separated = {'part-pose.jpg': [{'frame':0, 'camera':camera, 'joints':{},
+                                      'transforms':{'cap':[-.06,-.045,0,2**-.5,0,0,-2**-.5]}}]}
+        with tempfile.TemporaryDirectory(dir=options.output) as tmp:
+            run_worker(path, separated, Path(tmp), True)
+            checks = GeometryChecks()
+            self.assertEqual(len(checks.bodies), 2)
+            self.assertEqual(len(checks.colliders), 36)
+            self.assertEqual(checks.report['complexity']['visual_triangles'], 624)
+            for obj in checks.visuals + checks.colliders:
+                self.assertTrue(obj.parent.get('semantic_part'))
+                self.assertEqual(checks.owner[obj.name], obj.parent.parent.name)
+            overlap = {'overlap.jpg': [{'frame':0, 'camera':camera, 'joints':{},
+                                       'transforms':{'cap':[0,0,0,2**-.5,0,0,2**-.5]}}]}
+            with self.assertRaisesRegex(ValueError, 'Collision coarse check failed'):
+                run_worker(path, overlap, Path(tmp), True)
+            self.assertTrue(json.loads((Path(tmp)/'acceptance.json').read_text())['failures'])
 
     def test_containment_and_touch(self):
         normals=np.eye(3);edges=np.eye(3)
