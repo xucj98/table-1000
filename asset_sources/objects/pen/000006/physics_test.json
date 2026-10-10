@@ -1,0 +1,190 @@
+{
+  "defaults": {
+    "simulation": {
+      "backend": "isaac",
+      "dt": 0.004,
+      "gravity": [
+        0,
+        0,
+        0
+      ]
+    },
+    "duration": 1.72,
+    "ground": null,
+    "initial": {
+      "position": [
+        0,
+        0,
+        0.15
+      ]
+    },
+    "camera": {
+      "position": [
+        0.34,
+        -0.1,
+        0.23
+      ],
+      "target": [
+        -0.08,
+        0,
+        0.15
+      ],
+      "up": [
+        0,
+        0,
+        1
+      ],
+      "resolution": [
+        960,
+        480
+      ],
+      "fps": 25
+    },
+    "actions": {
+      "hold_body": {
+        "type": "fixture",
+        "body": "body",
+        "mode": "fixed",
+        "keyframes": [
+          {
+            "time": 0
+          },
+          {
+            "time": 1.72
+          }
+        ]
+      }
+    }
+  },
+  "tests": {
+    "pull.mp4": {
+      "actions": {
+        "pull_cap": {
+          "type": "force",
+          "body": "cap",
+          "frame": "world",
+          "keyframes": [
+            {
+              "time": 0,
+              "value": [
+                0,
+                0,
+                0
+              ]
+            },
+            {
+              "time": 0.8,
+              "value": [
+                -1,
+                0,
+                0
+              ]
+            },
+            {
+              "time": 1.2
+            },
+            {
+              "time": 1.212,
+              "value": [
+                -2.5,
+                0,
+                0
+              ]
+            },
+            {
+              "time": 1.216,
+              "value": [
+                0,
+                0,
+                0
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "close.mp4": {
+      "initial": {
+        "rigid_bodies": {
+          "cap": {
+            "position": [
+              -0.052,
+              0,
+              0.15
+            ]
+          }
+        }
+      },
+      "actions": {
+        "push_cap": {
+          "type": "force",
+          "body": "cap",
+          "frame": "world",
+          "keyframes": [
+            {
+              "time": 0,
+              "value": [
+                0,
+                0,
+                0
+              ]
+            },
+            {
+              "time": 0.8,
+              "value": [
+                0.5,
+                0,
+                0
+              ]
+            },
+            {
+              "time": 1.2
+            },
+            {
+              "time": 1.4,
+              "value": [
+                2.5,
+                0,
+                0
+              ]
+            },
+            {
+              "time": 1.404
+            },
+            {
+              "time": 1.408,
+              "value": [
+                0,
+                0,
+                0
+              ]
+            }
+          ]
+        },
+        "hold_body": {
+          "keyframes": [
+            {
+              "time": 0
+            },
+            {
+              "time": 3
+            }
+          ]
+        }
+      },
+      "duration": 3,
+      "camera": {
+        "position": [
+          0.15,
+          -0.4,
+          0.35
+        ],
+        "target": [
+          -0.01,
+          0,
+          0.15
+        ]
+      }
+    }
+  }
+}

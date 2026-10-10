@@ -16,6 +16,8 @@ import sys
 import tempfile
 import time
 
+from table_1000.assets.references import expand_mapping
+
 
 DEFAULT_VIEWS = {
     "front.jpg": {"camera": [0, -1, 0, 0, 0, 1]},
@@ -47,12 +49,12 @@ def camera_values(value):
 def pose_values(value):
     if not isinstance(value, dict):
         raise ValueError("joints must be an object")
-    return {name: finite_number(q, f"joint {name}") for name, q in value.items()}
+    return {name: finite_number(q, f"joint {name}") for name, q in expand_mapping(value).items()}
 
 
 def transform_values(value):
     result = {}
-    for name, pose in value.items():
+    for name, pose in expand_mapping(value).items():
         if len(pose) != 7:
             raise ValueError(f"transform {name} requires [x,y,z,w,qx,qy,qz]")
         pose = [finite_number(v, f"transform {name}") for v in pose]
@@ -213,17 +215,12 @@ def run_worker(blend, views, output, check_only=False, device="auto"):
     bodies = {obj.name: obj for obj in checks.bodies}
 
     def pose(values, transforms=None):
-        transforms = transforms or {}
-        unknown = values.keys() - joints.keys()
-        if unknown:
-            raise ValueError(f"unknown joints: {sorted(unknown)}")
+        values = expand_mapping(values, joints)
+        transforms = expand_mapping(transforms or {}, bodies)
         for name, (joint, c, limits) in joints.items():
             q = values.get(name, 0.0)
             if limits and not limits[0] - 1e-6 <= q <= limits[1] + 1e-6:
                 raise ValueError(f"{name}={q} outside [{limits[0]}, {limits[1]}]")
-        unknown = transforms.keys() - bodies.keys()
-        if unknown:
-            raise ValueError(f"unknown bodies: {sorted(unknown)}")
         for obj in bodies.values():
             obj.matrix_world = rest[obj.name]
         bpy.context.view_layer.update()
@@ -256,14 +253,15 @@ def run_worker(blend, views, output, check_only=False, device="auto"):
                      @ rotation @ Matrix.Translation(-pivot))
             bodies[name].matrix_world = delta @ bodies[name].matrix_world
         bpy.context.view_layer.update()
+        return values, transforms
 
     output.mkdir(parents=True, exist_ok=True)
     report_path = output / "acceptance.json"
     for output_name, entry in views.items():
         states = entry if output_name.endswith(".jpg") else [interpolate(entry[1], i) for i in range(entry[1][-1]["frame"]+1)]
         for state in states:
-            pose(state["joints"], state.get("transforms"))
-            checks.sample(output_name, state["frame"], state["joints"], state.get("transforms"))
+            values, transforms = pose(state["joints"], state.get("transforms"))
+            checks.sample(output_name, state["frame"], values, transforms)
     checks.report["timings_seconds"] = {"validation": round(time.perf_counter() - started, 3)}
     checks.report["status"] = "failed" if checks.report["failures"] else "passed"
     report_path.write_text(json.dumps(checks.report, indent=2)+"\n", encoding="utf-8")
