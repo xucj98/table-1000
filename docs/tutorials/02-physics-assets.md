@@ -56,8 +56,7 @@ export MKL_NUM_THREADS=1
 | `pressure_hold` | 持续施压稳定性 |
 | `free_cap` | 已分离笔帽受偏心短脉冲后的自由运动 |
 | `drop_0.2m_4ms`、`drop_0.5m_4ms`、`drop_1m_4ms` | 不同初始原点高度的跌落 |
-| `drop_1m_2ms`、`drop_1m_1ms` | 1 m 跌落的步长对照 |
-| `two_instances`、`exchanged_caps` | 实例隔离，以及初始交换笔盖后的跨实例配对 |
+| `drop_1m_2ms` | 1 m 跌落的步长对照 |
 
 结果默认写入资产的 `physics_test/`，与 `preview/` 并列。例如：
 
@@ -74,6 +73,6 @@ physics_test/
 
 **验收分两步：** 查看完整视频和关注曲线，判断是否符合实验预期；查看 `result.json` 中的执行状态、实际条件及无渲染/含视频两种 RTF。标准条件与计时方法见 [RTF 基准](../designs/asset-pipeline/physics-tests.md#rtf-基准)。执行完成不等于人工验收通过。
 
-当前笔示例的拔合、自由运动和多实例测试通过，合帽缝隙约 0.409 mm。持续施压仍有抖动；跌落仅通过宏观粗测，步长结果未收敛。保持力是未标定的等效模型，GUI 加载尚未验证。
+当前笔示例的拔合和自由运动测试通过，合帽缝隙约 0.409 mm。持续施压仍有抖动；跌落仅通过宏观粗测，步长结果未收敛。保持力是未标定的等效模型，GUI 加载尚未验证。
 
 有问题时修改对应源码，重新构建并运行受影响的测试。按[资产布局](../designs/asset-pipeline/README.md#资产布局)保存源码和生成物。
