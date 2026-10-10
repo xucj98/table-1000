@@ -16,17 +16,21 @@ def initial_state(runtime, instance, config):
     from table_1000.physics.joints import set_initial
     set_initial(instance, config.get('joints', {}))
     pos, quat = instance.view.get_world_poses()
-    omega = np.asarray(config.get('angular_velocity', [0, 0, 0]))
-    linear = np.asarray(config.get('linear_velocity', [0, 0, 0]))
-    origin = np.asarray(config.get('position', [0, 0, 0]))
-    velocity = np.c_[linear + np.cross(omega, pos - origin), np.tile(omega, (len(pos), 1))]
     for name, values in config.get('rigid_bodies', {}).items():
         i = instance.indices[name]
         pos[i] = values.get('position', pos[i])
         quat[i] = values.get('rotation', quat[i])
+    instance.view.set_world_poses(pos.astype(np.float32), quat.astype(np.float32))
+    runtime.refresh_states()
+    centers = np.array([runtime.state(instance.body_key(name))['com'] for name in instance.body_names])
+    omega = np.asarray(config.get('angular_velocity', [0, 0, 0]))
+    linear = np.asarray(config.get('linear_velocity', [0, 0, 0]))
+    origin = np.asarray(config.get('position', [0, 0, 0]))
+    velocity = np.c_[linear + np.cross(omega, centers - origin), np.tile(omega, (len(pos), 1))]
+    for name, values in config.get('rigid_bodies', {}).items():
+        i = instance.indices[name]
         velocity[i, :3] = values.get('linear_velocity', velocity[i, :3])
         velocity[i, 3:] = values.get('angular_velocity', velocity[i, 3:])
-    instance.view.set_world_poses(pos.astype(np.float32), quat.astype(np.float32))
     instance.view.set_velocities(velocity.astype(np.float32))
     runtime.refresh_states()
 
