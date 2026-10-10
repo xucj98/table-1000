@@ -159,17 +159,20 @@ def build(asset, source, output):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('asset', type=Path, help='Generated asset directory containing object.blend')
-    parser.add_argument('--source', type=Path)
-    parser.add_argument('--output', type=Path)
+    parser.add_argument('--source', type=Path, default=Path('asset_sources/objects'))
+    parser.add_argument('--output', type=Path, default=Path('assets/objects'))
+    parser.add_argument('--assets', type=Path, nargs='+', help='Asset paths relative to the source/output roots')
     parser.add_argument('--gpu', type=int, default=0)
     args = parser.parse_args(argv)
-    source = args.source or Path('asset_sources/objects').joinpath(*args.asset.parts[-2:])
+    source, output = args.source.resolve(), args.output.resolve()
+    references = args.assets if args.assets is not None else sorted(
+        path.parent.relative_to(source) for path in source.rglob('physics.py'))
     from isaacsim import SimulationApp
     app = SimulationApp({'headless': True, 'active_gpu': args.gpu, 'physics_gpu': args.gpu,
                          'multi_gpu': False, 'create_new_stage': False,
                          'disable_viewport_updates': True, 'limit_cpu_threads': 4})
     try:
-        build(args.asset.resolve(), source.resolve(), (args.output or args.asset).resolve())
+        for reference in references:
+            build(output / reference, source / reference, output / reference)
     finally:
         app.close()
