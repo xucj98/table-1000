@@ -1,224 +1,213 @@
-"""Run configured real Isaac physics tests with portable asset behaviors."""
-
+"""Execute native USD asset TESTS and measure simulation and video costs."""
 import argparse
 import csv
+import importlib.util
 import json
 from pathlib import Path
-import subprocess
 import shutil
+import statistics
+import subprocess
 import time
 import traceback
-import numpy as np
-from table_1000.physics.config import test_configs
-from table_1000.physics.plots import plots, plot_trace
 
 
-def initial_state(runtime, instance, config):
-    from table_1000.physics.joints import set_initial
-    set_initial(instance, config.get('joints', {}))
-    pos, quat = instance.view.get_world_poses()
-    for name, values in config.get('rigid_bodies', {}).items():
-        i = instance.indices[name]
-        pos[i] = values.get('position', pos[i])
-        quat[i] = values.get('rotation', quat[i])
-    instance.view.set_world_poses(pos.astype(np.float32), quat.astype(np.float32))
-    runtime.refresh_states()
-    centers = np.array([runtime.state(instance.body_key(name))['com'] for name in instance.body_names])
-    omega = np.asarray(config.get('angular_velocity', [0, 0, 0]))
-    linear = np.asarray(config.get('linear_velocity', [0, 0, 0]))
-    origin = np.asarray(config.get('position', [0, 0, 0]))
-    velocity = np.c_[linear + np.cross(omega, centers - origin), np.tile(omega, (len(pos), 1))]
-    for name, values in config.get('rigid_bodies', {}).items():
-        i = instance.indices[name]
-        velocity[i, :3] = values.get('linear_velocity', velocity[i, :3])
-        velocity[i, 3:] = values.get('angular_velocity', velocity[i, 3:])
-    instance.view.set_velocities(velocity.astype(np.float32))
-    runtime.refresh_states()
+def load_tests(path):
+    spec = importlib.util.spec_from_file_location('table1000_asset_tests',path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.TESTS
 
 
-def record(runtime, instance, actions, observe):
-    row = {'time': runtime.time}
-    for name in observe['rigid_bodies']:
-        state = runtime.state(instance.body_key(name))
-        for field, labels in [('position', 'xyz'), ('quaternion', 'wxyz')]:
-            for label, value in zip(labels, state[field]):
-                row[f'rigid_bodies.{name}.{field}.{label}'] = float(value)
-        for field, values in [('linear_velocity', state['velocity'][:3]), ('angular_velocity', state['velocity'][3:])]:
-            for label, value in zip('xyz', values):
-                row[f'rigid_bodies.{name}.{field}.{label}'] = float(value)
-    for name in observe['actions']:
-        for field, value in actions.records.get(name, {'active': 0}).items():
-            array = np.asarray(value).reshape(-1)
-            labels = 'wxyz' if field == 'rotation' else 'xyz'
-            for i, component in enumerate(array):
-                row[f'actions.{name}.{field}' + (f'.{labels[i]}' if len(array) > 1 else '')] = float(component)
-    from table_1000.physics.joints import frames
-    for name in observe['joints']:
-        info = frames(instance, name)
-        row[f'joints.{name}.position'] = info['position']
-        row[f'joints.{name}.velocity'] = info['velocity']
-    for name, behavior in instance.behaviors.items():
-        for field, value in behavior.metrics.items():
-            row[f'behaviors.{name}.{field}'] = float(value)
-    return row
+def ground_clearance(model, rows, instance_names, ground_z):
+    """Evaluate collision hull vertices against the plane from recorded poses."""
+    import numpy as np
+    from table_1000.physics.simulation import rotation
+    worlds, owners, points = {}, {}, {}
+    for node in model['nodes']:
+        name,parent=node['name'],node['parent']
+        worlds[name]=worlds.get(parent,np.eye(4)) @ np.array(node['matrix'])
+        owners[name]=name if node['rigid'] else owners.get(parent)
+        if node.get('role')=='collision':
+            body=owners[name]
+            transform=np.linalg.inv(worlds[body]) @ worlds[name]
+            vertices=np.c_[node['vertices'],np.ones(len(node['vertices']))]
+            points.setdefault(body,[]).extend((vertices @ transform.T)[:,:3])
+    points={body:np.array(vertices) for body,vertices in points.items()}
+    minimum=[]
+    for row in rows:
+        values=[]
+        for instance in instance_names:
+            for body,vertices in points.items():
+                prefix=f'{instance}.{body}.'
+                quaternion=[row[prefix+'quaternion.'+axis] for axis in 'wxyz']
+                values.append(float((vertices @ rotation(quaternion).T)[:,2].min()+row[prefix+'position.z']-ground_z))
+        minimum.append(min(values))
+    index=int(np.argmin(minimum))
+    return {'minimum_collision_clearance_m':minimum[index],
+            'maximum_geometry_penetration_m':max(0.,-minimum[index]),'time_s':rows[index]['time'],
+            'sampling_interval_s':rows[1]['time']-rows[0]['time'],
+            'method':'collision hull vertices transformed by recorded rigid poses; geometric overlap excludes contact margins'}
 
 
-class Camera:
-    def __init__(self, stage, config):
-        import carb
-        import omni.replicator.core as rep
-        from pxr import Gf, UsdGeom, UsdLux
-        for setting in ['/omni/replicator/captureOnPlay', '/omni/replicator/asyncRendering', '/app/asyncRendering']:
-            carb.settings.get_settings().set(setting, False)
-        self.rep, self.size = rep, config['resolution']
-        camera = UsdGeom.Camera.Define(stage, '/World/Camera')
-        camera.CreateFocalLengthAttr(28)
-        camera.CreateClippingRangeAttr(Gf.Vec2f(.001, 100))
-        transform = Gf.Matrix4d().SetLookAt(Gf.Vec3d(*config['position']), Gf.Vec3d(*config['target']), Gf.Vec3d(*config['up'])).GetInverse()
-        UsdGeom.Xformable(camera).AddTransformOp().Set(transform)
-        UsdLux.DomeLight.Define(stage, '/World/Light').CreateIntensityAttr(1000)
-        self.product = rep.create.render_product(camera.GetPath(), tuple(self.size))
-        self.rgb = rep.AnnotatorRegistry.get_annotator('rgb')
-        self.rgb.attach([self.product])
-
-    def capture(self, runtime, name, actions):
-        from PIL import Image, ImageDraw
-        from omni.physx import get_physx_interface
-        get_physx_interface().update_transformations(True, True, True, False)
-        before = {key: value['position'].copy() for key, value in runtime._states.items()}
-        self.rep.orchestrator.step(rt_subframes=1, delta_time=0., pause_timeline=False)
-        runtime.refresh_states()
-        if any(not np.array_equal(value, runtime.state(key)['position']) for key, value in before.items()):
-            raise RuntimeError('Rendering advanced physical state')
-        image = Image.fromarray(self.rgb.get_data()[:, :, :3])
-        draw = ImageDraw.Draw(image)
-        draw.rectangle((0, 0, self.size[0], 35), fill='white')
-        from table_1000.physics.actions import interpolate
-        active = ', '.join(key for key, value in actions.definitions.items() if interpolate(value['keyframes'], runtime.time) is not None)
-        draw.text((10, 5), f'Isaac 5.1 | {name} | t={runtime.time:.2f}s | 1x', fill='black')
-        draw.text((10, 20), f'Actions: {active or "none"}', fill='black')
-        return image
-
-    def close(self):
-        self.rgb.detach()
-        self.product.destroy()
+def benchmark(asset,name,test,app):
+    from table_1000.physics.testing import TestContext
+    rounds=[]
+    for _ in range(3):
+        seconds=wall=prepare=warmup=0.
+        finals=[]
+        while seconds < 10-1e-8:
+            start=time.perf_counter()
+            ctx=TestContext(asset,name=name,app=app,warmup=True)
+            construction=time.perf_counter()-start
+            test(ctx)
+            seconds+=ctx.session.time;wall+=ctx.integrating_seconds
+            prepare+=construction+ctx.preparation_seconds;warmup+=ctx.warmup_seconds
+            finals.append(ctx.rows[-1])
+            ctx.close()
+        rounds.append({'simulated_seconds':seconds,'wall_seconds':wall,'RTF':seconds/wall,
+                       'independent_repeats':len(finals),'preparation_reset_seconds':prepare,'warmup_seconds':warmup,
+                       'final_states':finals})
+    return {'rounds':rounds,'median_RTF':statistics.median(r['RTF'] for r in rounds),
+            'includes':'physical steps, official behavior, test actions, state reading and in-memory sampling; no camera or rendering'}
 
 
-def run_test(asset, name, config, output, startup):
-    from isaacsim.core.api import World
-    from pxr import Gf, UsdGeom, UsdPhysics, UsdShade, PhysxSchema
-    from table_1000.physics.runtime import Runtime
-    from table_1000.physics.actions import Actions
-    dt, duration = config['simulation']['dt'], config['duration']
-    World.clear_instance()
-    import omni.usd
-    omni.usd.get_context().new_stage()
-    world = World(physics_dt=dt, rendering_dt=1 / config['camera']['fps'], stage_units_in_meters=1, backend='numpy', device='cpu')
-    pc = world.get_physics_context();pc.enable_gpu_dynamics(False);pc.set_solver_type('TGS');pc.set_broadphase_type('MBP');pc.enable_ccd(True)
-    gravity = np.asarray(config['simulation']['gravity'], dtype=float)
-    scene = UsdPhysics.Scene.Get(omni.usd.get_context().get_stage(), pc.prim_path)
-    magnitude = np.linalg.norm(gravity)
-    scene.CreateGravityMagnitudeAttr(float(magnitude))
-    scene.CreateGravityDirectionAttr(Gf.Vec3f(*(gravity / magnitude if magnitude else [0, 0, -1])))
-    if config.get('ground'):
-        g = config['ground']
-        floor = UsdGeom.Cube.Define(omni.usd.get_context().get_stage(), '/World/Ground');floor.CreateSizeAttr(1)
-        transform = UsdGeom.Xformable(floor);transform.AddTranslateOp().Set(Gf.Vec3d(0, 0, g['z'] - .05));transform.AddScaleOp().Set(Gf.Vec3f(4, 4, .1))
-        floor.CreateDisplayColorAttr([Gf.Vec3f(.46, .49, .53)]);UsdPhysics.CollisionAPI.Apply(floor.GetPrim())
-        PhysxSchema.PhysxCollisionAPI.Apply(floor.GetPrim()).CreateContactOffsetAttr(.02)
-        material = UsdShade.Material.Define(omni.usd.get_context().get_stage(), '/World/GroundMaterial')
-        api = UsdPhysics.MaterialAPI.Apply(material.GetPrim())
-        for key, method in [('static_friction', 'CreateStaticFrictionAttr'), ('dynamic_friction', 'CreateDynamicFrictionAttr'), ('restitution', 'CreateRestitutionAttr')]:
-            getattr(api, method)(g[key])
-        UsdShade.MaterialBindingAPI.Apply(floor.GetPrim()).Bind(material, materialPurpose='physics')
-    runtime = Runtime(world)
-    initial = config.get('initial', {})
-    instance = runtime.load(asset, 'asset', initial.get('position', [0, 0, 0]), initial.get('rotation', [1, 0, 0, 0]))
-    runtime.initialize();initial_state(runtime, instance, initial)
-    actions = Actions(runtime, instance, config['actions']);runtime.external_actions = actions
-    camera = Camera(runtime.stage, config['camera'])
-    directory = output / Path(name).stem;directory.mkdir(parents=True, exist_ok=True)
-    frames = directory / 'frames'
-    if frames.exists():
-        shutil.rmtree(frames)
-    frames.mkdir()
-    times = {'physics_seconds': 0., 'sampling_seconds': 0., 'render_encode_seconds': 0., 'startup_seconds': startup}
-    stride = round(1 / (dt * config['camera']['fps']))
-    rows = []
-    def sample():
-        start = time.perf_counter()
-        rows.append(record(runtime, instance, actions, config['observe']))
-        times['sampling_seconds'] += time.perf_counter() - start
-    runtime.observer = sample
-    start = time.perf_counter();camera.capture(runtime, name, actions);times['render_encode_seconds'] += time.perf_counter() - start
-    for step in range(round(duration / dt) + 1):
-        if step % stride == 0:
-            start = time.perf_counter();camera.capture(runtime, name, actions).save(frames / f'{step // stride:05}.jpg');times['render_encode_seconds'] += time.perf_counter() - start
-        if step < round(duration / dt):
-            sampled = times['sampling_seconds']
-            start = time.perf_counter();runtime.step();times['physics_seconds'] += time.perf_counter() - start - (times['sampling_seconds'] - sampled)
-    actions(duration, dt)
-    sample()
-    fields = sorted(set().union(*(row.keys() for row in rows)))
-    with (directory / 'trace.csv').open('w') as stream:
-        writer = csv.DictWriter(stream, fields);writer.writeheader();writer.writerows(rows)
-    start = time.perf_counter()
-    subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-y', '-framerate', str(config['camera']['fps']), '-i', str(frames / '%05d.jpg'), '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '20', str(output / name)], check=True)
-    times['render_encode_seconds'] += time.perf_counter() - start
-    model = json.loads((asset.parent / 'model.json').read_text())
-    plots(rows, config['observe']['plots'], directory, model, config['actions'])
-    acceptance = {'execution_status': 'completed', 'review_status': 'pending', 'config': config, 'engine': 'Isaac Sim 5.1 / CPU PhysX TGS',
-                  'behavior_load': instance.load_evidence, 'runtime_manifest': str(instance.manifest_path),
-                  'physics': json.loads((asset.parent / 'physics_build.json').read_text()), 'timing': times,
-                  'physics_RTF': duration / times['physics_seconds'], 'steps': round(duration / dt), 'frames': len(list(frames.glob('*.jpg'))),
-                  'sampling': 'State and applied actions at the start of each physical step; final state at duration. Rendering advances zero time.',
-                  'step_callback': 'PhysX subscribe_physics_on_step_events(pre_step=True)',
-                  'reaction_forces': 'Not sampled; test forces are not constraint reaction forces'}
-    (directory / 'acceptance.json').write_text(json.dumps(acceptance, indent=2) + '\n')
-    camera.close();actions.close();runtime.close()
-    print('PHYSICS_TEST_COMPLETED', name, flush=True)
-    return acceptance
+def conditions(ctx):
+    import carb
+    import numpy as np
+    from pxr import PhysxSchema,UsdPhysics
+    from omni.physx.bindings import _physx
+    from isaacsim.core.simulation_manager import SimulationManager
+    from isaacsim.core.version import get_version
+    from threadpoolctl import threadpool_info
+    settings=carb.settings.get_settings()
+    engine={}
+    for instance in ctx.session.instances.values():
+        shapes={}
+        for name in instance.body_names:
+            # A combined rigid view pads to the largest body's shape count.
+            # One-body views report only that body's actual collision shapes.
+            tensor=SimulationManager.get_physics_sim_view().create_rigid_body_view(instance.paths[name])
+            shapes[name]={'count':tensor.max_shapes,
+                'materials_static_dynamic_restitution':np.unique(np.asarray(tensor.get_material_properties()).reshape(-1,3),axis=0).tolist(),
+                'contact_offsets_m':np.unique(np.asarray(tensor.get_contact_offsets())).tolist(),
+                'rest_offsets_m':np.unique(np.asarray(tensor.get_rest_offsets())).tolist()}
+        engine[instance.name]={'mass_kg':instance.mass.tolist(),'center_of_mass_m':instance.local_com.tolist(),
+              'inertia_kg_m2':instance.local_inertia.tolist(),
+              'collision_shapes':shapes,
+              'rigid_bodies':{name:{'position_iterations':PhysxSchema.PhysxRigidBodyAPI(ctx.session.stage.GetPrimAtPath(instance.paths[name])).GetSolverPositionIterationCountAttr().Get(),
+                                   'velocity_iterations':PhysxSchema.PhysxRigidBodyAPI(ctx.session.stage.GetPrimAtPath(instance.paths[name])).GetSolverVelocityIterationCountAttr().Get(),
+                                   'ccd':PhysxSchema.PhysxRigidBodyAPI(ctx.session.stage.GetPrimAtPath(instance.paths[name])).GetEnableCCDAttr().Get()}
+                              for name in instance.body_names}}
+    cpu=next(line.split(':',1)[1].strip() for line in Path('/proc/cpuinfo').read_text().splitlines() if line.startswith('model name'))
+    return {'engine':'Isaac Sim / CPU PhysX','isaac_version':get_version(),'dt':ctx.dt,'solver':'TGS','gpu_dynamics':False,'CCD':True,
+            'instances':len(ctx.session.instances),'gravity':ctx.gravity,'ground':getattr(ctx,'ground_config',None),
+            'physics_values_from_engine':engine,'cpu':cpu,
+            'worker_controls':{'carb_tasking':settings.get('/plugins/carb.tasking.plugin/threadCount'),
+                 'tbb':settings.get('/plugins/omni.tbb.globalcontrol/maxThreadCount'),
+                 'physx':settings.get(_physx.SETTING_NUM_THREADS)},'native_math_threadpools':threadpool_info(),
+            'render_settings':{path:settings.get(path) for path in ['/rtx/rendermode','/rtx/post/motionblur/enabled',
+                '/rtx/directLighting/sampledLighting/enabled','/rtx/directLighting/sampledLighting/samplesPerPixel',
+                '/rtx/directLighting/sampledLighting/denoisingTechnique','/rtx/directLighting/domeLight/sampleCount',
+                '/rtx/directLighting/domeLight/denoisingTechnique','/rtx/shadows/sampleCount','/rtx/shadows/denoiser/enable',
+                '/rtx/reflections/sampledLighting/samplesPerPixel','/rtx/reflections/denoiser/enabled','/rtx/post/taa/samples']},
+            'camera':ctx.camera_config,'standard_dt':ctx.dt==.004}
+
+
+def run_video(asset,name,test,output,app,startup,rtf,gpu):
+    from table_1000.physics.testing import TestContext
+    from table_1000.physics.plots import plots
+    directory=output/name
+    started=time.perf_counter()
+    ctx=TestContext(asset,name=name,render=True,app=app,warmup=True)
+    construction=time.perf_counter()-started
+    try:
+        test(ctx)
+        frames=directory/'frames';frames.mkdir()
+        for i,image in enumerate(ctx.images):image.save(frames/f'{i:05}.jpg',quality=95)
+        columns=list(ctx.rows[0])
+        with (directory/'trace.csv').open('w') as stream:
+            writer=csv.DictWriter(stream,columns);writer.writeheader();writer.writerows(ctx.rows)
+        fps=ctx.camera_config['fps']
+        subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-y','-framerate',str(fps),'-i',str(frames/'%05d.jpg'),
+                        '-c:v','libx264','-pix_fmt','yuv420p','-crf','20',str(output/(name+'.mp4'))],check=True)
+        wall=time.perf_counter()-ctx.video_started
+        plots(ctx.rows,ctx.plot_columns,directory,ctx.units)
+        # Fresh independent input executions, not subtraction of render costs.
+        errors=[max(abs(float(row[key])-float(ctx.rows[-1][key])) for key in row.keys() & ctx.rows[-1].keys() if key!='time')
+                for round in rtf['rounds'] for row in round['final_states']]
+        result={'test':name,'execution_status':'completed','review_status':'pending','asset':str(asset),
+            'conditions':{**conditions(ctx),'gpu':gpu},'columns':ctx.units,'plots':ctx.plot_columns,
+            'steps':ctx.session.steps,'frames':len(ctx.images),'sampling':'state after integration at t; action columns are the force applied over [t-dt,t); initial t=0 has zero actions',
+            'physics_callbacks':'actions/state priority -100; official BehaviorScript priority 0; batched force flush priority 100; one physical step, no hidden substeps',
+            'performance':{'no_render':rtf,'video_end_to_end':{'simulated_seconds':ctx.session.time,'wall_seconds':wall,'RTF':ctx.session.time/wall},
+                 'preparation':{'process_startup_seconds':startup,'construction_seconds':construction,'initialization_render_warmup_reset_seconds':ctx.preparation_seconds,'physical_warmup_seconds':ctx.warmup_seconds},
+                 'independent_no_render_vs_video_final_max_scalar_error':max(errors)},
+            'reaction_forces':'not sampled; recorded test forces are not contact or fixture reaction forces'}
+        if getattr(ctx,'ground_config',None):
+            result['ground_contact']=ground_clearance(json.loads((asset.parent/'model.json').read_text()),
+                ctx.rows,ctx.session.instances,ctx.ground_config['z'])
+        (directory/'result.json').write_text(json.dumps(result,indent=2)+'\n')
+        print('PHYSICS_TEST_COMPLETED',name,flush=True)
+        return result
+    finally:
+        ctx.close()
+
+
+def run_case(asset,name,test,output,app,startup,gpu):
+    directory=output/name
+    if directory.exists():shutil.rmtree(directory)
+    (output/(name+'.mp4')).unlink(missing_ok=True)
+    directory.mkdir(parents=True)
+    try:
+        rtf=benchmark(asset,name,test,app)
+        return run_video(asset,name,test,output,app,startup,rtf,gpu)
+    except Exception:
+        (directory/'result.json').write_text(json.dumps({'test':name,'execution_status':'failed',
+            'review_status':'pending','error':traceback.format_exc()},indent=2)+'\n')
+        raise
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('asset', type=Path, help='object.usdz or its directory')
-    parser.add_argument('--config', type=Path)
-    parser.add_argument('--output', type=Path, help='Results directory; defaults to the asset physics_test directory')
-    parser.add_argument('--tests', nargs='+')
-    parser.add_argument('--plots-only', action='store_true', help='Redraw configured plots from existing CSV traces without simulation')
-    parser.add_argument('--gpu', type=int, default=0)
-    args = parser.parse_args(argv)
-    asset = args.asset.resolve();asset = asset / 'object.usdz' if asset.is_dir() else asset
-    output = (args.output or asset.parent / 'physics_test').resolve()
-    model = json.loads((asset.parent / 'model.json').read_text())
-    config = json.loads((args.config or asset.parent / 'physics_test.json').read_text())
-    tests = test_configs(config, model)
-    if args.tests:
-        tests = {name: tests[name] for name in args.tests}
-    output.mkdir(parents=True, exist_ok=True)
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('asset',type=Path,help='asset directory or USD entry')
+    parser.add_argument('--script',type=Path)
+    parser.add_argument('--output',type=Path)
+    parser.add_argument('--tests',nargs='+')
+    parser.add_argument('--gpu',type=int,default=0)
+    parser.add_argument('--plots-only',action='store_true')
+    args=parser.parse_args(argv)
+    asset=args.asset.resolve()
+    if asset.is_dir():asset=asset/('object.usda' if (asset/'object.usda').exists() else 'object.usdz')
+    tests=load_tests(args.script or asset.parent/'physics_test.py')
+    if args.tests:tests={name:tests[name] for name in args.tests}
+    output=(args.output or asset.parent/'physics_test').resolve();output.mkdir(parents=True,exist_ok=True)
     if args.plots_only:
-        for name, test in tests.items():
-            plot_trace(output / Path(name).stem / 'trace.csv', test['observe']['plots'], model, test['actions'])
+        from table_1000.physics.plots import plot_trace
+        for name in tests:
+            result=json.loads((output/name/'result.json').read_text())
+            plot_trace(output/name/'trace.csv',result['plots'],result['columns'])
         return
-    start = time.perf_counter()
+    started=time.perf_counter()
+    gpu={'physical_index':args.gpu,'before_process_start':subprocess.run(
+        ['nvidia-smi','--query-gpu=index,name,driver_version,memory.used,utilization.gpu','--format=csv'],
+        check=True,capture_output=True,text=True).stdout.strip()}
     from isaacsim import SimulationApp
-    app = SimulationApp({'headless': True, 'create_new_stage': False, 'active_gpu': args.gpu, 'physics_gpu': args.gpu,
-                         'multi_gpu': False, 'disable_viewport_updates': True, 'limit_cpu_threads': 4})
-    startup = time.perf_counter() - start
+    app=SimulationApp({'headless':True,'create_new_stage':False,'active_gpu':args.gpu,'physics_gpu':args.gpu,'multi_gpu':False,
+         'disable_viewport_updates':True,'limit_cpu_threads':4,'renderer':'RaytracedLighting','width':960,'height':480,
+         'extra_args':['--/persistent/physics/numThreads=4','--/rtx/post/motionblur/enabled=False']})
+    startup=time.perf_counter()-started
     try:
-        for name, test in tests.items():
-            directory = output / Path(name).stem
-            if directory.exists():
-                shutil.rmtree(directory)
-            (output / name).unlink(missing_ok=True)
-            run_test(asset, name, test, output, startup)
+        import carb
+        from threadpoolctl import threadpool_limits
+        from table_1000.physics.simulation import enable_scripting
+        enable_scripting()
+        carb.settings.get_settings().set('/persistent/physics/numThreads',4)
+        carb.settings.get_settings().set('/rtx/post/motionblur/enabled',False)
+        with threadpool_limits(limits=1):
+            for name,test in tests.items():
+                run_case(asset,name,test,output,app,startup,gpu)
     except Exception:
         traceback.print_exc()
-        failed = output / Path(name).stem / 'acceptance.json'
-        failed.parent.mkdir(parents=True, exist_ok=True)
-        failed.write_text(json.dumps({'execution_status': 'failed', 'review_status': 'pending',
-                                      'config': test, 'error': traceback.format_exc()}, indent=2) + '\n')
         raise
     finally:
         app.close()

@@ -1,4 +1,4 @@
-"""Build a real USDZ and its portable runtime from a saved Blender object."""
+"""Export Blender geometry and compose a native USD physics layer."""
 
 import argparse
 import json
@@ -8,70 +8,17 @@ import subprocess
 import tempfile
 import time
 
-from table_1000.physics.config import physical_config
 
 
-def mass_properties(model, config):
-    """Uniform density over authored collision components, using trimesh."""
+def author_geometry(model, destination):
     import numpy as np
-    import trimesh
-    from scipy.spatial.transform import Rotation
-    worlds = {}
-    for node in model['nodes']:
-        matrix = np.array(node['matrix'])
-        worlds[node['name']] = worlds[node['parent']] @ matrix if node['parent'] else matrix
-    result = {}
-    for name, settings in config['rigid_bodies'].items():
-        if 'inertia' in settings:
-            result[name] = settings.copy()
-            continue
-        shapes = []
-        for node in model['nodes']:
-            if node.get('role') == 'collision' and node['body'] == name:
-                shape = trimesh.Trimesh(node['vertices'], node['triangles'], process=False)
-                shape.apply_transform(np.linalg.inv(worlds[name]) @ worlds[node['name']])
-                shapes.append(shape)
-        props = trimesh.util.concatenate(shapes).mass_properties
-        values, axes = np.linalg.eigh(props.inertia * settings['mass'] / props.volume)
-        if np.linalg.det(axes) < 0:
-            axes[:, 0] *= -1
-        xyzw = Rotation.from_matrix(axes).as_quat()
-        result[name] = {'mass': settings['mass'], 'center_of_mass': props.center_mass.tolist(),
-                        'inertia': {'diagonal_inertia': values.tolist(),
-                                    'principal_axes': [float(xyzw[3]), *xyzw[:3].tolist()]}}
-    return result
-
-
-def author_usd(model, config, mass, destination, runtime):
-    import numpy as np
-    from pxr import Gf, PhysxSchema, Sdf, Tf, Usd, UsdGeom, UsdPhysics, UsdShade
+    from pxr import Gf, Sdf, Tf, Usd, UsdGeom, UsdPhysics, UsdShade
     stage = Usd.Stage.CreateNew(str(destination))
     UsdGeom.SetStageMetersPerUnit(stage, 1)
     UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
     root = UsdGeom.Xform.Define(stage, '/Asset')
     stage.SetDefaultPrim(root.GetPrim())
-    if runtime:
-        root.GetPrim().SetCustomDataByKey('table1000:runtime', 'runtime/manifest.json')
-    materials = {}
-    for name, settings in config['materials'].items():
-        material = UsdShade.Material.Define(stage, '/Asset/Materials/' + Tf.MakeValidIdentifier(name))
-        api = UsdPhysics.MaterialAPI.Apply(material.GetPrim())
-        api.CreateStaticFrictionAttr(settings['static_friction'])
-        api.CreateDynamicFrictionAttr(settings['dynamic_friction'])
-        api.CreateRestitutionAttr(settings['restitution'])
-        physx = PhysxSchema.PhysxMaterialAPI.Apply(material.GetPrim())
-        physx.CreateFrictionCombineModeAttr('average')
-        physx.CreateRestitutionCombineModeAttr('average')
-        materials[name] = material
     paths, worlds = {}, {}
-    options = config.get('backends', {}).get('isaac', {})
-    setters = {'linear_damping': 'CreateLinearDampingAttr', 'angular_damping': 'CreateAngularDampingAttr',
-               'solver_position_iterations': 'CreateSolverPositionIterationCountAttr',
-               'solver_velocity_iterations': 'CreateSolverVelocityIterationCountAttr',
-               'enable_ccd': 'CreateEnableCCDAttr', 'max_depenetration_velocity': 'CreateMaxDepenetrationVelocityAttr'}
-    allowed = setters.keys() | {'contact_offset', 'rest_offset'}
-    if options.keys() - allowed:
-        raise ValueError(f'Unsupported Isaac asset options: {sorted(options.keys() - allowed)}')
     for node in model['nodes']:
         name, parent = node['name'], node['parent']
         local_name = name[len(parent) + 1:] if parent and name.startswith(parent + '.') else name
@@ -96,26 +43,10 @@ def author_usd(model, config, mass, destination, runtime):
         UsdGeom.Xformable(prim).AddTransformOp().Set(Gf.Matrix4d(*matrix.T.reshape(-1).tolist()))
         if node['rigid']:
             UsdPhysics.RigidBodyAPI.Apply(prim).CreateRigidBodyEnabledAttr(True)
-            api = UsdPhysics.MassAPI.Apply(prim)
-            props = mass[name]
-            api.CreateMassAttr(props['mass'])
-            api.CreateCenterOfMassAttr(Gf.Vec3f(*props['center_of_mass']))
-            api.CreateDiagonalInertiaAttr(Gf.Vec3f(*props['inertia']['diagonal_inertia']))
-            q = props['inertia'].get('principal_axes', [1, 0, 0, 0])
-            api.CreatePrincipalAxesAttr(Gf.Quatf(q[0], Gf.Vec3f(*q[1:])))
-            physx = PhysxSchema.PhysxRigidBodyAPI.Apply(prim)
-            for key, setter in setters.items():
-                if key in options:
-                    getattr(physx, setter)(options[key])
         elif role == 'collision':
             obj.CreateVisibilityAttr('invisible')
             UsdPhysics.CollisionAPI.Apply(prim).CreateCollisionEnabledAttr(True)
             UsdPhysics.MeshCollisionAPI.Apply(prim).CreateApproximationAttr('boundingCube' if node['shape'] == 'BOX' else 'convexHull')
-            api = PhysxSchema.PhysxCollisionAPI.Apply(prim)
-            api.CreateContactOffsetAttr(options.get('contact_offset', .00005))
-            api.CreateRestOffsetAttr(options.get('rest_offset', 0))
-            material_name = config['colliders'].get(parent, {}).get('material', config['defaults']['material'])
-            UsdShade.MaterialBindingAPI.Apply(prim).Bind(materials[material_name], materialPurpose='physics')
         elif role == 'visual':
             obj.CreateNormalsAttr([Gf.Vec3f(*value) for value in node['normals']])
             obj.SetNormalsInterpolation('faceVarying')
@@ -153,20 +84,12 @@ def author_usd(model, config, mass, destination, runtime):
             joint.CreateLowerLimitAttr(row['limits'][0] * factor)
             joint.CreateUpperLimitAttr(row['limits'][1] * factor)
         joint.CreateCollisionEnabledAttr(not row['disable_collisions'])
-        if 'drive' in config['joints'].get(row['name'], {}):
-            drive = UsdPhysics.DriveAPI.Apply(joint.GetPrim(), 'linear' if row['type'] == 'SLIDER' else 'angular')
-            settings = config['joints'][row['name']]['drive']
-            drive.CreateTypeAttr('force')
-            drive.CreateTargetPositionAttr(settings['target_position'] * factor)
-            drive.CreateStiffnessAttr(settings['stiffness'] / factor)
-            drive.CreateDampingAttr(settings['damping'] / factor)
-            drive.CreateMaxForceAttr(settings['max_force'])
     stage.GetRootLayer().Save()
     return paths
 
 
 def build(asset, source, output):
-    from pxr import Sdf, Usd, UsdPhysics, UsdUtils
+    from pxr import Sdf, Usd, UsdPhysics, UsdShade, UsdUtils
     started = time.perf_counter()
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as temporary:
@@ -175,33 +98,54 @@ def build(asset, source, output):
         subprocess.run(['blender', '-b', '--python-exit-code', '1', '-P', str(Path(__file__).with_name('blender_model.py')),
                         '--', '--blend', str(asset / 'object.blend'), '--output', str(model_path)], check=True)
         model = json.loads(model_path.read_text())
-        config = physical_config(json.loads((source / 'physics.json').read_text()), model)
-        mass = mass_properties(model, config)
-        modules = {entry['entry'].split(':')[0] for entry in config.get('behaviors', {}).values()}
-        paths = author_usd(model, config, mass, temporary / 'object.usdc', bool(modules))
+        paths = author_geometry(model, output / 'geometry.usdc')
+        shutil.copyfile(source / 'physics.usda', output / 'physics.usda')
+        composed = Usd.Stage.CreateInMemory()
+        composed.GetRootLayer().subLayerPaths = [str(output / 'physics.usda'), str(output / 'geometry.usdc')]
+        composed.SetDefaultPrim(composed.GetPrimAtPath('/Asset'))
+        scripts = [Sdf.AssetPath('behavior.py')] if (source / 'behavior.py').exists() else []
+        # Standard USDZ contains the physical asset. Executable scripts remain
+        # beside it, with their official component carried by an outer layer.
+        flattened = composed.Flatten()
+        packaged_stage = Usd.Stage.Open(flattened)
+        root = packaged_stage.GetPrimAtPath('/Asset')
+        root.RemoveProperty('omni:scripting:scripts')
+        root.SetMetadata('apiSchemas', Sdf.TokenListOp.CreateExplicit([name for name in root.GetAppliedSchemas() if name != 'OmniScriptingAPI']))
+        flattened.Export(str(temporary / 'object.usdc'))
         if not UsdUtils.CreateNewUsdzPackage(Sdf.AssetPath(str(temporary / 'object.usdc')), str(output / 'object.usdz')):
             raise RuntimeError('USDZ packaging failed')
+        carrier = Usd.Stage.CreateNew(str(output / 'object.usda'))
+        from pxr import UsdGeom
+        root = UsdGeom.Xform.Define(carrier, '/Asset').GetPrim()
+        root.GetReferences().AddReference('object.usdz')
+        carrier.SetDefaultPrim(root)
+        if scripts:
+            root.SetMetadata('apiSchemas', Sdf.TokenListOp.CreateExplicit(['OmniScriptingAPI']))
+            root.CreateAttribute('omni:scripting:scripts', Sdf.ValueTypeNames.AssetArray).Set([Sdf.AssetPath(path.path) for path in scripts])
+            for path in scripts:
+                shutil.copyfile(source / path.path, output / path.path)
+        carrier.GetRootLayer().Save()
         packaged = Usd.Stage.Open(str(output / 'object.usdz'))
-        if not packaged or len([prim for prim in packaged.Traverse() if prim.HasAPI(UsdPhysics.RigidBodyAPI)]) != len(mass):
-            raise ValueError('Packaged USDZ rigid body count differs from source')
-    for name in ['physics.json', 'physics_test.json']:
-        if (source / name).exists():
-            shutil.copyfile(source / name, output / name)
-    if modules:
-        runtime = output / 'runtime'
-        runtime.mkdir(exist_ok=True)
-        for name in modules:
-            shutil.copyfile(source / name, runtime / name)
-        manifest = {'physics': '../physics.json', 'modules': {name: name for name in sorted(modules)}, 'supported_backends': ['isaac']}
-        (runtime / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+        rigid = [prim for prim in packaged.Traverse() if prim.HasAPI(UsdPhysics.RigidBodyAPI)]
+        assert len(rigid) == sum(node['rigid'] for node in model['nodes'])
+        assert all(UsdPhysics.MassAPI(prim).GetMassAttr().Get() > 0 for prim in rigid)
+        materials = {}
+        for prim in packaged.Traverse():
+            if prim.HasAPI(UsdPhysics.CollisionAPI):
+                material, rel = UsdShade.MaterialBindingAPI(prim).ComputeBoundMaterial('physics')
+                assert material and material.GetPrim().HasAPI(UsdPhysics.MaterialAPI)
+                materials[str(prim.GetPath())] = str(material.GetPath())
+    if (source / 'physics_test.py').exists():
+        shutil.copyfile(source / 'physics_test.py', output / 'physics_test.py')
     (output / 'model.json').write_text(json.dumps(model) + '\n')
-    report = {'rigid_bodies': len(mass), 'parts': sum(node['part'] for node in model['nodes']),
-              'colliders': sum(node.get('role') == 'collision' for node in model['nodes']),
-              'mass_properties': mass, 'mass_calculation': 'trimesh uniform density over authored collision components',
-              'material_combine': 'average', 'resolved_physics': config, 'paths': paths,
+    report = {'rigid_bodies': len(rigid), 'parts': sum(node['part'] for node in model['nodes']),
+              'colliders': len(materials), 'physics_materials': materials, 'paths': paths,
+              'geometry_layer': 'geometry.usdc', 'physics_layer': 'physics.usda',
+              'entry': 'object.usda' if scripts else 'object.usdz',
+              'behavior_scripts': [path.path for path in scripts],
               'build_wall_seconds': time.perf_counter() - started}
     (output / 'physics_build.json').write_text(json.dumps(report, indent=2) + '\n')
-    print('PHYSICAL_ASSET_BUILT', output / 'object.usdz', flush=True)
+    print('PHYSICAL_ASSET_BUILT', output / report['entry'], flush=True)
     return report
 
 
