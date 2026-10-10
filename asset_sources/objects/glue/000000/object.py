@@ -1,13 +1,9 @@
 """White superglue bottle with a yellow tapered nozzle cap; one rigid body."""
 import math
-from pathlib import Path
-import sys
 
-source = Path(__file__).resolve()
-sys.path.insert(0, str(source.parent))
-if not (source.parent / "asset_builders.py").exists():
-    sys.path.insert(0, str(source.parents[4] / "table_1000/modeling"))
-from asset_builders import asset, body, cylinder, generate, label_patch, material
+import bpy
+
+from table_1000.modeling.asset_builders import asset, body, cylinder, generate, label_patch, material, group_part
 
 
 def build():
@@ -32,6 +28,36 @@ def build():
     for z in (0.024, 0.028, 0.032):
         label_patch("Label print", 0.01245, 0.0015, (0, 0, z), yellow, bottle,
                     span=0.7, axis="Z", angle=-math.pi / 2)
+
+    organize_parts()
+
+
+def organize_parts():
+    """Group the original geometry while preserving every saved world pose."""
+    root = bpy.data.objects['12_Superglue_Bottle']
+    root.name = 'glue'
+    root["asset_id"] = 'glue/000000'
+    owner = bpy.data.objects['Superglue bottle']
+    owner.name = 'glue.bottle'
+    for component, names in [
+        ('container', ['White glue bottle']),
+        ('label_band', ['Yellow label band']),
+        ('base_rim', ['White base rim']),
+        ('neck', ['White bottle neck']),
+        ('screw_collar', ['Yellow screw collar']),
+        ('nozzle_cap', ['Tapered nozzle cap']),
+        ('label_stripe', ['Black label stripe']),
+        ('label_block', ['Black label block']),
+        ('label_print1', ['Label print']),
+        ('label_print2', ['Label print.001']),
+        ('label_print3', ['Label print.002']),
+    ]:
+        visuals = [bpy.data.objects[name] for name in names]
+        collisions = sorted([obj for obj in owner.children
+                             if any(obj.name == "Collision_" + name
+                                    or obj.name.startswith("Collision_" + name + "_")
+                                    for name in names)], key=lambda obj: obj.name)
+        group_part(owner.name + "." + component, owner, visuals, collisions)
 
 
 def main(argv=None):

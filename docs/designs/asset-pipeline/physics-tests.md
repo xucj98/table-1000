@@ -90,9 +90,9 @@
         "frame": "world",
         "point_frame": "body",
         "keyframes": [
-          {"time": 0, "value": [0, -2, 0], "point": [0, -0.05, 0]},
+          {"time": 0, "force": [0, -2, 0], "point": [0, -0.05, 0]},
           {"time": 4},
-          {"time": 7, "value": [0, -6, 0]}
+          {"time": 7, "force": [0, -6, 0]}
         ]
       }
     },
@@ -107,8 +107,8 @@
 
 | `type` | 内容 |
 | --- | --- |
-| `force` | 固定 `body`、`frame` 和可选 `point_frame`；关键帧给出三维力 `value`（N）和可选作用点 `point`（m） |
-| `torque` | 固定 `body`、`frame`；关键帧给出三维力矩 `value`（N·m），无作用点 |
+| `force` | 固定 `body`、`frame` 和可选 `point_frame`；关键帧给出三维力 `force`（N）和可选作用点 `point`（m） |
+| `torque` | 固定 `body`、`frame`；关键帧给出三维力矩 `torque`（N·m），无作用点 |
 | `fixture` | 固定 `body`、`mode`；关键帧给出世界坐标目标 `position`、`rotation`，见下文 |
 | `joint_lock` | 固定 `joint`；锁定标量关节位置 `target_position` |
 | `joint_drive` | 固定 `joint`；关键帧给出 `target_position`，可在动作层覆盖 `stiffness`、`damping`、`max_force` |
@@ -116,7 +116,7 @@
 
 每个动作均提供至少两个按时间递增的 `keyframes`，`time` 为从测试开始计的秒数。首尾时间定义生效区间 `[首帧时间, 末帧时间)`，区间外不施加该动作；不另设 `start`、`end`。时间位于测试时长内并对齐物理步。
 
-关键帧字段省略遵循[预览关键帧规则](preview.md#关键帧)：省略字段继承上一帧，数组整体替换；`time` 每帧必填。力/力矩首帧提供 `value`，指定作用点时同时提供 `point`。继承完成后，数值和位置逐分量线性插值，旋转四元数采用最短路径 SLERP；锁定目标不插值。恒定作用的末帧只需填写 `time`。`type`、`body`、`joint`、`mode`、`frame`、`point_frame` 及刚度、阻尼、力限额写在动作层，不随关键帧变化。
+关键帧字段省略遵循[预览关键帧规则](preview.md#关键帧)：省略字段继承上一帧，数组整体替换；`time` 每帧必填。力/力矩首帧分别提供 `force` / `torque`，指定作用点时同时提供 `point`。继承完成后，数值和位置逐分量线性插值，旋转四元数采用最短路径 SLERP；锁定目标不插值。恒定作用的末帧只需填写 `time`。`type`、`body`、`joint`、`mode`、`frame`、`point_frame` 及刚度、阻尼、力限额写在动作层，不随关键帧变化。
 
 力与力矩的 `frame` 必填：`world` 表示世界坐标轴，`body` 表示当前刚体局部轴。力动作使用指定作用点时，在首帧填写 `point`，并在动作层提供 `point_frame`：`world` 相对世界原点，`body` 相对当前刚体根原点。不提供作用点时始终施加于当前质心。插值在所选坐标系内进行，再按当前刚体位姿转换到世界坐标。
 
@@ -158,7 +158,7 @@
 
 ## 观测
 
-`observe` 按名称选择 `rigid_bodies`、`joints` 和 `actions`；动作名来自当前测试的 `actions` 字典。省略整个 `observe` 时全部记录；提供时，未列出的类别或空列表不记录。
+`observe` 按名称选择 `rigid_bodies`、`joints` 和 `actions`；动作名来自当前测试的 `actions` 字典。省略整个 `observe` 时全部记录；提供时，未列出的类别或空列表不记录，`plots` 引用的数据除外。
 
 | 类别 | 记录内容 |
 | --- | --- |
@@ -169,11 +169,42 @@
 各项按物理步采样并带仿真时间，保存到 `trace.csv`，列名包含类别和对象或动作名。多个动作同时作用时分别记录，不将它们合并为单个动作。动作记录不包含接触力或关节反力；区间外标记为未生效，力与力矩为零。
 
 
+### 图表
+
+`observe.plots` 是标量数据名称列表，每个测试生成一张 `plots.jpg`，按列表顺序上下排列面板，每个面板一条曲线，共享仿真时间轴。
+
+```json
+{
+  "observe": {
+    "plots": [
+      "actions.pull_cap.force.x",
+      "rigid_bodies.cap.position.x",
+      "rigid_bodies.cap.linear_velocity.x"
+    ]
+  }
+}
+```
+
+曲线标签直接使用数据名称，不配置 `title`、`label` 或 `unit`。单位由物理量确定并标在纵轴，长度根据数据尺度选用 m 或 mm；CSV 始终使用 SI 单位。引用的数据自动纳入记录，无须在其他观测列表重复填写。省略 `plots` 或设为空列表时不出图；可从已有 CSV 重新绘图，不重跑仿真。
+
+| 数据名称 | 含义与单位 |
+| --- | --- |
+| `rigid_bodies.<名称>.position.x/y/z` | 刚体根世界位置，m |
+| `rigid_bodies.<名称>.quaternion.w/x/y/z` | 世界旋转四元数，无量纲 |
+| `rigid_bodies.<名称>.linear_velocity.x/y/z` | 质心世界线速度，m/s |
+| `rigid_bodies.<名称>.angular_velocity.x/y/z` | 世界角速度，rad/s |
+| `joints.<名称>.position`、`.velocity` | SLIDER 为 m、m/s；HINGE 为 rad、rad/s |
+| `actions.<动作名>.force.x/y/z`、`.torque.x/y/z` | 实际施加的世界坐标力与力矩，N、N·m |
+| `actions.<动作名>.point.x/y/z` | 世界坐标作用点，m |
+
+表中的 `x/y/z` 表示分别选择一个分量，例如 `.x`，不是实际字段名。CSV 列名与图表引用一致；夹具目标及误差等其他记录继续按对应物理量命名。
+
+
 ## 视频与输出
 
 `camera.position/target/up` 采用世界坐标，使用固定透视相机。`camera.resolution` 为 `[宽, 高]` 像素；`camera.fps` 同时指定按仿真时间采集的频率与输出视频播放帧率，满足 `1 / (simulation.dt × camera.fps)` 为整数。物理步长独立于相机帧率。首尾帧均包含，画面与状态时间同步，视频按正常速度播放。
 
-输出 `<测试名>.mp4`、`<测试名>/trace.csv`、`<测试名>/acceptance.json`。视频标注实验名、时间、测试施力状态；从轨迹重渲染时标注“物理轨迹回放”。
+默认输出到资产目录下的 `physics_test/`，与 `preview/` 并列；`--output` 可指定其他目录。每项测试保存 `<测试名>.mp4`、`<测试名>/trace.csv`、`<测试名>/acceptance.json`，配置了曲线时另存 `<测试名>/plots.jpg`。重跑只清理该测试的旧结果。视频标注实验名、时间、测试施力状态；从轨迹重渲染时标注“物理轨迹回放”。
 
 报告包含生效配置、引擎版本、物理属性、行为、采样结果及耗时。`RTF = simulated_seconds / wall_seconds`；物理推进（含插件）、采样、渲染编码与启动分别计时。
 

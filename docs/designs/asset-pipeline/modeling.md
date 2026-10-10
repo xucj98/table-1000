@@ -2,7 +2,7 @@
 
 ## 入口
 
-`main(argv=None)`，参数 `--output DIR`。在 Blender Python 中执行，每个脚本生成一个资产的 `object.blend`。
+`main(argv=None)`，参数 `--output DIR`。在 Blender Python 中执行，每个脚本生成一个资产的 `object.blend`。共用函数从 `table_1000.modeling.asset_builders` 导入，包路径由统一构建入口提供。
 
 ## 坐标与结构
 
@@ -36,7 +36,7 @@ TODO：用现成碰撞引擎替换当前粗测，扩展其他基础形状支持�
 
 从 `object.blend` 的实际 `parent` 层级导出树或森林，刚体根标注 `[rigid]`。默认展示组织节点、刚体根和部件，用两个空格缩进表示每级父子关系；子节点名称省略与实际父节点相同的前缀。`--geometry` 额外展示视觉与碰撞网格。相机、灯光和独立关节辅助对象不展示；旧资产没有部件标记时只展示组织节点与刚体根。
 
-默认不压缩编号；可选压缩遵循[名称压缩表示](README.md#名称压缩表示)。压缩输出同时生成 `<输出名>.expanded.txt`，保留完整展开名称以便核对。
+默认按[名称压缩表示](README.md#名称压缩表示)导出；`--verbose` 展开全部编号并显示完整对象名称。只生成指定的树文件。
 
 ## 关节
 

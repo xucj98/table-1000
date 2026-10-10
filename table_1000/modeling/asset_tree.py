@@ -1,4 +1,4 @@
-"""Export the actual Object.parent forest, optionally compacting numbered siblings.
+"""Export the actual Object.parent forest, compact by default.
 
 Legacy assets without semantic parts show their organization and rigid roots.
 Children display names relative to their actual parent; dots never add hierarchy.
@@ -120,8 +120,8 @@ def main(argv=None):
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--geometry", action="store_true",
                         help="Include visual/collision meshes; default shows organization, rigid roots and semantic parts")
-    parser.add_argument("--compact", action="store_true",
-                        help="Compact matching consecutive siblings; also write OUTPUT.stem.expanded.txt")
+    parser.add_argument("--verbose", action="store_true",
+                        help="Expand all numbered siblings and show full object names")
     if argv is None:
         argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     args = parser.parse_args(argv)
@@ -130,15 +130,6 @@ def main(argv=None):
     bpy.ops.wm.open_mainfile(filepath=str(args.blend.resolve()), load_ui=False)
     forest = asset_forest(bpy.context.scene.objects)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    if args.compact:
-        full_path = args.output.with_name(args.output.stem + ".expanded" + args.output.suffix)
-        full_path.write_text(format_tree(forest, geometry=args.geometry, full_names=True), encoding="utf-8")
-        text = ("# Compact display: only consecutive explicit integer siblings with matching\n"
-                "# roles, collision types, materials and normalized child trees are merged.\n"
-                "# Dot-number suffixes are preserved; dots never create parent nodes.\n"
-                f"# View: {'geometry' if args.geometry else 'parts'}; expanded full names: {full_path.name}\n\n"
-                + format_tree(forest, True, args.geometry))
-    else:
-        text = format_tree(forest, geometry=args.geometry)
-    args.output.write_text(text, encoding="utf-8")
+    args.output.write_text(format_tree(forest, compact=not args.verbose, geometry=args.geometry,
+                                       full_names=args.verbose), encoding="utf-8")
     print("ASSET_TREE_EXPORTED", args.output.resolve(), flush=True)
