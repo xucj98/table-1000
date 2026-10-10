@@ -106,7 +106,7 @@ def drop_zero_friction(ctx, *, height, dt):
     zero_fit_friction(ctx)
     camera = {.2:((.18,-1.1,.3),(0,0,.12)), .5:((.3,-2.3,.6),(0,0,.27)),
               1:((.5,-4.2,1),(0,0,.54))}[height]
-    ctx.camera(position=camera[0],target=camera[1],focal_length=8 if height==.2 else 28)
+    ctx.camera(position=camera[0],target=camera[1],focal_length=8 if height==.2 else 24 if height==1 else 28)
     ctx.video_annotation = lambda: 'Fit friction 0; ground friction 0.35; seating barrier and normal contacts retained'
     observe(ctx,ctx.asset)
     ctx.plots('asset.cap.position.z','asset.cap.linear_velocity.z','asset.cap_fit.opening',
@@ -129,7 +129,8 @@ def drop_zero_friction(ctx, *, height, dt):
             '3 N triangular seating barrier over the 0–2 mm opening interval',
             'unchanged radial/angular fit elasticity and damping, which may couple through rigid-body rotation',
             'gravity; no test force or fixture'],
-        'camera_change':'Original drop camera position/direction; 0.2 m case focal length widened from 28 to 8 mm to include the cap trajectory' if height==.2 else 'Original drop camera',
+        'camera_change':{'position_direction':'Original drop camera',
+            'original_focal_length_mm':28,'reason':'Widened to include the complete cap trajectory and keep it clear of the caption' if height in (.2,1) else 'Original focal length'},
         'fully_disengaged':any(not bool(row['asset.cap_fit.engaged']) for row in ctx.rows[1:]),
         'first_disengagement_s':next((row['time'] for row in ctx.rows[1:] if not row['asset.cap_fit.engaged']),None),
         'final_opening_m':ctx.rows[-1]['asset.cap_fit.opening']}
