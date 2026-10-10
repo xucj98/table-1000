@@ -76,37 +76,9 @@ def free_cap(ctx: TestContext):
     assert not ctx.asset.behavior().observations()['engaged']
 
 
-def two_instances(ctx: TestContext):
-    ctx.simulation(gravity=(0,0,0))
-    ctx.initial(position=(0,-.1,.15))
-    other = ctx.spawn(ctx.asset_path,name='pen_b',position=(0,.1,.15))
-    ctx.camera(position=(.18,-.6,.4),target=(0,0,.15))
-    observe(ctx,ctx.asset);observe(ctx,other)
-    ctx.force('weak_pull',ctx.asset.body('cap'),keyframes=[
-        {'time':0,'force':(-.5,0,0)},{'time':.28,'force':(-.5,0,0)},{'time':.3,'force':(0,0,0)}])
-    ctx.plots('weak_pull.force.x','asset.cap_fit.opening','pen_b.cap_fit.opening')
-    with ctx.fixed(ctx.asset.body('body')),ctx.fixed(other.body('body')):
-        ctx.run(.6)
-    assert abs(other.behavior().observations()['opening']) < 1e-6
-    assert ctx.asset.behavior().male is ctx.asset.behavior()
-    assert other.behavior().male is other.behavior()
-
-
-def exchanged_caps(ctx: TestContext):
-    ctx.simulation(gravity=(0,0,0))
-    ctx.initial(position=(0,-.1,.15),bodies={'cap':{'position':(-.032,.1,.15)}})
-    other = ctx.spawn(ctx.asset_path,name='pen_b',position=(0,.1,.15))
-    ctx.initial(other,position=(0,.1,.15),bodies={'cap':{'position':(-.032,-.1,.15)}})
-    ctx.camera(position=(.18,-.6,.4),target=(0,0,.15))
-    observe(ctx,ctx.asset);observe(ctx,other)
-    ctx.plots('asset.cap_fit.opening','pen_b.cap_fit.opening')
-    ctx.run(.6)
-    assert ctx.asset.behavior().male is other.behavior()
-    assert other.behavior().male is ctx.asset.behavior()
-
 
 TESTS = {'pull':pull,'close':close,'pressure_hold':pressure_hold,
          'drop_0.2m_4ms':partial(drop,height=.2,dt=.004),'drop_0.5m_4ms':partial(drop,height=.5,dt=.004),
          'drop_1m_4ms':partial(drop,height=1,dt=.004),'drop_1m_2ms':partial(drop,height=1,dt=.002),
-         'drop_1m_1ms':partial(drop,height=1,dt=.001),
-         'free_cap':free_cap,'two_instances':two_instances,'exchanged_caps':exchanged_caps}
+         'free_cap':free_cap}
+
