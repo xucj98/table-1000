@@ -49,8 +49,6 @@
 | `behaviors`、`interfaces` | 可选，见[行为插件](behaviors.md) |
 | `backends.<name>` | 可选，仅供对应后端读取的已支持参数，不是任意 USD 属性透传 |
 
-`rigid_bodies`、`colliders`、`joints` 的名称键支持[名称压缩表示](README.md#名称压缩表示)。
-
 ## 质量属性
 
 `mass`、`center_of_mass`、`inertia` 仅绑定刚体，描述整个刚体的总质量、质心和惯量；不在视觉网格或碰撞形状上单独配置。
