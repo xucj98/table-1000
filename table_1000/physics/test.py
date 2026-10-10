@@ -98,6 +98,11 @@ def conditions(ctx):
                                    'velocity_iterations':PhysxSchema.PhysxRigidBodyAPI(ctx.session.stage.GetPrimAtPath(instance.paths[name])).GetSolverVelocityIterationCountAttr().Get(),
                                    'ccd':PhysxSchema.PhysxRigidBodyAPI(ctx.session.stage.GetPrimAtPath(instance.paths[name])).GetEnableCCDAttr().Get()}
                               for name in instance.body_names}}
+        if instance.articulation is not None:
+            engine[instance.name]['articulation_dof_parameters'] = {
+                'friction_coefficients':instance.articulation.get_dof_friction_coefficients().tolist(),
+                'stiffnesses':instance.articulation.get_dof_stiffnesses().tolist(),
+                'dampings':instance.articulation.get_dof_dampings().tolist()}
     cpu=next(line.split(':',1)[1].strip() for line in Path('/proc/cpuinfo').read_text().splitlines() if line.startswith('model name'))
     return {'engine':'Isaac Sim / CPU PhysX','isaac_version':get_version(),'dt':ctx.dt,'solver':'TGS','gpu_dynamics':False,'CCD':True,
             'instances':len(ctx.session.instances),'gravity':ctx.gravity,'ground':getattr(ctx,'ground_config',None),

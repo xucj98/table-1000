@@ -236,8 +236,9 @@ class TestContext:
     def plots(self,*columns):
         self.plot_columns = list(columns)
 
-    def camera(self,*,position,target,up=(0,0,1),resolution=(960,480),fps=25):
-        self.camera_config = {'position':position,'target':target,'up':up,'resolution':resolution,'fps':fps}
+    def camera(self,*,position,target,up=(0,0,1),resolution=(960,480),fps=25,focal_length=28):
+        self.camera_config = {'position':position,'target':target,'up':up,'resolution':resolution,'fps':fps,
+                              'focal_length_mm':focal_length}
 
     def ground(self,*,z=0,static_friction=.35,dynamic_friction=.35,restitution=0,contact_offset=.02):
         from pxr import Gf, UsdGeom, UsdPhysics, UsdShade, PhysxSchema

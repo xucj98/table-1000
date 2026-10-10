@@ -10,7 +10,7 @@ class Camera:
             carb.settings.get_settings().set(setting, False)
         self.rep, self.size = rep, config['resolution']
         camera = UsdGeom.Camera.Define(stage, '/World/Camera')
-        camera.CreateFocalLengthAttr(28)
+        camera.CreateFocalLengthAttr(config['focal_length_mm'])
         camera.CreateClippingRangeAttr(Gf.Vec2f(.001, 100))
         transform = Gf.Matrix4d().SetLookAt(Gf.Vec3d(*config['position']), Gf.Vec3d(*config['target']), Gf.Vec3d(*config['up'])).GetInverse()
         UsdGeom.Xformable(camera).AddTransformOp().Set(transform)
