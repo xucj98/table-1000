@@ -166,6 +166,9 @@ class PhysicsStep:
 
     def refresh(self):
         from pxr import UsdPhysics
+        scene = next(UsdPhysics.Scene(prim) for prim in self.stage.Traverse() if prim.IsA(UsdPhysics.Scene))
+        direction = np.asarray(scene.GetGravityDirectionAttr().Get(), dtype=float)
+        gravity = direction / np.linalg.norm(direction) * scene.GetGravityMagnitudeAttr().Get()
         self.states = {}
         for instance in self.instances.values():
             positions, quaternions = instance.view.get_world_poses()
@@ -178,6 +181,9 @@ class PhysicsStep:
                     'com': positions[i] + r @ instance.local_com[i],
                     'inverse_mass': 1 / float(instance.mass[i]),
                     'inverse_inertia': np.linalg.inv(r @ instance.local_inertia[i] @ r.T),
+                    # Native gravity is prediction input only, never flushed as
+                    # an additional force or included in test-force columns.
+                    'gravity_acceleration': np.zeros(3) if self.stage.GetPrimAtPath(instance.paths[name]).GetAttribute('physxRigidBody:disableGravity').Get() else gravity.copy(),
                     'external_force': np.zeros(3), 'external_torque': np.zeros(3)}
         # Native world-fixed constraints determine mobility for supplemental
         # forces. Refresh restores finite mass/inertia immediately on release.
@@ -196,6 +202,7 @@ class PhysicsStep:
                         state = self.states[by_path[str(b[0])]]
                         state['inverse_mass'] = 0
                         state['inverse_inertia'] = np.zeros((3,3))
+                        state['gravity_acceleration'] = np.zeros(3)
 
     def force(self, body, force, point=None, torque=None, external=True):
         key = body.key

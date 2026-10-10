@@ -118,7 +118,7 @@ class CapFit(BehaviorScript):
         for state, arm in zip((a, b), arms):
             alpha = state['inverse_inertia'] @ state['external_torque']
             angular_acceleration.append(alpha)
-            acceleration.append(state['inverse_mass'] * state['external_force'] + np.cross(alpha, arm))
+            acceleration.append(state['inverse_mass'] * state['external_force'] + state['gravity_acceleration'] + np.cross(alpha, arm))
         relative_v = point_v[1] - point_v[0]
         predicted_v = relative_v + dt * (acceleration[1] - acceleration[0])
         predicted_omega = angular[1] - angular[0] + dt * (angular_acceleration[1] - angular_acceleration[0])
