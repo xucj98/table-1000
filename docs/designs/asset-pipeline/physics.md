@@ -1,6 +1,6 @@
 # physics.usda 与 object.usdz
 
-本规范规定第二阶段的目标接口，原 JSON 构建流程正在迁移。
+带盖笔已使用本规范的原生 USD 构建流程；其他资产按需补充。
 
 `physics.usda` 是人工或 AI 编辑的 USD 物理层，通过原生 `UsdPhysics` 和 `PhysxSchema` 为几何层添加质量、接触材料和驱动。不再定义平行的物理 JSON 字段。源文件随 Git 提交，生成的几何层和 USDZ 不提交。
 
