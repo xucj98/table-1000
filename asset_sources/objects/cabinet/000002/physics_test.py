@@ -14,8 +14,8 @@ TRAVEL = .173
 
 
 def _view(ctx, *, wide=False):
-    ctx.camera(position=(.85, -1.15, .68) if wide else (.66, -.86, .51),
-               target=(0, -.25 if wide else -.09, .14))
+    ctx.camera(position=(1.25, -1.7, .95) if wide else (1.1, -1.5, .85),
+               target=(0, -.14 if wide else -.07, .14))
 
 
 def _joint(ctx, index):
