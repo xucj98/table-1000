@@ -14,11 +14,7 @@ import shutil
 import sys
 
 import bpy
-source = Path(__file__).resolve()
-sys.path.insert(0, str(source.parent))
-if not (source.parent / "asset_builders.py").exists():
-    sys.path.insert(0, str(source.parents[4] / "table_1000/modeling"))
-from asset_builders import group_part, cylinder
+from table_1000.modeling.asset_builders import group_part, cylinder
 
 
 def material(name, color, roughness, transmission=0.0):
@@ -315,10 +311,10 @@ def main(argv=None):
     source = Path(__file__).resolve()
     if source != output / "object.py":
         shutil.copyfile(source, output / "object.py")
-    helper = Path(sys.modules["asset_builders"].__file__)
-    if helper != output / "asset_builders.py":
-        shutil.copyfile(helper, output / "asset_builders.py")
-    for name in ("preview.json", "metadata.json"):
+    names = ["preview.json", "metadata.json", "README.md"]
+    if (source.parent / "three_quarter.jpg").exists():
+        names.append("three_quarter.jpg")
+    for name in names:
         if source.parent / name != output / name:
             shutil.copyfile(source.parent / name, output / name)
     print("MODEL_BUILT", "cabinet", destination, flush=True)
