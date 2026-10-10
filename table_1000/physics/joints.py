@@ -2,18 +2,18 @@
 
 import numpy as np
 from scipy.spatial.transform import Rotation
-from table_1000.physics.runtime import rotation
+from table_1000.physics.simulation import rotation
 
 
 def frames(instance, name):
     from pxr import UsdPhysics
-    prim = instance.runtime.stage.GetPrimAtPath(instance.paths[name])
+    prim = instance.session.stage.GetPrimAtPath(instance.paths[name])
     joint = UsdPhysics.Joint(prim)
     anchors = []
     for i in (0, 1):
         path = str(getattr(joint, f'GetBody{i}Rel')().GetTargets()[0])
-        body = instance.runtime.stage.GetPrimAtPath(path).GetCustomDataByKey('table1000:name')
-        state = instance.runtime.state(instance.body_key(body))
+        body = instance.session.stage.GetPrimAtPath(path).GetCustomDataByKey('table1000:name')
+        state = instance.body(body).state
         offset = np.asarray(getattr(joint, f'GetLocalPos{i}Attr')().Get())
         q = getattr(joint, f'GetLocalRot{i}Attr')().Get()
         local_r = rotation([q.GetReal(), *q.GetImaginary()])
@@ -47,4 +47,4 @@ def set_initial(instance, targets):
             matrix = change @ matrix
         q = Rotation.from_matrix(matrix).as_quat()[[3, 0, 1, 2]]
         instance.view.set_world_poses(np.asarray([position], dtype=np.float32), np.asarray([q], dtype=np.float32), indices=np.array([instance.indices[b['body']]]))
-        instance.runtime.refresh_states()
+        instance.session.refresh()

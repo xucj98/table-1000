@@ -1,93 +1,67 @@
-"""Check initial COM velocities and overlapping fixture lifetimes in Isaac.
-
-This loads an existing asset and checks initialization/USD constraints without
-running a dynamics experiment or rendering.
-"""
-
+"""Actual initial COM velocities and fixed→release constraint mobility check."""
 import argparse
 import json
 from pathlib import Path
 import sys
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0,str(Path(__file__).resolve().parents[2]))
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--asset', type=Path, required=True)
-    parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--gpu', type=int, default=0)
-    args = parser.parse_args()
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--asset',type=Path,required=True);parser.add_argument('--output',type=Path,required=True)
+    parser.add_argument('--gpu',type=int,default=0);args=parser.parse_args()
     from isaacsim import SimulationApp
-    app = SimulationApp({'headless': True, 'create_new_stage': False, 'active_gpu': args.gpu,
-                         'physics_gpu': args.gpu, 'multi_gpu': False,
-                         'disable_viewport_updates': True, 'limit_cpu_threads': 4})
+    app=SimulationApp({'headless':True,'create_new_stage':False,'active_gpu':args.gpu,'physics_gpu':args.gpu,
+                       'multi_gpu':False,'disable_viewport_updates':True,'limit_cpu_threads':4})
     try:
         import numpy as np
-        from isaacsim.core.api import World
-        from pxr import UsdPhysics
-        from table_1000.physics.runtime import Runtime
-        from table_1000.physics.test import initial_state
-        from table_1000.physics.actions import Actions
-
-        world = World(physics_dt=.004, rendering_dt=.04, stage_units_in_meters=1,
-                      backend='numpy', device='cpu')
-        world.get_physics_context().set_gravity(0)
-        runtime = Runtime(world)
-        instance = runtime.load(args.asset, 'asset', position=(0, 0, .15))
-        runtime.initialize()
-
-        # A translated body rotated 90 degrees about Z has its COM offset along
-        # Y. Its linear velocity must include that final world COM position.
-        initial_state(runtime, instance, {
-            'position': [0, 0, .15], 'linear_velocity': [1, 2, 3], 'angular_velocity': [0, 0, 2],
-            'rigid_bodies': {
-                'body': {'position': [.2, .3, .4], 'rotation': [2**-.5, 0, 0, 2**-.5]},
-                'cap': {'position': [-.1, .2, .4], 'linear_velocity': [4, 5, 6],
-                        'angular_velocity': [0, 1, 0]},
-            },
-        })
-        cx, cy, cz = instance.local_com[instance.indices['body']]
-        expected_com = np.array([.2 - cy, .3 + cx, .4 + cz])
-        expected_velocity = np.array([1 - 2 * expected_com[1], 2 + 2 * expected_com[0], 3, 0, 0, 2])
-        body = runtime.state(instance.body_key('body'))
-        cap = runtime.state(instance.body_key('cap'))
-        np.testing.assert_allclose(body['com'], expected_com, atol=1e-6, rtol=0)
-        np.testing.assert_allclose(body['velocity'], expected_velocity, atol=1e-6, rtol=0)
-        np.testing.assert_allclose(cap['velocity'], [4, 5, 6, 0, 1, 0], atol=1e-6, rtol=0)
-        result = {'initial_state': {'expected_body_com': expected_com.tolist(),
-                                   'actual_body_com': body['com'].tolist(),
-                                   'expected_body_velocity': expected_velocity.tolist(),
-                                   'actual_body_velocity': body['velocity'].tolist(),
-                                   'cap_velocity_override': cap['velocity'].tolist()}}
-
-        runtime.reset()
-        actions = Actions(runtime, instance, {
-            'A': {'type': 'fixture', 'body': 'body', 'keyframes': [{'time': 0}, {'time': 1}]},
-            'B': {'type': 'fixture', 'body': 'cap', 'keyframes': [{'time': 0}, {'time': 3}]},
-            'C': {'type': 'fixture', 'body': 'body', 'keyframes': [{'time': 1}, {'time': 3}]},
-        })
-        actions(0, .004)
-        a_path, b_path = (actions.fixtures[name]['path'] for name in ('A', 'B'))
-        b_target = UsdPhysics.FixedJoint.Get(runtime.stage, b_path).GetBody1Rel().GetTargets()
-        actions(1, .004)
-        c_path = actions.fixtures['C']['path']
-        assert not runtime.stage.GetPrimAtPath(a_path).IsValid()
-        assert b_path != c_path and actions.fixtures['B']['path'] == b_path
-        assert UsdPhysics.FixedJoint.Get(runtime.stage, b_path).GetBody1Rel().GetTargets() == b_target
-        assert str(b_target[0]) == instance.paths['cap']
-        assert str(UsdPhysics.FixedJoint.Get(runtime.stage, c_path).GetBody1Rel().GetTargets()[0]) == instance.paths['body']
-        result['fixtures'] = {'removed_A': a_path, 'surviving_B': b_path, 'new_C': c_path,
-                              'B_target_unchanged': str(b_target[0]), 'separate_constraints': True}
-        actions.close()
-        runtime.close()
-        result['execution_status'] = 'completed'
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(result, indent=2) + '\n')
-        print('INITIAL_ACTIONS_CHECK_COMPLETED', args.output, flush=True)
-    finally:
-        app.close()
+        from table_1000.physics.simulation import enable_scripting
+        from table_1000.physics.testing import TestContext
+        enable_scripting()
+        ctx=TestContext(args.asset,name='initial',app=app)
+        ctx.simulation(gravity=(0,0,0))
+        ctx.initial(position=(0,0,.15),linear_velocity=(1,2,3),angular_velocity=(0,0,2),bodies={
+            'body':{'position':(.2,.3,.4),'rotation':(2**-.5,0,0,2**-.5)},
+            'cap':{'position':(-.1,.2,.4),'linear_velocity':(4,5,6),'angular_velocity':(0,1,0)}})
+        ctx.force('first_step',ctx.asset.body('cap'),keyframes=[
+            {'time':0,'force':(1,0,0)},{'time':.008,'force':(1,0,0)}])
+        ctx.ensure_initialized()
+        a=ctx.asset;cx,cy,cz=a.local_com[a.indices['body']]
+        com=np.array([.2-cy,.3+cx,.4+cz]);velocity=np.array([1-2*com[1],2+2*com[0],3,0,0,2])
+        body,cap=a.body('body'),a.body('cap')
+        np.testing.assert_allclose(body.state['com'],com,atol=1e-6,rtol=0)
+        np.testing.assert_allclose(body.state['velocity'],velocity,atol=1e-6,rtol=0)
+        np.testing.assert_allclose(cap.state['velocity'],[4,5,6,0,1,0],atol=1e-6,rtol=0)
+        result={'initial_COM_velocity_max_error':float(np.max(np.abs(body.state['velocity']-velocity)))}
+        a.view.set_velocities(np.zeros((2,6),dtype=np.float32))
+        A,B=ctx.fixed(body),ctx.fixed(cap);ja,jb=A.__enter__(),B.__enter__()
+        ctx.session.refresh();assert body.state['inverse_mass']==cap.state['inverse_mass']==0
+        fixed_position=cap.state['position'].copy()
+        ctx.step()
+        np.testing.assert_allclose(cap.state['position'],fixed_position,atol=1e-6,rtol=0)
+        np.testing.assert_allclose(cap.state['velocity'],np.zeros(6),atol=1e-6,rtol=0)
+        A.__exit__(None,None,None)
+        C=ctx.fixed(body);jc=C.__enter__()
+        assert ja.GetPath()!=jc.GetPath() and jb.GetPrim().IsValid()
+        C.__exit__(None,None,None);B.__exit__(None,None,None)
+        ctx.session.refresh()
+        np.testing.assert_allclose(body.state['inverse_mass'],1/a.mass[a.indices['body']],rtol=1e-6)
+        finite=body.state['inverse_mass']
+        ctx.step()
+        assert ctx.rows[0]['first_step.force.x']==0
+        assert ctx.rows[1]['first_step.force.x']==1
+        np.testing.assert_allclose(cap.state['velocity'][0],.004/a.mass[a.indices['cap']],atol=1e-6,rtol=0)
+        result.update(execution_status='completed',separate_fixture_paths=[str(j.GetPath()) for j in [ja,jb,jc]],
+                      native_mass_unchanged_kg=a.mass.tolist(),released_inverse_mass=finite,
+                      released_inverse_inertia_positive=bool(np.linalg.eigvalsh(body.state['inverse_inertia']).min()>0),
+                      initial_actions_zero=True,first_formal_step_force_N=ctx.rows[1]['first_step.force.x'],
+                      fixed_body_held_under_force=True,released_cap_velocity_x=cap.state['velocity'][0])
+        ctx.close();args.output.parent.mkdir(parents=True,exist_ok=True);args.output.write_text(json.dumps(result,indent=2)+'\n')
+        print('INITIAL_ACTIONS_CHECK_COMPLETED',flush=True)
+    except Exception:
+        import traceback
+        args.output.with_suffix('.error').write_text(traceback.format_exc());raise
+    finally:app.close()
 
 
-if __name__ == '__main__':
-    main()
+if __name__=='__main__':main()
