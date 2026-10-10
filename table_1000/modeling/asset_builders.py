@@ -1,7 +1,6 @@
 """Small Blender modeling helpers shared by the stationery asset sources.
 
-The builder copies this module beside object.py so generated source snapshots
-can be rebuilt without importing the repository package.
+Generated source snapshots import these helpers from the repository package.
 """
 
 from __future__ import annotations
@@ -328,8 +327,11 @@ def generate(build, source_file, argv=None):
     destination = output / "object.blend"
     bpy.ops.wm.save_as_mainfile(filepath=str(destination))
     source = Path(source_file).resolve()
-    for original in (source, source.parent / "metadata.json", source.parent / "preview.json",
-                     Path(__file__).resolve()):
+    originals = [source, *(source.parent / name for name in ("metadata.json", "preview.json", "README.md"))]
+    thumbnail = source.parent / "three_quarter.jpg"
+    if thumbnail.exists():
+        originals.append(thumbnail)
+    for original in originals:
         target = output / original.name
         if original != target:
             shutil.copyfile(original, target)

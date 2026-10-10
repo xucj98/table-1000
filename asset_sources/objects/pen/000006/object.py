@@ -1,13 +1,6 @@
 """Build this capped pen as two independent top-level rigid-body subtrees."""
-from pathlib import Path
-import sys
-
-source = Path(__file__).resolve()
-sys.path.insert(0, str(source.parent))
-if not (source.parent / "asset_builders.py").exists():
-    sys.path.insert(0, str(source.parents[4] / "table_1000/modeling"))
 import bpy
-from asset_builders import capped_pen, generate, group_part
+from table_1000.modeling.asset_builders import capped_pen, generate, group_part
 
 PROFILE = {'geometry': {'segments': 16,
               'seat_x_m': -0.032,
