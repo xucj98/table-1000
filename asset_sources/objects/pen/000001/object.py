@@ -39,7 +39,6 @@ def organize_parts():
     """Group the original geometry while preserving every saved world pose."""
     root = bpy.data.objects['13_Black_Ballpoint']
     root.name = 'pen'
-    root["asset_id"] = 'pen/000001'
     owner = bpy.data.objects['Black pen shell']
     owner.name = 'pen.shell'
     for component, names in [

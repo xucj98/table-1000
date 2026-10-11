@@ -39,7 +39,6 @@ def asset(name, position=(0, 0, 0), parent=None):
     root.empty_display_size = 0.035
     root.location = position
     root.parent = parent
-    root["asset_id"] = name
     root["coordinate_frame_normalized"] = True
     return root, collection
 
@@ -238,17 +237,14 @@ def build():
 def organize_parts():
     root = bpy.data.objects["05_Plastic_Cabinet__MOVE"]
     root.name = "cabinet"
-    root["asset_id"] = "cabinet/000002"
     root["origin_convention"] = "ground center at the four rubber pad bottoms"
     housing = bpy.data.objects["05_Plastic_Cabinet_Housing__MOVE"]
     housing.name = "cabinet.housing"
-    del housing["asset_id"]
     drawers = []
     for i in range(1, 4):
         constraint = bpy.data.objects[f"drawer{i}_open"]
         drawer = constraint.rigid_body_constraint.object2
         drawer.name = f"cabinet.drawer{i}"
-        del drawer["asset_id"]
         constraint.name = drawer.name + ".slide"
         drawers.append(drawer)
     for owner in [housing] + drawers:

@@ -21,7 +21,6 @@ def organize_parts():
     """Group the original geometry while preserving every saved world pose."""
     root = bpy.data.objects['09_Tape_Roll']
     root.name = 'tape'
-    root["asset_id"] = 'tape/000000'
     owner = bpy.data.objects['Tape roll']
     owner.name = 'tape.roll'
     for component, names in [

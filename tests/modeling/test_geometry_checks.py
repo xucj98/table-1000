@@ -92,7 +92,7 @@ class AcceptanceTests(unittest.TestCase):
                 np.testing.assert_allclose(obj.matrix_world, delta @ initial[obj.name], atol=1e-6)
             return original_sample(checks, output, frame, values, transforms)
         with tempfile.TemporaryDirectory(dir=options.output) as tmp, patch.object(GeometryChecks,'sample',capture):
-            # asset_id is identity only: a non-unit body frame must not rotate world-space axes.
+            # A non-unit body frame must not rotate world-space axes.
             bpy.ops.wm.open_mainfile(filepath=str(path))
             bpy.context.scene.rigidbody_world.enabled = False
             frame = Matrix.Translation((.1,.2,.3)) @ Matrix.Rotation(np.pi/2,4,'Z')

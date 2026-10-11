@@ -36,7 +36,6 @@ def organize_parts():
     """Group the original geometry while preserving every saved world pose."""
     root = bpy.data.objects['12_Superglue_Bottle']
     root.name = 'glue'
-    root["asset_id"] = 'glue/000000'
     owner = bpy.data.objects['Superglue bottle']
     owner.name = 'glue.bottle'
     for component, names in [

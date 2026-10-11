@@ -30,7 +30,7 @@ PROFILE = {'geometry': {'segments': 16,
 
 
 def build():
-    capped_pen("pen/000004", PROFILE)
+    capped_pen(PROFILE)
 
     organize_parts()
 

@@ -28,7 +28,7 @@ PROFILE = {'geometry': {'segments': 16,
 
 
 def build():
-    capped_pen("pen/000006", PROFILE)
+    capped_pen(PROFILE)
     for root_name, part_name, visual_name in [
         ("body", "barrel", "Barrel"), ("body", "label", "Pale paper label"),
         ("body", "neck", "Neck"), ("body", "tip", "Nib"),

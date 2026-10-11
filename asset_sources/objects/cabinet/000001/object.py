@@ -86,7 +86,6 @@ def organize_parts():
     """Group the original geometry while preserving every saved world pose."""
     root = bpy.data.objects['cabinet/000001']
     root.name = 'cabinet'
-    root["asset_id"] = 'cabinet/000001'
     owner = bpy.data.objects['wooden_rack']
     owner.name = 'cabinet.housing'
     for component, names in [

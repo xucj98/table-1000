@@ -138,7 +138,6 @@ def organize_parts():
     """Group the original geometry while preserving every saved world pose."""
     root = bpy.data.objects['15_Mini_Stapler']
     root.name = 'stapler'
-    root["asset_id"] = 'stapler/000000'
     owner = bpy.data.objects['Stapler base']
     owner.name = 'stapler.base'
     for component, names in [

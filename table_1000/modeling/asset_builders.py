@@ -31,7 +31,6 @@ def material(name, color, roughness=0.35, metallic=0.0, transmission=0.0):
 def asset(name, origin, axes, front):
     root = bpy.data.objects.new(name, None)
     bpy.context.scene.collection.objects.link(root)
-    root["asset_id"] = name
     root["coordinate_frame_normalized"] = True
     root["origin_convention"] = origin
     root["axis_convention"] = axes
@@ -225,7 +224,7 @@ def label_patch(name, radius, depth, position, surface, parent, angle=math.pi / 
     return obj
 
 
-def capped_pen(asset_id, profile):
+def capped_pen(profile):
     """Two top-level rigid bodies; authored visual/collision clearance agrees."""
     g = profile["geometry"]
     n, seat = g["segments"], g["seat_x_m"]
@@ -234,14 +233,12 @@ def capped_pen(asset_id, profile):
                        transmission=profile["cap_transmission"])
     ink = material("Writing tip", (0.018, 0.024, 0.020), 0.35)
     pen, cap = body("body", None), body("cap", None)
-    pen["asset_id"] = asset_id
     pen["coordinate_frame_normalized"] = True
     pen["origin_convention"] = "barrel reference center; cap local origin at mouth"
     pen["axis_convention"] = "+X rear; -X writing tip and cap removal; Y/Z radial"
     pen["semantic_front"] = "writing tip at -X"
     for root, mass in [(pen, profile["body_mass_kg"]), (cap, profile["cap_mass_kg"])]:
         root.rigid_body.mass = mass
-        root["asset_reference"] = asset_id
     cap.location.x = seat
     tip = seat - g["neck_length_m"]
     cylinder("Barrel", g["barrel_radius_m"], g["barrel_end_x_m"]-seat-0.00005,
