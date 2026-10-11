@@ -62,13 +62,11 @@ blender -b --python-exit-code 1 -P scripts/assets/build_assets.py -- --assets ca
 运行[自动检查和渲染](../../scripts/assets/validate_and_preview.py)：
 
 ```bash
-uv run python scripts/assets/validate_and_preview.py assets/objects/cabinet/000000/object.blend \
-  --views asset_sources/objects/cabinet/000000/preview.json
-uv run python scripts/assets/validate_and_preview.py assets/objects/pen/000000/object.blend \
-  --views asset_sources/objects/pen/000000/preview.json
+uv run python scripts/assets/validate_and_preview.py \
+  --source assets/objects --assets cabinet/000000 pen/000000 --device auto
 ```
 
-脚本先执行自动化检查，通过后渲染。失败时退出非零。结果输出到模型旁的 `preview/`，保存报告与预览，图片和视频均为**左视觉、右碰撞**；右侧按刚体着色。
+脚本逐个清理资产的 `preview/`，读取模型同目录的 `preview.json`，缺失时报错；先执行自动化检查，通过后渲染。失败时退出非零。结果输出到模型旁的 `preview/`，保存报告与预览，图片和视频均为**左视觉、右碰撞**；右侧按刚体着色。
 
 | 资产 | 预期输出 |
 | --- | --- |
@@ -77,10 +75,9 @@ uv run python scripts/assets/validate_and_preview.py assets/objects/pen/000000/o
 
 常用参数：
 
-- `--output DIR`：指定输出目录；默认使用模型旁的 `preview/`。
-- `--check-only`：仅生成自动检查报告，不渲染，适合调试。
+- `--source DIR`：生成资产根目录，默认 `assets/objects`；每个资产目录须有 `object.blend` 和 `preview.json`。
+- `--assets CATEGORY/ID ...`：选择资产；省略时递归处理根目录下所有 `object.blend`。
 - `--device auto|cpu|gpu`：默认优先使用可见 GPU，无可用后端时使用 CPU；`gpu` 要求 GPU 可用。
-- `--views` 省略时仅使用零位渲染前、右、顶和四分之三视图。
 
 渲染不回写模型。粗测允许正常接触，超过容差的穿透判为失败。
 
