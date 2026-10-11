@@ -33,7 +33,7 @@ def material(name, color, roughness, transmission=0.0):
 def asset(name, position=(0, 0, 0), parent=None):
     collection = bpy.data.collections.new(name)
     bpy.context.scene.collection.children.link(collection)
-    root = bpy.data.objects.new(name + "__MOVE", None)
+    root = bpy.data.objects.new(name, None)
     collection.objects.link(root)
     root.empty_display_type = "PLAIN_AXES"
     root.empty_display_size = 0.035
@@ -205,12 +205,12 @@ def drawer_joint(housing_body, drawer_body, index, z):
 def build():
     white = material("Ivory white molded plastic", (0.78, 0.80, 0.78), 0.29)
     smoke = material("Smoky translucent drawer plastic", (0.51, 0.56, 0.58), 0.22, transmission=0.73)
-    root, collection = asset("05_Plastic_Cabinet")
+    root, collection = asset("cabinet")
     convention = "local +X = width; local +Y = depth/assembly travel; local +Z = up"
     root["axis_convention"] = convention
     root["semantic_front"] = "assembly/front face; drawer travel remains along local -Y"
     root["origin_convention"] = "bottom center of the cabinet housing"
-    housing, housing_parts = asset("05_Plastic_Cabinet_Housing", parent=root)
+    housing, housing_parts = asset("cabinet.housing", parent=root)
     housing["axis_convention"] = convention
     housing["origin_convention"] = root["origin_convention"]
     cabinet_shell(housing, housing_parts, white)
@@ -220,7 +220,7 @@ def build():
     housing_body = compound_body(housing)
     collision_parts(housing_body)
     for index, z in enumerate((0.231, 0.140, 0.049), 1):
-        drawer, parts = asset(f"{5 + index:02d}_Plastic_Drawer_{index}", (0, -0.133, z), root)
+        drawer, parts = asset(f"cabinet.drawer{index}", (0, -0.133, z), root)
         drawer["axis_convention"] = convention
         drawer["semantic_front"] = root["semantic_front"]
         box("Smoky translucent front", (0.259, 0.004, 0.080), (0, 0, 0), smoke, drawer, parts, 0.005)
@@ -235,16 +235,13 @@ def build():
 
 
 def organize_parts():
-    root = bpy.data.objects["05_Plastic_Cabinet__MOVE"]
-    root.name = "cabinet"
+    root = bpy.data.objects["cabinet"]
     root["origin_convention"] = "ground center at the four rubber pad bottoms"
-    housing = bpy.data.objects["05_Plastic_Cabinet_Housing__MOVE"]
-    housing.name = "cabinet.housing"
+    housing = bpy.data.objects["cabinet.housing"]
     drawers = []
     for i in range(1, 4):
         constraint = bpy.data.objects[f"drawer{i}_open"]
         drawer = constraint.rigid_body_constraint.object2
-        drawer.name = f"cabinet.drawer{i}"
         constraint.name = drawer.name + ".slide"
         drawers.append(drawer)
     for owner in [housing] + drawers:

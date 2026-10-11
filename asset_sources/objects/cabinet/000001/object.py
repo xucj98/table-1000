@@ -42,7 +42,7 @@ def build():
     wood = wood_material()
     inner = material("Drawer oak interior", (.37, .27, .14), .58)
     white = material("White drawer face", (.83, .84, .81), .42)
-    root = asset("cabinet/000001", "bottom center", "+X width; +Y back; +Z up", "drawer fronts at -Y")
+    root = asset("cabinet", "bottom center", "+X width; +Y back; +Z up", "drawer fronts at -Y")
     housing = body("wooden_rack", root)
     for x, name in [(-.430, "Left cheek"), (.137, "Central divider"), (.430, "Right cheek")]:
         side_panel(name, x, wood, housing)
@@ -84,8 +84,6 @@ def build():
 
 def organize_parts():
     """Group the original geometry while preserving every saved world pose."""
-    root = bpy.data.objects['cabinet/000001']
-    root.name = 'cabinet'
     owner = bpy.data.objects['wooden_rack']
     owner.name = 'cabinet.housing'
     for component, names in [

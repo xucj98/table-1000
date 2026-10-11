@@ -10,7 +10,7 @@ def build():
     white = material("White bottle plastic", (0.78, 0.80, 0.78), 0.29)
     yellow = material("Yellow nozzle and label", (0.70, 0.79, 0.012), 0.32)
     black = material("Label ink", (0.009, 0.012, 0.014), 0.70)
-    root = asset("12_Superglue_Bottle", "bottom center of the upright bottle",
+    root = asset("glue", "bottom center of the upright bottle",
                  "+X width; +Y back; +Z upright toward nozzle", "label faces -Y")
     bottle = body("Superglue bottle", root)
     cylinder("White glue bottle", 0.012, 0.039, (0, 0, 0.025), white, bottle, axis="Z")
@@ -34,8 +34,6 @@ def build():
 
 def organize_parts():
     """Group the original geometry while preserving every saved world pose."""
-    root = bpy.data.objects['12_Superglue_Bottle']
-    root.name = 'glue'
     owner = bpy.data.objects['Superglue bottle']
     owner.name = 'glue.bottle'
     for component, names in [

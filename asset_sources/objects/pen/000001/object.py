@@ -13,7 +13,7 @@ def build():
     black = material("Black pen lacquer", (0.007, 0.010, 0.012), 0.19)
     metal = material("Brushed nickel hardware", (0.50, 0.54, 0.57), 0.24, metallic=0.92)
     ink = material("Refill tube", (0.24, 0.20, 0.12), 0.35)
-    root = asset("13_Black_Ballpoint", "below barrel midpoint; barrel Z=0.006 m",
+    root = asset("pen", "below barrel midpoint; barrel Z=0.006 m",
                  "+X length toward button; +Y width; +Z up", "ballpoint tip at -X")
     shell = body("Black pen shell", root)
     tube("Black lacquer barrel", 0.0056, 0.0034, 0.113, (0, 0, 0.006), black, shell)
@@ -37,8 +37,6 @@ def build():
 
 def organize_parts():
     """Group the original geometry while preserving every saved world pose."""
-    root = bpy.data.objects['13_Black_Ballpoint']
-    root.name = 'pen'
     owner = bpy.data.objects['Black pen shell']
     owner.name = 'pen.shell'
     for component, names in [
