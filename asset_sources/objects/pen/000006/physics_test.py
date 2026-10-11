@@ -246,7 +246,7 @@ def loose_cap_rotation(ctx: TestContext):
     ctx.initial(loose,position=(0,.075,.48),rotation=upright,
                 bodies={'cap':{'position':(0,.075,.54),'rotation':upright}})
     ctx.ground()
-    ctx.camera(position=(.32,-1.35,.75),target=(-.02,0,.27),focal_length=18)
+    ctx.camera(position=(.20,-.80,.67),target=(0,0,.50),focal_length=24)
     state={'angle':pi/2}
     def rotation_from_up(pen):
         r=pen.body('body').state['rotation']

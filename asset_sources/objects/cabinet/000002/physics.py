@@ -2,13 +2,14 @@
 
 Each link has an explicit total mass. PhysX estimates COM and inertia from its
 unchanged collision geometry. Contact material does not change mass distribution.
-Articulation friction is load dependent; the zero-target drive adds viscous
-resistance, which must not be described as static friction.
+Native joint-axis friction supplies constant static/dynamic sliding resistance;
+the zero-target drive adds viscous resistance. These are design values.
 """
 
 MASS_KG = {'cabinet.housing': .75, **{f'cabinet.drawer{i}': .16 for i in (1, 2, 3)}}
 CONTACT_MATERIALS = {'plastic': (.30, .22), 'rubber': (.85, .70)}
-JOINT_FRICTION = .25
+STATIC_FRICTION_N = .50
+DYNAMIC_FRICTION_N = .35
 DRIVE_DAMPING_N_S_PER_M = 3
 CONTACT_OFFSET_M = .0001
 
@@ -60,7 +61,13 @@ def author(geometry_path, output_path):
             api.CreateContactOffsetAttr(CONTACT_OFFSET_M)
             api.CreateRestOffsetAttr(0)
         elif role == 'joint':
-            PhysxSchema.PhysxJointAPI.Apply(prim).CreateJointFrictionAttr(JOINT_FRICTION)
+            # Isaac 5.1 exposes this native PhysX API as a codeless USD schema.
+            # 0.50 N / (0.16 kg * g) gives a nominal gravity breakaway of 18.6
+            # degrees, with margin above 15 degrees; it is not real calibration.
+            prim.ApplyAPI('PhysxJointAxisAPI', 'linear')
+            prim.GetAttribute('physxJointAxis:linear:staticFrictionEffort').Set(STATIC_FRICTION_N)
+            prim.GetAttribute('physxJointAxis:linear:dynamicFrictionEffort').Set(DYNAMIC_FRICTION_N)
+            prim.GetAttribute('physxJointAxis:linear:viscousFrictionCoefficient').Set(0)
             drive = UsdPhysics.DriveAPI.Apply(prim, 'linear')
             drive.CreateTypeAttr('force')
             drive.CreateStiffnessAttr(0)

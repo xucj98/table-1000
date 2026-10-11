@@ -101,6 +101,7 @@ def conditions(ctx):
         if instance.articulation is not None:
             engine[instance.name]['articulation_dof_parameters'] = {
                 'friction_coefficients':instance.articulation.get_dof_friction_coefficients().tolist(),
+                'friction_properties_static_dynamic_viscous':instance.articulation.get_dof_friction_properties().tolist(),
                 'stiffnesses':instance.articulation.get_dof_stiffnesses().tolist(),
                 'dampings':instance.articulation.get_dof_dampings().tolist()}
     cpu=next(line.split(':',1)[1].strip() for line in Path('/proc/cpuinfo').read_text().splitlines() if line.startswith('model name'))

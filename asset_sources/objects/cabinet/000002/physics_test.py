@@ -34,17 +34,17 @@ def pull_release(ctx: TestContext, index):
     ctx.experiment_details = {
         'purpose': 'A: ramp pull, withdraw force, observe deceleration and stop',
         'drawer': index, 'initial_joint_m': .045,
-        'native_resistance': {'joint_friction_coefficient': .25,
+        'native_resistance': {'static_joint_friction_N': .50, 'dynamic_joint_friction_N': .35,
             'viscous_drive_damping_N_s_per_m': 3,
-            'note': 'load-dependent native articulation friction; damping is not static friction'},
+            'note': 'constant native joint-axis friction; damping is additional viscous resistance'},
         'fixture': 'housing held by a test-only native fixed joint',
-        'force_schedule_N': '0 to 0.30 over 1.5 s; withdraw over 0.1 s; observe to 5 s',
+        'force_schedule_N': '0 to 0.80 over 1.5 s; withdraw over 0.1 s; observe to 5 s',
     }
     with ctx.fixed(ctx.asset.body('cabinet.housing')):
         ctx.force('pull', drawer, keyframes=[
             {'time': 0, 'force': (0, 0, 0)},
             {'time': .5, 'force': (0, 0, 0)},
-            {'time': 2, 'force': (0, -.30, 0)},
+            {'time': 2, 'force': (0, -.80, 0)},
             {'time': 2.1, 'force': (0, 0, 0)},
             {'time': 5, 'force': (0, 0, 0)},
         ])
