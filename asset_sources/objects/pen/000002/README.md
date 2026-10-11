@@ -1,20 +1,17 @@
-# 白黑色按动圆珠笔
+# 蓝色带盖粗笔（部件层级）
 
 ![preview](three_quarter.jpg)
 
-白色笔杆、黑色后壳与长鼻锥，约 162 × 11 × 11 mm。
-
-包括两个刚体组件：笔身；笔尖、笔芯和后部按钮构成的活动组件。滑动关节 `button_press` 限位 [−0.003, 0] m，负值使活动组件一起朝笔尖方向移动。
+蓝色连续笔杆带浅色标签和半透明笔帽，约 179 × 20 × 20 mm。包括两个独立刚体：笔身 body、笔帽 cap，无永久关节；笔帽沿 −X 拔出。
 
 ```text
-pen
-  refill [rigid]
-    button
-    shaft
-    tip
-  shell [rigid]
-    barrel
-    nose
-    rear_housing
-    shoulder
+body [rigid]
+  barrel
+  label
+  neck
+  tip
+cap [rigid]
+  end
+  lip
+  shell
 ```

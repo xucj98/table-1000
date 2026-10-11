@@ -1,6 +1,6 @@
 # 02 物理属性、USD 导出与运动测试
 
-以 [带盖笔 pen/000006](../../asset_sources/objects/pen/000006/) 和 [三抽屉盒 cabinet/000002](../../asset_sources/objects/cabinet/000002/) 为例，完成 **配置物理属性 → 构建 USD 资产 → 仿真测试与验收**。
+以 [带盖笔 pen/000002](../../asset_sources/objects/pen/000002/) 和 [三抽屉盒 cabinet/000000](../../asset_sources/objects/cabinet/000000/) 为例，完成 **配置物理属性 → 构建 USD 资产 → 仿真测试与验收**。
 
 **输入：** 第一章验收后的各资产 `object.blend`。
 
@@ -24,14 +24,14 @@ export MKL_NUM_THREADS=1
 
 | 文件 | 编写内容 |
 | --- | --- |
-| [physics.py](../../asset_sources/objects/pen/000006/physics.py) | 按[物理属性规范](../designs/asset-pipeline/physics.md)通过官方 API 配置质量、接触材料与驱动；质心和惯量可由引擎计算 |
-| [behavior.py](../../asset_sources/objects/pen/000006/behavior.py)（可选） | 按[行为规范](../designs/asset-pipeline/behaviors.md)补充原生物理无法表达的行为；本例为笔帽等效保持力 |
-| [physics_test.py](../../asset_sources/objects/pen/000006/physics_test.py) | 按[测试规范](../designs/asset-pipeline/physics-tests.md)定义初态、相机、受力或夹具、时长及关注曲线，将测试函数登记到 `TESTS` |
+| [physics.py](../../asset_sources/objects/pen/000002/physics.py) | 按[物理属性规范](../designs/asset-pipeline/physics.md)通过官方 API 配置质量、接触材料与驱动；质心和惯量可由引擎计算 |
+| [behavior.py](../../asset_sources/objects/pen/000002/behavior.py)（可选） | 按[行为规范](../designs/asset-pipeline/behaviors.md)补充原生物理无法表达的行为；本例为笔帽等效保持力 |
+| [physics_test.py](../../asset_sources/objects/pen/000002/physics_test.py) | 按[测试规范](../designs/asset-pipeline/physics-tests.md)定义初态、相机、受力或夹具、时长及关注曲线，将测试函数登记到 `TESTS` |
 
 运行构建：
 
 ```bash
-"$ISAAC_PYTHON" scripts/assets/build_physics.py --assets pen/000006 cabinet/000002 --gpu 0
+"$ISAAC_PYTHON" scripts/assets/build_physics.py --assets pen/000002 cabinet/000000 --gpu 0
 ```
 
 `--source`、`--output` 默认为 `asset_sources/objects`、`assets/objects`；模型从输出根下对应资产目录读取。`--assets` 可指定多个相对资产目录，省略时构建所有包含 `physics.py` 的资产。`--gpu` 选择可用显卡。产物写入对应资产目录，包括 `geometry.usdc`、生成的 `physics.usda`、`object.usdz`、源码快照及 `physics_build.json`。检查报告：本例应有 **2 个刚体、7 个部件、36 个碰撞形状**，三抽屉盒应有 **4 个刚体、26 个部件、33 个碰撞形状**。构建器自动核对质量和碰撞材料绑定。
@@ -43,8 +43,8 @@ export MKL_NUM_THREADS=1
 先运行拔帽和合帽：
 
 ```bash
-"$ISAAC_PYTHON" scripts/assets/physics_test.py assets/objects/pen/000006 \
-  --script asset_sources/objects/pen/000006/physics_test.py --tests pull close --gpu 0
+"$ISAAC_PYTHON" scripts/assets/physics_test.py assets/objects/pen/000002 \
+  --script asset_sources/objects/pen/000002/physics_test.py --tests pull close --gpu 0
 ```
 
 去掉 `--tests pull close` 运行全部测试。省略 `--script` 时使用资产目录中的测试快照；修改 `physics.py` 或行为后需重新构建。
@@ -63,7 +63,7 @@ export MKL_NUM_THREADS=1
 三抽屉盒使用原生关节摩擦和阻尼，无需行为脚本：
 
 ```bash
-"$ISAAC_PYTHON" scripts/assets/physics_test.py assets/objects/cabinet/000002 --gpu 0
+"$ISAAC_PYTHON" scripts/assets/physics_test.py assets/objects/cabinet/000000 --gpu 0
 ```
 
 测试覆盖三个抽屉拉动后撤力、上下限位持续受力、到限位后继续拉动整个盒子，以及从水平连续下倾至 45° 的重力滑动（`gravity_tilt`）。记录三个抽屉达到 0.5 mm 相对位移时的实际角度；本例使用原生关节轴静/动摩擦力 0.50/0.35 N，实测约 18.8° 起滑，满足至少约 15° 的设计目标。

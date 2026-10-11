@@ -1,16 +1,18 @@
-# 红色粗笔
+# 浅蓝色细带盖笔
 
 ![preview](three_quarter.jpg)
 
-红色粗笔带浅色标签和半透明笔帽，闭合约 179 × 20 × 20 mm。包括两个独立刚体：笔身（彩色笔杆、标签、笔颈、笔尖）和半透明空心笔帽，无永久关节。−X 朝笔尖和拔帽方向。
+浅蓝色细带盖笔，闭合约 155 × 11 × 12 mm。包括两个独立刚体：笔身（笔杆、笔颈、笔尖、后塞）和笔帽（空心壳、口沿、端盖、笔夹），无永久关节。−X 朝笔尖和拔帽方向。
 
 ```text
 body [rigid]
   barrel
-  label
   neck
+  point
+  rear_plug
   tip
 cap [rigid]
+  clip
   end
   lip
   shell

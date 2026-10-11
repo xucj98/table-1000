@@ -1,6 +1,6 @@
 """Regression checks for geometric rejection, joint poses and sparse keyframes.
 
-Run inside Blender; --assets-root needs cabinet/000002, pen/000001 and pen/000006.
+Run inside Blender; --assets-root needs cabinet/000000, pen/000000 and pen/000002.
 """
 import argparse
 import json
@@ -24,7 +24,7 @@ options.output.mkdir(parents=True,exist_ok=True)
 
 class AcceptanceTests(unittest.TestCase):
     def load(self):
-        bpy.ops.wm.open_mainfile(filepath=str(options.assets_root/'cabinet/000002/object.blend'))
+        bpy.ops.wm.open_mainfile(filepath=str(options.assets_root/'cabinet/000000/object.blend'))
         bpy.context.scene.rigidbody_world.enabled=False
         bpy.context.view_layer.update()
 
@@ -68,7 +68,7 @@ class AcceptanceTests(unittest.TestCase):
             np.testing.assert_allclose(interpolate(keys,25)['transforms']['cap'][3:], [0,0,0,1])
 
     def test_transform_subtree_saved_pivot_and_reset(self):
-        path = options.assets_root/'pen/000006/object.blend'
+        path = options.assets_root/'pen/000002/object.blend'
         camera = [1,-1,1,0,0,1]
         cap_pose = [-.055,-.045,0,2**-.5,0,0,-2**-.5]
         views = {'moved.jpg': [{'frame':0, 'camera':camera, 'joints':{},
@@ -114,7 +114,7 @@ class AcceptanceTests(unittest.TestCase):
             self.assertTrue(report['failures'])
 
     def test_nested_semantic_parts_and_penetration(self):
-        path = options.assets_root/'pen/000006/object.blend'
+        path = options.assets_root/'pen/000002/object.blend'
         camera = [1,-1,1,0,0,1]
         separated = {'part-pose.jpg': [{'frame':0, 'camera':camera, 'joints':{},
                                       'transforms':{'cap':[-.06,-.045,0,2**-.5,0,0,-2**-.5]}}]}
@@ -155,7 +155,7 @@ class AcceptanceTests(unittest.TestCase):
         with self.assertRaises(ValueError):convex_data(o)
 
     def test_pose_and_invalid_joint(self):
-        path=options.assets_root/'cabinet/000002/object.blend'
+        path=options.assets_root/'cabinet/000000/object.blend'
         with tempfile.TemporaryDirectory(dir=options.output) as tmp:
             entry=lambda q:{'pose.jpg':[{'frame':0,'camera':[1,-1,1,0,0,1],'joints':q}]}
             run_worker(path,entry({'cabinet.drawer1.slide':.08}),Path(tmp),True)
@@ -177,7 +177,7 @@ class AcceptanceTests(unittest.TestCase):
         })
 
     def test_pen_button_and_refill_share_slider(self):
-        path=options.assets_root/'pen/000001/object.blend'
+        path=options.assets_root/'pen/000000/object.blend'
         camera=[.82,-.82,.72,0,0,1]
         with tempfile.TemporaryDirectory(dir=options.output) as tmp:
             for values in ({'button_press':-.003}, {'button_press':0}):

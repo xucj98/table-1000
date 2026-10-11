@@ -20,43 +20,46 @@
   "three_quarter.jpg": {
     "camera": [0.82, -0.82, 0.72, 0, 0, 1]
   },
-  "separated_three_quarter.jpg": {
-    "camera": [0.82, -0.82, 0.72, 0, 0, 1],
-    "transforms": {
-      "cap": [-0.055, -0.045, 0, 0.7071067811865476, 0, 0, -0.7071067811865476]
-    }
-  },
-  "remove_and_place.mp4": {
+  "press_and_extend.mp4": {
     "fps": 24,
     "frames": [
       {
         "frame": 0,
-        "camera": [0.82, -0.82, 0.72, 0, 0, 1]
+        "camera": [0.3, -1, 0.7, 0, 0, 1],
+        "joints": {
+          "button_press": 0
+        }
       },
       {
         "frame": 12,
-        "transforms": {
-          "cap": [-0.055, 0, 0, 1, 0, 0, 0]
+        "joints": {
+          "button_press": -0.003
         }
       },
       {
         "frame": 24,
-        "transforms": {
-          "cap": [-0.055, -0.045, 0, 0.7071067811865476, 0, 0, -0.7071067811865476]
+        "joints": {
+          "button_press": 0
         }
       },
       {
         "frame": 36,
-        "transforms": {
-          "cap": [-0.055, 0, 0, 1, 0, 0, 0]
+        "joints": {
+          "button_press": -0.003
         }
       },
       {
         "frame": 48,
-        "transforms": {
-          "cap": [0, 0, 0, 1, 0, 0, 0]
+        "joints": {
+          "button_press": 0
         }
       }
     ]
+  },
+  "pressed_three_quarter.jpg": {
+    "camera": [0.82, -0.82, 0.72, 0, 0, 1],
+    "joints": {
+      "button_press": -0.003
+    }
   }
 }
