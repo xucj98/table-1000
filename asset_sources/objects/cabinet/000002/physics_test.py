@@ -100,29 +100,62 @@ def pull_cabinet(ctx: TestContext):
     ctx.run(7)
 
 
-def gravity_tilt(ctx: TestContext, degrees):
-    angle = math.radians(degrees)
-    ctx.initial(position=(0, 0, .15), rotation=(math.cos(angle/2), math.sin(angle/2), 0, 0))
-    ctx.camera(position=(1.25, -1.65, 1.0), target=(0, -.15, .25))
-    ctx.video_annotation = lambda: f'Housing fixed at {degrees} deg | gravity only | no drawer force'
+def gravity_tilt(ctx: TestContext):
+    """Slowly incline the housing; observe drawer motion, never lock drawers."""
+    from pxr import Gf, UsdGeom, UsdPhysics
+    ctx.initial(position=(0, 0, .22))
+    ctx.camera(position=(1.25, -1.65, 1.0), target=(0, -.15, .3))
+    housing = ctx.asset.body('cabinet.housing')
     for index in (1, 2, 3):
-        joint = _joint(ctx, index)
-    ctx.plots(*(f'asset.cabinet.drawer{i}.slide.position' for i in (1, 2, 3)))
+        _joint(ctx, index)
+    ctx.observe('housing.angle', lambda: math.atan2(housing.state['rotation'][2, 1],
+                                                  housing.state['rotation'][1, 1]), unit='rad')
+    ctx.plots('housing.angle', *(f'asset.cabinet.drawer{i}.slide.position' for i in (1, 2, 3)))
+    ctx.video_annotation = lambda: f"Horizontal start | housing tilt {math.degrees(math.atan2(housing.state['rotation'][2, 1], housing.state['rotation'][1, 1])):.1f} deg | three drawers free | gravity only"
+    ctx.ensure_initialized()
+    grip = UsdGeom.Xform.Define(ctx.session.stage, '/World/Fixtures/housing_grip')
+    transform = UsdGeom.Xformable(grip)
+    transform.AddTranslateOp().Set(Gf.Vec3d(*housing.state['position']))
+    orient = transform.AddOrientOp()
+    orient.Set(Gf.Quatf(1))
+    UsdPhysics.RigidBodyAPI.Apply(grip.GetPrim()).CreateKinematicEnabledAttr(True)
+    UsdPhysics.MassAPI.Apply(grip.GetPrim()).CreateMassAttr(1)
+    original = ctx.session.actions
+    with ctx.fixed(housing) as joint:
+        joint.CreateBody0Rel().SetTargets([grip.GetPath()])
+        joint.GetLocalPos0Attr().Set(Gf.Vec3f(0))
+        joint.GetLocalRot0Attr().Set(Gf.Quatf(1))
+        def actions(t, dt):
+            original(t, dt)
+            u = min(1., max(0., (t-1)/15))
+            angle = math.radians(45)*(u*u*(3-2*u))
+            orient.Set(Gf.Quatf(math.cos(angle/2), Gf.Vec3f(math.sin(angle/2), 0, 0)))
+        ctx.session.actions = actions
+        ctx.run(18)
+    ctx.session.actions = original
+    starts = {}
+    for i in (1, 2, 3):
+        column = f'asset.cabinet.drawer{i}.slide.position'
+        initial = ctx.rows[0][column]
+        row = next((r for r in ctx.rows if r[column]-initial >= .0005), None)
+        starts[f'drawer{i}'] = None if row is None else {
+            'time_s': row['time'], 'angle_degrees': math.degrees(row['housing.angle']),
+            'relative_displacement_m': row[column]-initial}
     ctx.experiment_details = {
-        'purpose': 'D: gravity alone along the drawer opening axis',
-        'tilt_degrees_about_positive_X': degrees,
-        'opening_axis_gravity_m_s2': 9.81*math.sin(angle),
-        'initial_joints_m': [0, 0, 0], 'initial_drawer_velocities_m_s': [0, 0, 0],
-        'fixture': 'native fixed housing joint at the tilted initial pose',
-        'external_drawer_forces': None,
+        'purpose': 'continuous gravity inclination from horizontal to 45 degrees',
+        'fixture': 'native kinematic housing clamp; drawers always free',
+        'asset_pose_writes_during_experiment': False, 'external_drawer_forces': None,
+        'initial_joints_m': [ctx.rows[0][f'asset.cabinet.drawer{i}.slide.position'] for i in (1, 2, 3)],
+        'schedule': 'horizontal 1 s, smooth 45-degree tilt over 15 s, hold 2 s',
+        'onset_displacement_m': .0005, 'onset': starts,
+        'design_target_minimum_angle_degrees': 15,
+        'note': 'onset defined by 0.5 mm relative displacement, not a calibrated static friction coefficient',
     }
-    with ctx.fixed(ctx.asset.body('cabinet.housing')):
-        ctx.run(5)
 
 
 TESTS = {
     **{f'pull_release_drawer{i}': partial(pull_release, index=i) for i in (1, 2, 3)},
     'travel_stops': travel_stops,
     'pull_cabinet': pull_cabinet,
-    **{f'gravity_tilt_{degrees}deg': partial(gravity_tilt, degrees=degrees) for degrees in (0, 15, 35)},
+    'gravity_tilt': gravity_tilt,
 }

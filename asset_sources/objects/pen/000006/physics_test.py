@@ -240,24 +240,32 @@ def loose_cap_rotation(ctx: TestContext):
     from contextlib import ExitStack
     from pxr import Gf, Sdf, UsdGeom, UsdPhysics
     ctx.simulation()
-    ctx.initial(position=(0,-.075,.48))
+    upright=(cos(pi/4),0,sin(pi/4),0)
+    ctx.initial(position=(0,-.075,.48),rotation=upright)
     loose=ctx.spawn(ctx.asset_path,name='loose',position=(0,.075,.48))
-    ctx.initial(loose,position=(0,.075,.48),bodies={'cap':{'position':(-.060,.075,.48)}})
+    ctx.initial(loose,position=(0,.075,.48),rotation=upright,
+                bodies={'cap':{'position':(0,.075,.54),'rotation':upright}})
     ctx.ground()
     ctx.camera(position=(.32,-1.35,.75),target=(-.02,0,.27),focal_length=18)
-    state={'angle':0.}
-    ctx.video_annotation=lambda:'Front: tight (0 mm) | Back: loose (28 mm, still over nib) | body drives only, caps never gripped'
-    ctx.observe('body_target_angle',lambda:state['angle'] if ctx.session.time else 0.,unit='rad')
+    state={'angle':pi/2}
+    def rotation_from_up(pen):
+        r=pen.body('body').state['rotation']
+        return pi/2-np.arctan2(-r[2,0],r[0,0])
+    ctx.video_annotation=lambda: (f"Tip-up start | turn {np.degrees(rotation_from_up(ctx.asset)):.1f} deg | "
+        f"front tight {ctx.asset.behavior().observations()['opening']*1000:.1f} mm | "
+        f"back loose {loose.behavior().observations()['opening']*1000:.1f} mm | caps free")
+    ctx.observe('body_target_angle',lambda:state['angle'],unit='rad')
     for pen in (ctx.asset,loose):
         observe(ctx,pen)
         ctx.observe(pen.name+'.body_angle',lambda pen=pen:np.arctan2(-pen.body('body').state['rotation'][2,0],pen.body('body').state['rotation'][0,0]),unit='rad')
+        ctx.observe(pen.name+'.rotation_from_tip_up',lambda pen=pen:rotation_from_up(pen),unit='rad')
         ctx.observe(pen.name+'.paired_body',lambda pen=pen:paired_body_number(pen),unit='1')
     grippers=[]
     for pen,y in ((ctx.asset,-.075),(loose,.075)):
         grip=UsdGeom.Xform.Define(ctx.session.stage,'/World/Fixtures/body_grip_'+pen.name)
         transform=UsdGeom.Xformable(grip)
         transform.AddTranslateOp().Set(Gf.Vec3d(0,y,.48))
-        orient=transform.AddOrientOp();orient.Set(Gf.Quatf(1))
+        orient=transform.AddOrientOp();orient.Set(Gf.Quatf(cos(pi/4),Gf.Vec3f(0,sin(pi/4),0)))
         UsdPhysics.RigidBodyAPI.Apply(grip.GetPrim()).CreateKinematicEnabledAttr(True)
         UsdPhysics.MassAPI.Apply(grip.GetPrim()).CreateMassAttr(1)
         grippers.append((grip,orient))
@@ -274,23 +282,36 @@ def loose_cap_rotation(ctx: TestContext):
         ctx.session.refresh()
         def actions(t,dt):
             original(t,dt)
-            angle=float(smooth_target([(0,[0]),(4,[-pi/2]),(6,[-pi/2])],t)[0]);state['angle']=angle
+            angle=float(smooth_target([(0,[pi/2]),(1,[pi/2]),(9,[-pi/2]),(11,[-pi/2])],t)[0]);state['angle']=angle
             with Sdf.ChangeBlock():
                 # Only native kinematic clamp targets change. Dynamic asset
                 # poses are moved by their fixed constraints and PhysX.
                 for grip,orient in grippers:
                     orient.Set(Gf.Quatf(cos(angle/2),Gf.Vec3f(0,sin(angle/2),0)))
         ctx.session.actions=actions
-        ctx.plots('asset.body_angle','asset.cap_fit.opening',
-            'loose.cap.position.z','asset.cap_fit.retention_force')
-        ctx.run(6)
+        ctx.plots('asset.rotation_from_tip_up','loose.rotation_from_tip_up',
+            'asset.cap_fit.opening','asset.cap_fit.retention_force',
+            'loose.cap_fit.opening','loose.cap.position.z')
+        ctx.run(11)
     ctx.session.actions=original
+    onset={}
+    for pen in (ctx.asset,loose):
+        column=pen.name+'.cap_fit.opening'
+        start=ctx.rows[0][column]
+        row=next((row for row in ctx.rows if abs(row[column]-start)>=.0005),None)
+        onset[pen.name]=None if row is None else {'time_s':row['time'],
+            'rotation_from_tip_up_degrees':np.degrees(row[pen.name+'.rotation_from_tip_up']),
+            'opening_change_m':row[column]-start,
+            'direction':'opening' if row[column]>start else 'seating'}
     ctx.experiment_details={'initial_opening_m':{'asset':0.,'loose':.028},
         'loose_geometry':'neck ends 26 mm from seat; nib spans opening 26–39 mm. Lip at 28 mm overlaps 11 mm of nib, 2 mm beyond behavior engagement interval.',
         'fit_parameters':{pen.name:dict(pen.behavior().parameters) for pen in (ctx.asset,loose)},
-        'body_rotation':'native kinematic clamp orientation targets 0 to -pi/2 in 4 s, then held 2 s; asset bodies follow fixed joints',
+        'body_rotation':'tip-up vertical for 1 s, native clamp turns from +pi/2 to -pi/2 over 8 s, then holds 2 s; asset bodies follow fixed joints',
         'kinematic_body_fixtures':2,'asset_pose_writes_during_experiment':False,
         'cap_test_forces_or_fixtures':False,
+        'motion_onset_absolute_opening_change_m':.0005,'motion_onset':onset,
+        'motion_onset_note':'0.5 mm is an observation criterion; inward seating under gravity also counts as relative motion.',
+        'loose_opening_after_vertical_hold_m':next(row['loose.cap_fit.opening'] for row in ctx.rows if row['time']>=1.),
         'final_opening_m':{pen.name:pen.behavior().observations()['opening'] for pen in (ctx.asset,loose)},
         'tight_still_engaged':bool(ctx.asset.behavior().observations()['engaged']),
         'loose_final_engaged':bool(loose.behavior().observations()['engaged'])}
