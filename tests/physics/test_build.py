@@ -29,13 +29,13 @@ class PhysicsBatchTest(unittest.TestCase):
     def test_discovery_and_selection_share_one_application(self):
         with tempfile.TemporaryDirectory() as directory:
             source, output = Path(directory) / 'source', Path(directory) / 'assets'
-            for reference in ['cabinet/000002', 'pen/000006']:
+            for reference in ['cabinet/000000', 'pen/000002']:
                 path = source / reference
                 path.mkdir(parents=True)
                 (path / 'physics.py').write_text('')
-            for selected in [None, ['pen/000006', 'cabinet/000002']]:
+            for selected in [None, ['pen/000002', 'cabinet/000000']]:
                 arguments = ['--source', str(source), '--output', str(output), '--gpu', '3']
-                references = ['cabinet/000002', 'pen/000006']
+                references = ['cabinet/000000', 'pen/000002']
                 if selected:
                     arguments += ['--assets', *selected]
                     references = selected

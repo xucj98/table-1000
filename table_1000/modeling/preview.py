@@ -1,6 +1,6 @@
 """Validate asset geometry and generate previews from Blender joints and preview.json.
 
-CLI: uv run python scripts/assets/validate_and_preview.py object.blend [--views preview.json] [--output DIR]
+CLI: uv run python scripts/assets/validate_and_preview.py [--source DIR] [--assets CATEGORY/ID ...] [--device auto|cpu|gpu]
 Requires Blender; MP4 output additionally requires ffmpeg. Source .blend is not saved.
 """
 
@@ -16,15 +16,11 @@ import sys
 import tempfile
 import time
 
+if __name__ == "__main__":
+    # Blender runs this file directly with its own Python environment.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 from table_1000.assets.references import expand_mapping
-
-
-DEFAULT_VIEWS = {
-    "front.jpg": {"camera": [0, -1, 0, 0, 0, 1]},
-    "right.jpg": {"camera": [1, 0, 0, 0, 0, 1]},
-    "top.jpg": {"camera": [0, 0, 1, 0, 1, 0]},
-    "three_quarter.jpg": {"camera": [0.82, -0.82, 0.72, 0, 0, 1]},
-}
 
 
 def finite_number(value, label):
@@ -84,7 +80,7 @@ def interpolate_transform(a, b, t):
 
 
 def read_views(path):
-    entries = json.loads(path.read_text(encoding="utf-8")) if path else DEFAULT_VIEWS
+    entries = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(entries, dict) or not entries:
         raise ValueError("views must be a nonempty JSON object")
     result = {}
@@ -429,35 +425,31 @@ def run_worker(blend, views, output, check_only=False, device="auto"):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("object", type=Path)
-    parser.add_argument("--views", type=Path)
-    parser.add_argument("--output", type=Path)
+    parser.add_argument("--source", type=Path, default=Path("assets/objects"))
+    parser.add_argument("--assets", nargs="+", help="Asset directories relative to --source; defaults to all models")
     parser.add_argument("--device", choices=("auto", "cpu", "gpu"), default="auto",
                         help="Cycles device: auto selects one visible GPU, otherwise CPU")
-    parser.add_argument("--check-only", action="store_true", help="Validate geometry and sampled poses without rendering")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     if argv is None:
         argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else sys.argv[1:]
     args = parser.parse_args(argv)
-    blend = args.object.resolve()
-    views_path = args.views.resolve() if args.views else None
-    output = (args.output or blend.parent / "preview").resolve()
-    # The output is a dedicated preview directory, including custom --output.
-    if output.exists():
-        shutil.rmtree(output)
-    output.mkdir(parents=True)
-    views = read_views(views_path)
-    if args.worker:
-        run_worker(blend, views, output, args.check_only, args.device)
-    else:
+    source = args.source.resolve()
+    if not args.worker:
         subprocess.run(["blender", "-b", "--python-exit-code", "1", "-P", str(Path(__file__).resolve()),
-                        "--", str(blend), "--output", str(output), "--worker", "--device", args.device,
-                        *(["--views", str(views_path)] if views_path else []),
-                        *(["--check-only"] if args.check_only else [])], check=True)
+                        "--", "--source", str(source), "--worker", "--device", args.device,
+                        *(["--assets", *args.assets] if args.assets is not None else [])], check=True)
+        return
+    references = ([Path(reference) for reference in args.assets] if args.assets is not None
+                  else [path.parent.relative_to(source) for path in sorted(source.rglob("object.blend"))])
+    for reference in references:
+        asset = source / reference
+        output = asset / "preview"
+        if output.exists():
+            shutil.rmtree(output)
+        output.mkdir(parents=True)
+        views = read_views(asset / "preview.json")
+        run_worker(asset / "object.blend", views, output, device=args.device)
 
 
 if __name__ == "__main__":
-    # Executed directly by Blender; only the package location is shared with
-    # the host, not the host Python environment or its dependencies.
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     main()

@@ -11,7 +11,7 @@ def build():
     white = material("White cap plastic", (0.78, 0.80, 0.78), 0.29)
     paper = material("Pale paper label", (0.87, 0.88, 0.77), 0.65)
     ink = material("Printed label", (0.009, 0.012, 0.014), 0.75)
-    root = asset("17_Yellow_Solid_Glue", "bottom center of the upright tube",
+    root = asset("glue", "bottom center of the upright tube",
                  "+X width; +Y back; +Z upright toward white cap", "label faces -Y")
     stick = body("Glue stick", root)
     cylinder("Yellow glue stick body", 0.0125, 0.070, (0, 0, 0.035), yellow, stick, axis="Z")
@@ -32,9 +32,6 @@ def build():
 
 def organize_parts():
     """Group the original geometry while preserving every saved world pose."""
-    root = bpy.data.objects['17_Yellow_Solid_Glue']
-    root.name = 'glue'
-    root["asset_id"] = 'glue/000001'
     owner = bpy.data.objects['Glue stick']
     owner.name = 'glue.stick'
     for component, names in [

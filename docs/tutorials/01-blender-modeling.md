@@ -22,10 +22,10 @@
 
 本章主要示例是参考照片左上方的三抽屉盒子，以及桌面中下方带银色环的黑色圆珠笔。
 
-- [盒子](../../asset_sources/objects/cabinet/000002/)：外壳、三个空心抽屉，共四个刚体。
-- [笔](../../asset_sources/objects/pen/000001/)：笔壳与包含按钮、笔芯、笔尖的活动组件，两个刚体与一个滑动关节。
+- [盒子](../../asset_sources/objects/cabinet/000000/)：外壳、三个空心抽屉，共四个刚体。
+- [笔](../../asset_sources/objects/pen/000000/)：笔壳与包含按钮、笔芯、笔尖的活动组件，两个刚体与一个滑动关节。
 
-同一照片中的其他文具也提供独立源码：[白黑按动笔](../../asset_sources/objects/pen/000002/)、[订书机](../../asset_sources/objects/stapler/000000/)、[尖嘴胶水](../../asset_sources/objects/glue/000000/)、[固体胶](../../asset_sources/objects/glue/000001/)、[胶带](../../asset_sources/objects/tape/000000/)、[蓝色粗笔](../../asset_sources/objects/pen/000006/)、[红色粗笔](../../asset_sources/objects/pen/000004/)、[浅蓝细笔](../../asset_sources/objects/pen/000005/)和[双抽屉木架](../../asset_sources/objects/cabinet/000001/)。
+同一照片中的其他文具也提供独立源码：[白黑按动笔](../../asset_sources/objects/pen/000001/)、[订书机](../../asset_sources/objects/stapler/000000/)、[尖嘴胶水](../../asset_sources/objects/glue/000000/)、[固体胶](../../asset_sources/objects/glue/000001/)、[胶带](../../asset_sources/objects/tape/000000/)、[蓝色粗笔](../../asset_sources/objects/pen/000002/)、[红色粗笔](../../asset_sources/objects/pen/000003/)、[浅蓝细笔](../../asset_sources/objects/pen/000004/)和[双抽屉木架](../../asset_sources/objects/cabinet/000001/)。
 
 安装 uv、Blender 和 FFmpeg，并确保终端能找到 `uv`、`blender`、`ffmpeg`。本章实测 Blender 4.5.14 LTS。以下命令均在仓库根目录执行：
 
@@ -37,14 +37,14 @@ uv sync --locked
 
 ## 2. 编写资产源码
 
-根据提供的参考图和要求，为每个资产编写 `object.py`。编写前阅读 [object.py 与模型规范](../designs/asset-pipeline/modeling.md)，按其要求定义刚体子树、视觉与碰撞几何、坐标系和关节。资产文件按[布局规范](../designs/asset-pipeline/README.md#资产布局)保存。可参考已有的资产源码 [盒子 object.py](../../asset_sources/objects/cabinet/000002/object.py)。
+根据提供的参考图和要求，为每个资产编写 `object.py`。编写前阅读 [object.py 与模型规范](../designs/asset-pipeline/modeling.md)，按其要求定义刚体子树、视觉与碰撞几何、坐标系和关节。资产文件按[布局规范](../designs/asset-pipeline/README.md#资产布局)保存。可参考已有的资产源码 [盒子 object.py](../../asset_sources/objects/cabinet/000000/object.py)。
 
 ## 3. 生成模型
 
 使用[统一构建入口](../../scripts/assets/build_assets.py)：
 
 ```bash
-blender -b --python-exit-code 1 -P scripts/assets/build_assets.py -- --assets cabinet/000002 pen/000001
+blender -b --python-exit-code 1 -P scripts/assets/build_assets.py -- --assets cabinet/000000 pen/000000
 ```
 
 `--source` 和 `--output` 可指定源目录和产物根目录，默认为 `asset_sources/objects` 和 `assets/objects`；不提供 `--assets` 时默认构建所有资产。
@@ -55,20 +55,18 @@ blender -b --python-exit-code 1 -P scripts/assets/build_assets.py -- --assets ca
 
 ### 4.1 设计 preview.json
 
-编辑预览配置 `preview.json`，按 [preview.json 规范](../designs/asset-pipeline/preview.md) 设计视角和运动覆盖。先确认静态图能看清资产，再设置关键帧。可参考 [盒子 preview.json](../../asset_sources/objects/cabinet/000002/preview.json)，盒子的三个抽屉依次拉出至 0.173 m，再依次关闭。带盖笔可参考 [pen/000006 的配置](../../asset_sources/objects/pen/000006/preview.json)，展示拔帽和分离摆放。
+编辑预览配置 `preview.json`，按 [preview.json 规范](../designs/asset-pipeline/preview.md) 设计视角和运动覆盖。先确认静态图能看清资产，再设置关键帧。可参考 [盒子 preview.json](../../asset_sources/objects/cabinet/000000/preview.json)，盒子的三个抽屉依次拉出至 0.173 m，再依次关闭。带盖笔可参考 [pen/000002 的配置](../../asset_sources/objects/pen/000002/preview.json)，展示拔帽和分离摆放。
 
 ### 4.2 执行自动检查与渲染
 
 运行[自动检查和渲染](../../scripts/assets/validate_and_preview.py)：
 
 ```bash
-uv run python scripts/assets/validate_and_preview.py assets/objects/cabinet/000002/object.blend \
-  --views asset_sources/objects/cabinet/000002/preview.json
-uv run python scripts/assets/validate_and_preview.py assets/objects/pen/000001/object.blend \
-  --views asset_sources/objects/pen/000001/preview.json
+uv run python scripts/assets/validate_and_preview.py \
+  --source assets/objects --assets cabinet/000000 pen/000000 --device auto
 ```
 
-脚本先执行自动化检查，通过后渲染。失败时退出非零。结果输出到模型旁的 `preview/`，保存报告与预览，图片和视频均为**左视觉、右碰撞**；右侧按刚体着色。
+脚本逐个清理资产的 `preview/`，读取模型同目录的 `preview.json`，缺失时报错；先执行自动化检查，通过后渲染。失败时退出非零。结果输出到模型旁的 `preview/`，保存报告与预览，图片和视频均为**左视觉、右碰撞**；右侧按刚体着色。
 
 | 资产 | 预期输出 |
 | --- | --- |
@@ -77,10 +75,9 @@ uv run python scripts/assets/validate_and_preview.py assets/objects/pen/000001/o
 
 常用参数：
 
-- `--output DIR`：指定输出目录；默认使用模型旁的 `preview/`。
-- `--check-only`：仅生成自动检查报告，不渲染，适合调试。
+- `--source DIR`：生成资产根目录，默认 `assets/objects`；每个资产目录须有 `object.blend` 和 `preview.json`。
+- `--assets CATEGORY/ID ...`：选择资产；省略时递归处理根目录下所有 `object.blend`。
 - `--device auto|cpu|gpu`：默认优先使用可见 GPU，无可用后端时使用 CPU；`gpu` 要求 GPU 可用。
-- `--views` 省略时仅使用零位渲染前、右、顶和四分之三视图。
 
 渲染不回写模型。粗测允许正常接触，超过容差的穿透判为失败。
 
@@ -103,7 +100,7 @@ uv run python scripts/assets/validate_and_preview.py assets/objects/pen/000001/o
 
 ```bash
 blender -b --python-exit-code 1 -P scripts/assets/export_asset_tree.py -- \
-  assets/objects/cabinet/000002/object.blend --output outputs/cabinet-tree.txt
+  assets/objects/cabinet/000000/object.blend --output outputs/cabinet-tree.txt
 ```
 
 导出结果自动缩写重复组件。将核对后的资产树放入对象 README，并按[部件命名要求](../designs/asset-pipeline/modeling.md#部件命名与资产树)确认部件及其刚体归属。
@@ -117,6 +114,6 @@ blender -b --python-exit-code 1 -P scripts/assets/export_asset_tree.py -- \
 从完整预览生成黑笔源目录缩略图：
 
 ```bash
-ffmpeg -hide_banner -loglevel error -y -i assets/objects/pen/000001/preview/three_quarter.jpg \
-  -vf scale=480:240 -q:v 2 -frames:v 1 asset_sources/objects/pen/000001/three_quarter.jpg
+ffmpeg -hide_banner -loglevel error -y -i assets/objects/pen/000000/preview/three_quarter.jpg \
+  -vf scale=480:240 -q:v 2 -frames:v 1 asset_sources/objects/pen/000000/three_quarter.jpg
 ```

@@ -86,7 +86,7 @@ def build():
     blue = material("Baby blue upper cover", (0.27, 0.54, 0.72), 0.29)
     metal = material("Stapler steel", (0.65, 0.68, 0.70), 0.36, metallic=0.85)
     dark = material("Throat and clinch recess", (0.025, 0.03, 0.035), 0.65)
-    root = asset("15_Mini_Stapler", "bottom center of the base", "+X length toward hinge; +Y width; +Z up",
+    root = asset("stapler", "bottom center of the base", "+X length toward hinge; +Y width; +Z up",
                  "staple mouth at -X")
     base = body("Stapler base", root)
     slab("White bottom shell", 0.070, 0.030, -0.00325, 0.00325, 0.00325, 0.0055,
@@ -136,9 +136,6 @@ def build():
 
 def organize_parts():
     """Group the original geometry while preserving every saved world pose."""
-    root = bpy.data.objects['15_Mini_Stapler']
-    root.name = 'stapler'
-    root["asset_id"] = 'stapler/000000'
     owner = bpy.data.objects['Stapler base']
     owner.name = 'stapler.base'
     for component, names in [
