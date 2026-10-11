@@ -3,3 +3,17 @@
 ![preview](three_quarter.jpg)
 
 浅蓝色细带盖笔，闭合约 155 × 11 × 12 mm。包括两个独立刚体：笔身（笔杆、笔颈、笔尖、后塞）和笔帽（空心壳、口沿、端盖、笔夹），无永久关节。−X 朝笔尖和拔帽方向。
+
+```text
+body [rigid]
+  barrel
+  neck
+  point
+  rear_plug
+  tip
+cap [rigid]
+  clip
+  end
+  lip
+  shell
+```

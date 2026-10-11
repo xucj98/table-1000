@@ -1,8 +1,8 @@
-"""Generate only the three-drawer cabinet; Blender 4.5, no external dependencies.
+"""Three-drawer cabinet with four rubber pads and nested Compound parts.
 
 CLI: blender -b --python-exit-code 1 -P object.py -- --output DIRECTORY
 Output: DIRECTORY/object.blend and the generating source DIRECTORY/object.py.
-Local frame: bottom-center origin; +X width, +Y depth, +Z up; front at -Y.
+Local frame: ground-center origin; +X width, +Y depth, +Z up; front at -Y.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ import shutil
 import sys
 
 import bpy
+from table_1000.modeling.asset_builders import group_part, cylinder
 
 
 def material(name, color, roughness, transmission=0.0):
@@ -234,6 +235,56 @@ def build():
         drawer_joint(housing_body, drawer_body, index, z)
 
 
+def organize_parts():
+    root = bpy.data.objects["05_Plastic_Cabinet__MOVE"]
+    root.name = "cabinet"
+    root["asset_id"] = "cabinet/000002"
+    root["origin_convention"] = "ground center at the four rubber pad bottoms"
+    housing = bpy.data.objects["05_Plastic_Cabinet_Housing__MOVE"]
+    housing.name = "cabinet.housing"
+    del housing["asset_id"]
+    drawers = []
+    for i in range(1, 4):
+        constraint = bpy.data.objects[f"drawer{i}_open"]
+        drawer = constraint.rigid_body_constraint.object2
+        drawer.name = f"cabinet.drawer{i}"
+        del drawer["asset_id"]
+        constraint.name = drawer.name + ".slide"
+        drawers.append(drawer)
+    for owner in [housing] + drawers:
+        visuals = [obj for obj in owner.children if obj.get("geometry_role") == "visual"]
+        sides = 0
+        shelves = 0
+        for visual in sorted(visuals, key=lambda obj: obj.name):
+            if visual.name.startswith("Continuous rounded"):
+                component = "shell"
+                collisions = sorted([obj for obj in owner.children if obj.name.startswith("Shell_collision_")], key=lambda obj: obj.name)
+            else:
+                if visual.name.startswith("Slim drawer shelf"):
+                    shelves += 1; component = "shelf" + str(shelves)
+                elif visual.name.startswith("Translucent drawer side"):
+                    sides += 1; component = "side" + str(sides)
+                else:
+                    component = next(value for prefix, value in [
+                        ("Cabinet back panel", "back"), ("Smoky translucent front", "front"),
+                        ("Translucent drawer bottom", "bottom"), ("Translucent drawer rear", "rear"),
+                        ("White pull handle", "handle"),
+                    ] if visual.name.startswith(prefix))
+                collisions = [bpy.data.objects["Collision_" + visual.name]]
+            group_part(owner.name + "." + component, owner, [visual], collisions)
+    # Lift all original geometry by the 6 mm pad thickness; pad bottoms define Z=0.
+    for owner in [housing] + drawers:
+        owner.location.z += .006
+    for obj in list(bpy.context.scene.objects):
+        if obj.rigid_body_constraint:
+            obj.location.z += .006
+    rubber = material("Rubber feet", (.018, .023, .020), .82)
+    for i, (x, y) in enumerate([(-.112, -.110), (.112, -.110), (-.112, .110), (.112, .110)], 1):
+        visual = cylinder(f"Rubber pad{i}", .014, .006, (x, y, -.003), rubber, housing, axis="Z", segments=12)
+        collision = bpy.data.objects["Collision_" + visual.name]
+        group_part(housing.name + f".rubber_pad{i}", housing, [visual], [collision])
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True, help="Directory for object.blend and object.py")
@@ -249,6 +300,7 @@ def main(argv=None):
     scene.frame_start = 0
     scene.frame_end = 72
     build()
+    organize_parts()
     scene.rigidbody_world.enabled = False
     scene["penetration_tolerance_m"] = 0.0002
     scene.frame_set(0)
@@ -259,7 +311,10 @@ def main(argv=None):
     source = Path(__file__).resolve()
     if source != output / "object.py":
         shutil.copyfile(source, output / "object.py")
-    for name in ("preview.json", "metadata.json"):
+    names = ["preview.json", "metadata.json", "README.md"]
+    if (source.parent / "three_quarter.jpg").exists():
+        names.append("three_quarter.jpg")
+    for name in names:
         if source.parent / name != output / name:
             shutil.copyfile(source.parent / name, output / name)
     print("MODEL_BUILT", "cabinet", destination, flush=True)

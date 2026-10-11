@@ -1,12 +1,8 @@
 """Build this capped pen as two independent top-level rigid-body subtrees."""
-from pathlib import Path
-import sys
 
-source = Path(__file__).resolve()
-sys.path.insert(0, str(source.parent))
-if not (source.parent / "asset_builders.py").exists():
-    sys.path.insert(0, str(source.parents[4] / "table_1000/modeling"))
-from asset_builders import capped_pen, generate
+import bpy
+
+from table_1000.modeling.asset_builders import capped_pen, generate, group_part
 
 PROFILE = {'geometry': {'segments': 16,
               'seat_x_m': -0.032,
@@ -35,6 +31,39 @@ PROFILE = {'geometry': {'segments': 16,
 
 def build():
     capped_pen("pen/000004", PROFILE)
+
+    organize_parts()
+
+
+def organize_parts():
+    """Group the original geometry while preserving every saved world pose."""
+    owner = bpy.data.objects['body']
+    owner.name = 'body'
+    for component, names in [
+        ('barrel', ['Barrel']),
+        ('label', ['Pale paper label']),
+        ('neck', ['Neck']),
+        ('tip', ['Nib']),
+    ]:
+        visuals = [bpy.data.objects[name] for name in names]
+        collisions = sorted([obj for obj in owner.children
+                             if any(obj.name == "Collision_" + name
+                                    or obj.name.startswith("Collision_" + name + "_")
+                                    for name in names)], key=lambda obj: obj.name)
+        group_part(owner.name + "." + component, owner, visuals, collisions)
+    owner = bpy.data.objects['cap']
+    owner.name = 'cap'
+    for component, names in [
+        ('shell', ['Cap shell']),
+        ('lip', ['Cap lip']),
+        ('end', ['Cap end']),
+    ]:
+        visuals = [bpy.data.objects[name] for name in names]
+        collisions = sorted([obj for obj in owner.children
+                             if any(obj.name == "Collision_" + name
+                                    or obj.name.startswith("Collision_" + name + "_")
+                                    for name in names)], key=lambda obj: obj.name)
+        group_part(owner.name + "." + component, owner, visuals, collisions)
 
 
 def main(argv=None):
