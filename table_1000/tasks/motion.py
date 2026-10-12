@@ -118,23 +118,33 @@ class MotionPlanner:
         return self.follow(stage, result)
 
     def validated(self, result):
-        """Fail ``result`` if its path collides anywhere at VALIDATION_STEP."""
+        """Fail ``result`` if its path collides anywhere at VALIDATION_STEP.
+
+        Contacts already present at the start (a hand just released next to an
+        object, inside the free-space padding) are tolerated until the path
+        first leaves them; any later contact fails the path.
+        """
         if result['status'] != 'Success':
             return result
         world = self.planner.planning_world
         positions = np.asarray(result['position'])
         checks, last = 0, None
+        world.set_qpos_all(positions[0])
+        leaving = {(c.link_name1, c.object_name2, c.link_name2) for c in world.check_collision()}
         for index, q in enumerate(positions):
             if last is not None and np.abs(q - last).max() < VALIDATION_STEP and index < len(positions) - 1:
                 continue
             last = q
             world.set_qpos_all(q)
             checks += 1
-            collisions = world.check_collision()
-            if collisions:
-                pairs = sorted({(c.link_name1, c.object_name2, c.link_name2) for c in collisions})
-                return {'status': 'path collision', 'reason': 'path collision', 'collisions': pairs,
-                        'validation_checks': checks}
+            pairs = {(c.link_name1, c.object_name2, c.link_name2) for c in world.check_collision()}
+            if not pairs:
+                leaving = set()
+                continue
+            if leaving and pairs <= leaving:
+                continue
+            return {'status': 'path collision', 'reason': 'path collision', 'collisions': sorted(pairs),
+                    'validation_checks': checks}
         result['validation_checks'] = checks
         return result
 
