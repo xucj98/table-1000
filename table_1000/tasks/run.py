@@ -25,6 +25,15 @@ VIEWS = {
 FINGER_LINKS = ('robot.right_arm_gripper_left_link', 'robot.right_arm_gripper_right_link')
 
 
+def views():
+    """Fixed wide and close views plus the robot's head camera."""
+    from table_1000.robots.x1pro import camera_mount
+    from table_1000.scenes.stage import ROBOT_PATH
+    link, local = camera_mount(ROBOT_SOURCE)
+    return {**VIEWS, 'head': {'parent': f'{ROBOT_PATH}/{link}', 'local': local, 'focal_length_mm': 15,
+                              'resolution': (960, 540)}}
+
+
 def classify(intervals, handle, pen_prefix):
     """Split robot contacts into expected finger contacts and everything else."""
     expected, unexpected = [], []
@@ -66,7 +75,7 @@ def child(args):
             offsets = {'cabinet': tuple(args.offsets[:2]), 'pen': tuple(args.offsets[2:])}
         layout = scene.placement(seed=args.seed, offsets=offsets)
         result['layout'] = {'offsets': layout['offsets'], 'problems': scene.check(layout)}
-        cameras = (lambda stage: Cameras(stage, VIEWS, output / 'frames', fps=round(1 / (DT * RENDER_EVERY)))) \
+        cameras = (lambda stage: Cameras(stage, views(), output / 'frames', fps=round(1 / (DT * RENDER_EVERY)))) \
             if args.video else None
         env = Environment(scene, layout, ASSETS, cameras=cameras)
         initial = env.body_poses()

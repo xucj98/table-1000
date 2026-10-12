@@ -49,6 +49,14 @@ def model_shapes(model):
     return shapes, rest
 
 
+def grow(vertices, padding):
+    """Convex-hull vertices grown by ``padding`` per axis about their box centre."""
+    vertices = np.asarray(vertices, dtype=float)
+    low, high = vertices.min(0), vertices.max(0)
+    centre, half = (low + high) / 2, np.maximum((high - low) / 2, 1e-9)
+    return centre + (vertices - centre) * (half + padding) / half
+
+
 def geometry(kind, data, padding=0.):
     """FCL shape grown by ``padding`` on every side.
 
@@ -61,11 +69,7 @@ def geometry(kind, data, padding=0.):
     if kind == 'box':
         return fcl.Box(*(np.asarray(data) + 2 * padding))
     hull = trimesh.Trimesh(data).convex_hull
-    vertices = np.asarray(hull.vertices, dtype=float)
-    if padding:
-        low, high = vertices.min(0), vertices.max(0)
-        centre, half = (low + high) / 2, np.maximum((high - low) / 2, 1e-9)
-        vertices = centre + (vertices - centre) * (half + padding) / half
+    vertices = grow(hull.vertices, padding) if padding else np.asarray(hull.vertices, dtype=float)
     return fcl.Convex(vertices, np.asarray(hull.faces, dtype=np.int32))
 
 
@@ -90,14 +94,16 @@ class PlanningObject:
         return fcl.FCLObject(self.name, pose(world_pose), objects, [pose(t) for t, _ in shapes])
 
 
-def asset_objects(model, prefix, group, padded=lambda name: True):
+def asset_objects(model, prefix, group, padded=lambda name: True, merged=lambda name: False):
     """Planning objects of one asset instance.
 
     ``group(body, part)`` returns ``(object_name, frame_body)``; a shape on a
     body other than ``frame_body`` is placed by the bodies' rest transforms, so
     several bodies of a jointed but static assembly can form one object.
     Object names are prefixed with ``prefix``; ``padded(name)`` says whether
-    the scene's padding applies to the object.
+    the scene's padding applies to the object, ``merged(name)`` whether its
+    shapes are replaced by their common convex hull (for a compact, convex
+    assembly with many small parts).
     """
     shapes, rest = model_shapes(model)
     grouped = {}
@@ -105,6 +111,13 @@ def asset_objects(model, prefix, group, padded=lambda name: True):
         name, frame = group(body, part)
         relative = np.linalg.inv(rest[frame]) @ rest[body] @ transform
         grouped.setdefault((prefix + name, frame), []).append((relative, kind, data))
+    for key, entries in grouped.items():
+        if merged(key[0][len(prefix):]):
+            points = []
+            for transform, kind, data in entries:
+                local = data if kind == 'convex' else np.vstack([np.zeros(3), np.eye(3) * data, -np.eye(3) * data])
+                points.append(local @ transform[:3, :3].T + transform[:3, 3])
+            grouped[key] = [(np.eye(4), 'convex', np.vstack(points))]
     return [PlanningObject(name, prefix + frame, entries, padded(name)) for (name, frame), entries in grouped.items()]
 
 

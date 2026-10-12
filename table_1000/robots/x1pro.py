@@ -22,11 +22,32 @@ MAX_GAP = .0975
 # Joint-space limits for time parameterization (rad/s, rad/s^2), well below
 # the URDF velocity limits.
 VELOCITY_LIMIT, ACCELERATION_LIMIT = .8, 1.5
+# Planning hulls (except the fingers, which touch objects on purpose) are grown
+# by this much, so plans keep the robot clear of itself and of objects.
+PLANNING_PADDING = .002
 # Bodies whose collision hulls overlap at every configuration: the head
 # housing seated on the torso and the closed finger pads.
 SEATED = [('head_pitch_link', 'lift_link'),
           ('left_arm_gripper_left_link', 'left_arm_gripper_right_link'),
           ('right_arm_gripper_left_link', 'right_arm_gripper_right_link')]
+
+
+HEAD_CAMERA = 'camera_head_front_color_optical_frame'
+
+
+def camera_mount(urdf, frame=HEAD_CAMERA):
+    """``(parent_link, T_parent_camera)`` of a camera frame fixed to a body,
+    with the optical convention (+Z forward, +Y down) turned into USD's
+    (-Z forward, +Y up)."""
+    import xml.etree.ElementTree as ET
+    from scipy.spatial.transform import Rotation
+    joint = next(joint for joint in ET.parse(urdf).getroot().findall('joint')
+                 if joint.find('child').get('link') == frame)
+    origin = joint.find('origin')
+    transform = np.eye(4)
+    transform[:3, :3] = Rotation.from_euler('xyz', np.fromstring(origin.get('rpy'), sep=' ')).as_matrix()
+    transform[:3, 3] = np.fromstring(origin.get('xyz'), sep=' ')
+    return joint.find('parent').get('link'), transform @ np.diag([1., -1., -1., 1.])
 
 
 def finger_targets(gap):
@@ -46,7 +67,8 @@ def build_planner(source, output, frozen):
     from table_1000.planning.model import write_planning_urdf, write_srdf
     output = Path(output)
     urdf = write_planning_urdf(source, output / 'robot.urdf', ARM + FINGERS, frozen,
-                               (TCP_PARENT, TCP_LINK, TCP_OFFSET, (0., 0., 0.)))
+                               (TCP_PARENT, TCP_LINK, TCP_OFFSET, (0., 0., 0.)), PLANNING_PADDING,
+                               [f'{side}_arm_gripper_{finger}_link' for side in ('left', 'right') for finger in ('left', 'right')])
     write_srdf(urdf, output / 'robot.srdf', SEATED)
     planner = mplib.Planner(str(urdf), TCP_LINK, srdf=str(output / 'robot.srdf'), use_convex=True,
                             joint_vel_limits=np.full(len(ARM), VELOCITY_LIMIT),

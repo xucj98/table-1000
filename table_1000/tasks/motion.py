@@ -20,6 +20,9 @@ from table_1000.tasks.environment import DT
 # contact moves (screw paths next to the handle or pen) use the bare geometry.
 # The handle and pen, which the fingers touch on purpose, are never grown.
 PADDING = .003
+# RRTConnect only checks its edges coarsely; its time-parameterized path is
+# re-checked at this joint-space step and re-planned if any check collides.
+VALIDATION_STEP = .01
 ARRIVAL_TOLERANCE = .01   # rad, final joint error before a move counts as done
 SETTLE_LIMIT = .5         # s of extra holding allowed to reach it
 GRIPPER_TIME = .6         # s for the fingers to close or open
@@ -52,7 +55,7 @@ class MotionPlanner:
                           lambda body, part: (part if part.endswith('.handle') else body, body),
                           lambda name: not name.endswith('.handle'))
             + asset_objects(f'{assets}/{env.scene.PEN["asset"]}/model.json', 'pen:',
-                            lambda body, part: ('pen', 'body'), lambda name: False))
+                            lambda body, part: ('pen', 'body'), lambda name: False, lambda name: True))
         poses = env.body_poses()
         for obj in self.objects:
             self.world.add(obj, poses[obj.body])
@@ -95,6 +98,8 @@ class MotionPlanner:
             self.log.append(entry)
             raise PlanningFailed(stage, result.get('reason', result['status']), entry)
         entry['duration_s'] = float(result['duration'])
+        if 'validation_checks' in result:
+            entry['validation_checks'] = result['validation_checks']
         self.log.append(entry)
         return result
 
@@ -104,13 +109,34 @@ class MotionPlanner:
         goal = pose(np.linalg.inv(self.base) @ target)
         for attempt in range(attempts):
             try:
-                result = self._plan(stage, 'rrt', lambda: self.planner.plan_pose(
-                    goal, q, mask=[False] * 6 + [True] * 2, time_step=DT, planning_time=planning_time))
+                result = self._plan(stage, 'rrt', lambda: self.validated(self.planner.plan_pose(
+                    goal, q, mask=[False] * 6 + [True] * 2, time_step=DT, planning_time=planning_time)))
                 break
             except PlanningFailed as error:
-                if 'RRTConnect' not in error.reason or attempt == attempts - 1:
+                if not error.reason.startswith(('RRTConnect', 'path collision')) or attempt == attempts - 1:
                     raise
         return self.follow(stage, result)
+
+    def validated(self, result):
+        """Fail ``result`` if its path collides anywhere at VALIDATION_STEP."""
+        if result['status'] != 'Success':
+            return result
+        world = self.planner.planning_world
+        positions = np.asarray(result['position'])
+        checks, last = 0, None
+        for index, q in enumerate(positions):
+            if last is not None and np.abs(q - last).max() < VALIDATION_STEP and index < len(positions) - 1:
+                continue
+            last = q
+            world.set_qpos_all(q)
+            checks += 1
+            collisions = world.check_collision()
+            if collisions:
+                pairs = sorted({(c.link_name1, c.object_name2, c.link_name2) for c in collisions})
+                return {'status': 'path collision', 'reason': 'path collision', 'collisions': pairs,
+                        'validation_checks': checks}
+        result['validation_checks'] = checks
+        return result
 
     def move_to_pose_with_screw(self, stage, target):
         q = self.qpos()

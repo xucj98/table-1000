@@ -26,4 +26,15 @@
 
 ## 物理
 
-`physics.py` 设置关节驱动（力驱动，增益按弧度或米给出）、articulation 求解迭代与自碰撞，以及接触材料：机身静/动摩擦 0.4/0.3，手指 1.0/0.8。机身连杆不受重力，相当于理想的重力补偿控制，位置目标没有下垂；手中物体仍受重力。增益与摩擦是仿真取值，未对照真机控制器标定。
+`physics.py` 设置关节驱动（力驱动，增益按弧度或米给出）、articulation 求解迭代与自碰撞，以及接触材料：机身静/动摩擦 0.4/0.3，手指 1.0/0.8。每个夹爪的两指之间、头与躯干之间不检测碰撞：它们的凸块互相重叠，真机上由导轨或装配保证不接触。机身连杆不受重力，相当于理想的重力补偿控制，位置目标没有下垂；手中物体仍受重力。增益与摩擦是仿真取值，未对照真机控制器标定。
+
+## 构建与预览
+
+```bash
+"$ISAAC_PYTHON" scripts/assets/build_robot.py x1pro --gpu 0
+"$ISAAC_PYTHON" tests/robots/isaac_x1pro.py --robot assets/robots/x1pro/robot.usda --output outputs/x1pro-check --gpu 0
+"$ISAAC_PYTHON" -m table_1000.robots.preview asset_sources/robots/x1pro --joints '{"lift_joint": 0.4, "head_pitch_joint": 0.3, "right_arm_joint2": 0.4, "right_arm_joint3": -1.0, "left_arm_joint2": 0.4, "left_arm_joint3": -1.0, "right_arm_gripper_left_joint": 0.03, "right_arm_gripper_right_joint": -0.03, "left_arm_gripper_left_joint": 0.03, "left_arm_gripper_right_joint": -0.03}'
+```
+
+构建约 4 s。检查脚本在地面上保持一个姿态 2 s（4 ms 步长）：22 个刚体、86 个碰撞形状，每步约 1 ms，实时因子约 4，关节跟踪误差小于 1 mrad。缩略图需要 Blender。
+

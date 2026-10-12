@@ -85,6 +85,21 @@ class PlanningWorldTest(unittest.TestCase):
         np.testing.assert_allclose(by_part['box.wall'][1][:3, 3], [.2, 0, 0])
         self.assertEqual(by_part['box.lid.knob'][2], 'sphere')
 
+    def test_merged_object_is_one_hull_covering_all_shapes(self):
+        (merged,) = asset_objects(MODEL, '', lambda body, part: ('all', 'box'), merged=lambda name: True)
+        ((transform, kind, points),) = merged.raw
+        self.assertEqual(kind, 'convex')
+        np.testing.assert_allclose(points.max(0), [.25, .08, .38])
+        np.testing.assert_allclose(points.min(0), [-.08, -.08, -.05])
+
+    def test_padding_grows_every_side(self):
+        (wall,) = [o for o in asset_objects(MODEL, '', lambda body, part: (part, body)) if o.name == 'box.wall']
+        wall.fcl(np.eye(4))
+        wall.fcl(np.eye(4), .01)
+        bare, padded = (np.asarray(wall.cache[p][0][1].get_vertices()) for p in (0., .01))
+        np.testing.assert_allclose(padded.max(0), bare.max(0) + .01)
+        np.testing.assert_allclose(padded.min(0), bare.min(0) - .01)
+
     def test_grouping_and_permissions_survive_pose_updates(self):
         import mplib
         objects = asset_objects(MODEL, 'a:', lambda body, part: (part, body))

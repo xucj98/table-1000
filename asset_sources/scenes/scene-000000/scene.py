@@ -23,6 +23,7 @@ ROBOT = {
     'yaw': math.pi / 2,
     'joints': {
         'lift_joint': .40,
+        'head_pitch_joint': .30,   # head camera looks at the workspace
         'right_arm_joint1': 0., 'right_arm_joint2': .4, 'right_arm_joint3': -1., 'right_arm_joint4': 0.,
         'right_arm_joint5': 0., 'right_arm_joint6': 0.,
         'left_arm_joint1': 0., 'left_arm_joint2': .4, 'left_arm_joint3': -1., 'left_arm_joint4': 0.,
@@ -33,7 +34,7 @@ ROBOT = {
 # Region centres (world XY) and fixed orientations. ``z`` is the asset origin
 # height: the cabinet origin is the bottom of its feet, the pen origin is on
 # its axis and the cap (radius 0.010 m) is its widest part.
-CABINET = {'asset': 'objects/cabinet/000000', 'center': (.30, 0.), 'z': TABLE['height'], 'yaw': 0.}
+CABINET = {'asset': 'objects/cabinet/000000', 'center': (.30, .06), 'z': TABLE['height'], 'yaw': 0.}
 PEN = {'asset': 'objects/pen/000002', 'center': (-.04, -.36), 'z': TABLE['height'] + .010, 'yaw': 0.}
 HALF_RANGE = .05
 

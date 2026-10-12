@@ -43,11 +43,13 @@ def _freeze(joint, value):
             joint.remove(joint.find(tag))
 
 
-def write_planning_urdf(source, output, active, frozen, tcp):
+def write_planning_urdf(source, output, active, frozen, tcp, padding=0., unpadded=()):
     """Write ``output`` and return it.
 
     ``active`` joint names stay movable; every other movable joint is fixed at
     ``frozen.get(name, 0)``. ``tcp`` is ``(parent_link, name, xyz, rpy)``.
+    The convex hulls are grown by ``padding`` on every side, except those of
+    the ``unpadded`` links (meshes shared with padded links are not allowed).
     """
     source, output = Path(source), Path(output)
     root = ET.parse(source).getroot()
@@ -55,12 +57,21 @@ def write_planning_urdf(source, output, active, frozen, tcp):
     for link in root.findall('link'):
         for visual in link.findall('visual'):
             link.remove(visual)
+    grown = {}
+    for link in root.findall('link'):
+        for mesh in link.iter('mesh'):
+            amount = 0. if link.get('name') in unpadded else padding
+            if grown.setdefault(mesh.get('filename'), amount) != amount:
+                raise ValueError(f'{mesh.get("filename")} is shared by padded and unpadded links')
     for mesh in root.iter('mesh'):
         name = Path(mesh.get('filename'))
         (output.parent / name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source.parent / name, output.parent / name)
-        trimesh.load(source.parent / name, force='mesh').convex_hull.export(
-            output.parent / name.with_name(name.name + '.convex.stl'))
+        hull = trimesh.load(source.parent / name, force='mesh').convex_hull
+        if grown[mesh.get('filename')]:
+            from table_1000.planning.world import grow
+            hull = trimesh.Trimesh(grow(hull.vertices, grown[mesh.get('filename')]), hull.faces)
+        hull.export(output.parent / name.with_name(name.name + '.convex.stl'))
     for joint in root.findall('joint'):
         if joint.get('type') != 'fixed' and joint.get('name') not in active:
             _freeze(joint, float(frozen.get(joint.get('name'), 0.)))
