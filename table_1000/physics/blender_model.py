@@ -39,6 +39,8 @@ def extract(blend):
                            triangles=[list(face.vertices) for face in mesh.loop_triangles])
                 if role == 'collision':
                     row['shape'] = obj.rigid_body.collision_shape
+                    if row['shape'] == 'SPHERE':
+                        row['radius'] = checks.spheres[obj.name]
                 else:
                     surface = mesh.materials[0]
                     shader = surface.node_tree.nodes.get('Principled BSDF')
@@ -46,7 +48,9 @@ def extract(blend):
                         'color': list(shader.inputs['Base Color'].default_value[:3]),
                         'roughness': float(shader.inputs['Roughness'].default_value),
                         'metallic': float(shader.inputs['Metallic'].default_value),
-                        'transmission': float(shader.inputs['Transmission Weight'].default_value)}
+                        'transmission': float(shader.inputs['Transmission Weight'].default_value),
+                        'ior': float(shader.inputs['IOR'].default_value),
+                        'alpha': float(shader.inputs['Alpha'].default_value)}
                     row['normals'] = [list(mesh.corner_normals[index].vector)
                                       for face in mesh.polygons for index in face.loop_indices]
             finally:

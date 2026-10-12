@@ -46,3 +46,7 @@ Stage 使用米、千克和 Z 向上。USD 原生转动关节/驱动角度使用
 产物目录保存 `physics.py` 快照和生成的 `physics.usda`。带行为资产的入口与分发见[行为规范](behaviors.md)。
 
 参考：[Isaac 资产分层](https://docs.isaacsim.omniverse.nvidia.com/5.1.0/robot_setup/asset_structure.html)、[MassAPI](https://openusd.org/release/api/class_usd_physics_mass_a_p_i.html)、[DriveAPI](https://openusd.org/release/api/class_usd_physics_drive_a_p_i.html)。
+
+## 视觉材质
+
+导出保留 Blender 的颜色、粗糙度、金属度、IOR 和 Alpha；透射与 Alpha 分开处理。透射材质使用随 USDZ 打包的 OmniSurface 入口，运行时依赖 Isaac / Omniverse 标准 MDL 库；仅支持 USD Preview Surface 的查看器不能等价显示透射。
