@@ -3,6 +3,7 @@
 import argparse
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -37,7 +38,10 @@ def author_geometry(model, destination):
         matrix = np.array(node['matrix'])
         worlds[name] = worlds[parent] @ matrix if parent else matrix
         role = node.get('role')
-        if role:
+        if role == 'collision' and node['shape'] == 'SPHERE':
+            obj = UsdGeom.Sphere.Define(stage,path)
+            obj.CreateRadiusAttr(node['radius'])
+        elif role:
             obj = UsdGeom.Mesh.Define(stage, path)
             obj.CreatePointsAttr([Gf.Vec3f(*value) for value in node['vertices']])
             obj.CreateFaceVertexCountsAttr([len(face) for face in node['faces']])
@@ -54,7 +58,8 @@ def author_geometry(model, destination):
         elif role == 'collision':
             obj.CreateVisibilityAttr('invisible')
             UsdPhysics.CollisionAPI.Apply(prim).CreateCollisionEnabledAttr(True)
-            UsdPhysics.MeshCollisionAPI.Apply(prim).CreateApproximationAttr('boundingCube' if node['shape'] == 'BOX' else 'convexHull')
+            if node['shape'] != 'SPHERE':
+                UsdPhysics.MeshCollisionAPI.Apply(prim).CreateApproximationAttr('boundingCube' if node['shape'] == 'BOX' else 'convexHull')
         elif role == 'visual':
             obj.CreateNormalsAttr([Gf.Vec3f(*value) for value in node['normals']])
             obj.SetNormalsInterpolation('faceVarying')
@@ -122,17 +127,20 @@ def build(asset, source, output):
         flattened.Export(str(temporary / 'object.usdc'))
         if not UsdUtils.CreateNewUsdzPackage(Sdf.AssetPath(str(temporary / 'object.usdc')), str(output / 'object.usdz')):
             raise RuntimeError('USDZ packaging failed')
-        carrier = Usd.Stage.CreateNew(str(output / 'object.usda'))
-        from pxr import UsdGeom
-        root = UsdGeom.Xform.Define(carrier, '/Asset').GetPrim()
-        root.GetReferences().AddReference('object.usdz')
-        carrier.SetDefaultPrim(root)
         if scripts:
+            carrier = Usd.Stage.CreateNew(str(output / 'object.usda'))
+            from pxr import UsdGeom
+            root = UsdGeom.Xform.Define(carrier, '/Asset').GetPrim()
+            root.GetReferences().AddReference('object.usdz')
+            carrier.SetDefaultPrim(root)
             root.SetMetadata('apiSchemas', Sdf.TokenListOp.CreateExplicit(['OmniScriptingAPI']))
             root.CreateAttribute('omni:scripting:scripts', Sdf.ValueTypeNames.AssetArray).Set([Sdf.AssetPath(path.path) for path in scripts])
             for path in scripts:
                 shutil.copyfile(source / path.path, output / path.path)
-        carrier.GetRootLayer().Save()
+            carrier.GetRootLayer().Save()
+        else:
+            (output / 'object.usda').unlink(missing_ok=True)
+            (output / 'behavior.py').unlink(missing_ok=True)
         packaged = Usd.Stage.Open(str(output / 'object.usdz'))
         rigid = [prim for prim in packaged.Traverse() if prim.HasAPI(UsdPhysics.RigidBodyAPI)]
         assert len(rigid) == sum(node['rigid'] for node in model['nodes'])
@@ -143,6 +151,10 @@ def build(asset, source, output):
                 material, rel = UsdShade.MaterialBindingAPI(prim).ComputeBoundMaterial('physics')
                 assert material and material.GetPrim().HasAPI(UsdPhysics.MaterialAPI)
                 materials[str(prim.GetPath())] = str(material.GetPath())
+    for name in ['object.py','preview.json','metadata.json','README.md','three_quarter.jpg']:
+        original=source/name
+        if original.exists() and original != output/name:
+            shutil.copyfile(original,output/name)
     if (source / 'physics_test.py').exists():
         shutil.copyfile(source / 'physics_test.py', output / 'physics_test.py')
     (output / 'model.json').write_text(json.dumps(model) + '\n')
@@ -168,7 +180,7 @@ def main(argv=None):
     references = args.assets if args.assets is not None else sorted(
         path.parent.relative_to(source) for path in source.rglob('physics.py'))
     from isaacsim import SimulationApp
-    app = SimulationApp({'headless': True, 'active_gpu': args.gpu, 'physics_gpu': args.gpu,
+    app = SimulationApp({'headless': True, 'active_gpu': args.gpu, 'physics_gpu': 0 if os.getenv('CUDA_VISIBLE_DEVICES') == str(args.gpu) else args.gpu,
                          'multi_gpu': False, 'create_new_stage': False,
                          'disable_viewport_updates': True, 'limit_cpu_threads': 4})
     try:

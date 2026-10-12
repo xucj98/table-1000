@@ -39,6 +39,8 @@ def extract(blend):
                            triangles=[list(face.vertices) for face in mesh.loop_triangles])
                 if role == 'collision':
                     row['shape'] = obj.rigid_body.collision_shape
+                    if row['shape'] == 'SPHERE':
+                        row['radius'] = checks.spheres[obj.name]
                 else:
                     surface = mesh.materials[0]
                     shader = surface.node_tree.nodes.get('Principled BSDF')

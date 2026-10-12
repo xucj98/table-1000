@@ -13,7 +13,7 @@ import bpy
 import numpy as np
 from mathutils import Matrix, Vector
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from table_1000.modeling.geometry_checks import GeometryChecks, convex_data, sat_depth
+from table_1000.modeling.geometry_checks import GeometryChecks, convex_data, sat_depth, sphere_convex_depth
 from table_1000.modeling.preview import read_views, interpolate, run_worker
 args = argparse.ArgumentParser()
 args.add_argument('--assets-root',type=Path,required=True)
@@ -96,7 +96,7 @@ class AcceptanceTests(unittest.TestCase):
             bpy.ops.wm.open_mainfile(filepath=str(path))
             bpy.context.scene.rigidbody_world.enabled = False
             frame = Matrix.Translation((.1,.2,.3)) @ Matrix.Rotation(np.pi/2,4,'Z')
-            for name in ('body', 'cap'):
+            for name in ('body', 'cap', 'cap_ball1', 'cap_ball2', 'cap_ball3', 'cap.detent1', 'cap.detent2', 'cap.detent3'):
                 obj = bpy.data.objects[name]
                 obj.matrix_world = frame @ obj.matrix_world
             bpy.context.view_layer.update()
@@ -121,9 +121,9 @@ class AcceptanceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=options.output) as tmp:
             run_worker(path, separated, Path(tmp), True)
             checks = GeometryChecks()
-            self.assertEqual(len(checks.bodies), 2)
-            self.assertEqual(len(checks.colliders), 36)
-            self.assertEqual(checks.report['complexity']['visual_triangles'], 624)
+            self.assertEqual(len(checks.bodies), 5)
+            self.assertEqual(len(checks.colliders), 79)
+            self.assertEqual(checks.report['complexity']['visual_triangles'], 1132)
             for obj in checks.visuals + checks.colliders:
                 self.assertTrue(obj.parent.get('semantic_part'))
                 self.assertEqual(checks.owner[obj.name], obj.parent.parent.name)
@@ -132,6 +132,36 @@ class AcceptanceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'Collision coarse check failed'):
                 run_worker(path, overlap, Path(tmp), True)
             self.assertTrue(json.loads((Path(tmp)/'acceptance.json').read_text())['failures'])
+
+    def test_native_sphere_contacts_and_joint_child_preview(self):
+        import itertools
+        points=np.array(list(itertools.product([-1,1],repeat=3)),dtype=float)
+        faces=[(0,1,3,2),(4,6,7,5),(0,4,5,1),(2,3,7,6),(0,2,6,4),(1,5,7,3)]
+        self.assertAlmostEqual(sphere_convex_depth([1.4,0,0],.5,points,faces),.1,places=6)
+        self.assertAlmostEqual(sphere_convex_depth([1.5,0,0],.5,points,faces),0,places=6)
+        self.assertLess(sphere_convex_depth([1.4,1.4,0],.5,points,faces),0)
+        self.assertAlmostEqual(sphere_convex_depth([0,0,0],.5,points,faces),1.5)
+        path=options.assets_root/'pen/000002/object.blend'
+        camera=[1,-1,1,0,0,1]
+        with tempfile.TemporaryDirectory(dir=options.output) as tmp:
+            run_worker(path,{'separated.jpg':[{'frame':0,'camera':camera,'joints':{},
+                'transforms':{'cap':[-.06,0,0,1,0,0,0]}}]},Path(tmp),True)
+            cap=bpy.data.objects['cap']
+            for i in range(1,4):
+                ball=bpy.data.objects[f'cap_ball{i}']
+                self.assertAlmostEqual(ball.matrix_world.translation.x-cap.matrix_world.translation.x,-.0015,places=6)
+            ball.location.x=.07;ball.location.y=0;ball.location.z=0
+            bpy.context.view_layer.update()
+            checks=GeometryChecks()
+            self.assertTrue(checks.sample('intentional_ball_overlap',0,{}))
+            # Rotate the display sphere so its tessellated x extent shrinks.
+            # The analytic sphere still overlaps the flat barrel end by 0.21 mm.
+            from mathutils import Quaternion
+            ball.location=(.086+.0008-.00021,0,0)
+            ball.rotation_mode='QUATERNION'
+            ball.rotation_quaternion=Quaternion((0,1,0),.19)
+            bpy.context.view_layer.update()
+            self.assertTrue(checks.sample('rotated_sphere_overlap',0,{}))
 
     def test_containment_and_touch(self):
         normals=np.eye(3);edges=np.eye(3)

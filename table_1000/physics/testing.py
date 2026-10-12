@@ -63,7 +63,7 @@ class TestContext:
         self.fixture_counter = 0
         self.initialized = False
         self.integrating_seconds = self.preparation_seconds = self.warmup_seconds = 0.
-        self.video_started = None
+        self.video_started = self.experiment_started = None
         self.session.actions = self.apply_actions
 
     def spawn(self, asset_path, *, name, position=(0, 0, 0), rotation=(1, 0, 0, 0)):
@@ -288,6 +288,8 @@ class TestContext:
                 start = time.perf_counter();self.camera_instance.capture(self);self.preparation_seconds += time.perf_counter()-start
                 self.video_started = time.perf_counter()
                 self.images.append(self.camera_instance.capture(self))
+        if self.experiment_started is None:
+            self.experiment_started = time.perf_counter()
         stride = round(1/(self.dt*(self.camera_config or {'fps':25})['fps']))
         assert abs(1/(self.dt*(self.camera_config or {'fps':25})['fps'])-stride) < 1e-7
         for _ in range(round(duration/self.dt)):
