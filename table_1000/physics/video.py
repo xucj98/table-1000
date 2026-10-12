@@ -8,6 +8,9 @@ class Camera:
         from pxr import Gf, UsdGeom, UsdLux
         for setting in ['/omni/replicator/captureOnPlay', '/omni/replicator/asyncRendering', '/app/asyncRendering']:
             carb.settings.get_settings().set(setting, False)
+        # Closed translucent walls need enough transmission rays in RTX Real-Time 2.0.
+        for setting in ['/rtx/rtpt/maxBounces', '/rtx/rtpt/maxSpecularAndTransmissionBounces']:
+            carb.settings.get_settings().set(setting, 12)
         self.rep, self.size = rep, config['resolution']
         camera = UsdGeom.Camera.Define(stage, '/World/Camera')
         camera.CreateFocalLengthAttr(config['focal_length_mm'])

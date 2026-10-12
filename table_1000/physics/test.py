@@ -123,12 +123,18 @@ def conditions(ctx):
             'worker_controls':{'carb_tasking':settings.get('/plugins/carb.tasking.plugin/threadCount'),
                  'tbb':settings.get('/plugins/omni.tbb.globalcontrol/maxThreadCount'),
                  'physx':settings.get(_physx.SETTING_NUM_THREADS)},'native_math_threadpools':threadpool_info(),
-            'render_settings':{path:settings.get(path) for path in ['/rtx/rendermode','/rtx/post/motionblur/enabled',
+            'render_settings':{path:settings.get(path) for path in ['/rtx/rendermode','/persistent/rtx/modes/rt2/enabled',
+              '/rtx/rtpt/maxBounces','/rtx/rtpt/maxSpecularAndTransmissionBounces','/rtx/post/motionblur/enabled',
                 '/rtx/directLighting/sampledLighting/enabled','/rtx/directLighting/sampledLighting/samplesPerPixel',
                 '/rtx/directLighting/sampledLighting/denoisingTechnique','/rtx/directLighting/domeLight/sampleCount',
                 '/rtx/directLighting/domeLight/denoisingTechnique','/rtx/shadows/sampleCount','/rtx/shadows/denoiser/enable',
                 '/rtx/reflections/sampledLighting/samplesPerPixel','/rtx/reflections/denoiser/enabled','/rtx/post/taa/samples']},
-            'camera':ctx.camera_config,'standard_dt':ctx.dt==.004}
+            'camera':ctx.camera_config,
+            'lighting':{'dome_intensity':ctx.session.stage.GetPrimAtPath('/World/Light').GetAttribute('inputs:intensity').Get(),
+                        'sun_intensity':ctx.session.stage.GetPrimAtPath('/World/Sun').GetAttribute('inputs:intensity').Get(),
+                        'sun_rotation_xyz_degrees':list(ctx.session.stage.GetPrimAtPath('/World/Sun').GetAttribute('xformOp:rotateXYZ').Get())}
+                       if ctx.camera_instance else None,
+            'standard_dt':ctx.dt==.004}
 
 
 def run_video(asset,name,test,output,app,startup,rtf,gpu):
@@ -214,7 +220,8 @@ def main(argv=None):
     from isaacsim import SimulationApp
     app=SimulationApp({'headless':True,'create_new_stage':False,'active_gpu':args.gpu,'physics_gpu':0 if os.getenv('CUDA_VISIBLE_DEVICES') == str(args.gpu) else args.gpu,'multi_gpu':False,
          'disable_viewport_updates':True,'limit_cpu_threads':4,'renderer':'RaytracedLighting','width':960,'height':480,
-         'extra_args':['--/persistent/physics/numThreads=4','--/rtx/post/motionblur/enabled=False']})
+         'extra_args':['--/persistent/physics/numThreads=4','--/rtx/post/motionblur/enabled=False',
+                       '--/persistent/rtx/modes/rt2/enabled=true']})
     startup=time.perf_counter()-started
     try:
         import carb

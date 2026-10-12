@@ -73,9 +73,35 @@ def author_geometry(model, destination):
                                      ('metallic', 'metallic', Sdf.ValueTypeNames.Float)]:
                 value = Gf.Vec3f(*settings[field]) if field == 'color' else settings[field]
                 shader.CreateInput(key, kind).Set(value)
-            shader.CreateInput('opacity', Sdf.ValueTypeNames.Float).Set(1 - settings['transmission'])
+            shader.CreateInput('opacity', Sdf.ValueTypeNames.Float).Set(settings['alpha'])
+            shader.CreateInput('ior', Sdf.ValueTypeNames.Float).Set(settings['ior'])
             shader.CreateOutput('surface', Sdf.ValueTypeNames.Token)
             material.CreateSurfaceOutput().ConnectToSource(shader.ConnectableAPI(), 'surface')
+            if settings['transmission'] > 0:
+                # PreviewSurface opacity is a cutout, not Principled transmission.
+                # Isaac's built-in OmniSurface carries the separate refractive lobe.
+                mdl = UsdShade.Shader.Define(stage, path + '/Material/OmniSurface')
+                mdl.CreateImplementationSourceAttr(UsdShade.Tokens.sourceAsset)
+                mdl.SetSourceAsset(Sdf.AssetPath('OmniSurface.mdl'), 'mdl')
+                mdl.SetSourceAssetSubIdentifier('OmniSurface', 'mdl')
+                for key, value, kind in [
+                    ('diffuse_reflection_weight', 1., Sdf.ValueTypeNames.Float),
+                    ('diffuse_reflection_color', Gf.Vec3f(*settings['color']), Sdf.ValueTypeNames.Color3f),
+                    ('metalness', settings['metallic'], Sdf.ValueTypeNames.Float),
+                    ('specular_reflection_roughness', settings['roughness'], Sdf.ValueTypeNames.Float),
+                    ('specular_reflection_ior', settings['ior'], Sdf.ValueTypeNames.Float),
+                    ('enable_specular_transmission', True, Sdf.ValueTypeNames.Bool),
+                    ('specular_transmission_weight', settings['transmission'], Sdf.ValueTypeNames.Float),
+                    # Cycles Principled tints each solid interface with sqrt(base).
+                    ('specular_transmission_color', Gf.Vec3f(*np.sqrt(np.clip(settings['color'], 0, 1))), Sdf.ValueTypeNames.Color3f),
+                    ('enable_opacity', settings['alpha'] < 1, Sdf.ValueTypeNames.Bool),
+                    ('geometry_opacity', settings['alpha'], Sdf.ValueTypeNames.Float),
+                ]:
+                    mdl.CreateInput(key, kind).Set(value)
+                mdl.CreateOutput('out', Sdf.ValueTypeNames.Token)
+                for output in [material.CreateSurfaceOutput, material.CreateVolumeOutput,
+                               material.CreateDisplacementOutput]:
+                    output('mdl').ConnectToSource(mdl.ConnectableAPI(), 'out')
             UsdShade.MaterialBindingAPI.Apply(prim).Bind(material)
     for row in model['joints']:
         path = '/Asset/Joints/' + Tf.MakeValidIdentifier(row['name'])
@@ -103,6 +129,7 @@ def author_geometry(model, destination):
 
 def build(asset, source, output):
     from pxr import Sdf, Usd, UsdPhysics, UsdShade, UsdUtils
+    from omni.kit.material.library import get_mdl_lib_paths
     started = time.perf_counter()
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as temporary:
@@ -124,6 +151,11 @@ def build(asset, source, output):
         root = packaged_stage.GetPrimAtPath('/Asset')
         root.RemoveProperty('omni:scripting:scripts')
         root.SetMetadata('apiSchemas', Sdf.TokenListOp.CreateExplicit([name for name in root.GetAppliedSchemas() if name != 'OmniScriptingAPI']))
+        if any(node.get('material', {}).get('transmission', 0) > 0 for node in model['nodes']):
+            # MDL's runtime search path is separate from USD's asset resolver.
+            mdl = next(Path(path) / 'OmniSurface.mdl' for path in get_mdl_lib_paths()
+                       if (Path(path) / 'OmniSurface.mdl').is_file())
+            UsdUtils.ModifyAssetPaths(flattened, lambda path: str(mdl) if path == 'OmniSurface.mdl' else path)
         flattened.Export(str(temporary / 'object.usdc'))
         if not UsdUtils.CreateNewUsdzPackage(Sdf.AssetPath(str(temporary / 'object.usdc')), str(output / 'object.usdz')):
             raise RuntimeError('USDZ packaging failed')
