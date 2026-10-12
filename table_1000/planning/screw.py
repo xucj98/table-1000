@@ -58,7 +58,10 @@ def plan_screw(planner, goal, qpos, *, qpos_step=.03, time_step=.004,
     residual. Returns MPlib's result dictionary; a failure has
     ``status != 'Success'`` and a ``reason``.
     """
-    qpos = planner.pad_move_group_qpos(np.asarray(qpos, dtype=float).copy())
+    # Measured joints can sit a few mrad past a limit; like MPlib's plan_pose,
+    # start from the clipped state.
+    qpos = np.clip(planner.pad_move_group_qpos(np.asarray(qpos, dtype=float).copy()),
+                   planner.joint_limits[:, 0], planner.joint_limits[:, 1])
     planner.robot.set_qpos(qpos, True)
     if wrt_world:
         goal = planner._transform_goal_to_wrt_base(goal)
@@ -87,7 +90,9 @@ def plan_screw(planner, goal, qpos, *, qpos_step=.03, time_step=.004,
             return {'status': 'screw plan failed', 'reason': 'joint_limit', **state}
         planner.planning_world.set_qpos_all(qpos[joints])
         if planner.planning_world.is_state_colliding():
-            return {'status': 'screw plan failed', 'reason': 'collision', **state}
+            pairs = sorted({(c.link_name1, c.object_name2, c.link_name2)
+                            for c in planner.planning_world.check_collision()})
+            return {'status': 'screw plan failed', 'reason': 'collision', 'collisions': pairs, **state}
         path.append(qpos[joints].copy())
     else:
         return {'status': 'screw plan failed', 'reason': 'iteration_limit', **state}

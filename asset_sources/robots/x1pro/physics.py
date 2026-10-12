@@ -20,6 +20,12 @@ DRIVES = {
     '_wheel_joint': (0., 1.),
 }
 SOLVER_ITERATIONS = (16, 4)
+# Body pairs that never collide on the real robot but whose convex hulls
+# overlap: each gripper's two fingers (guided racks that pass each other) and
+# the head housing seated on the torso.
+FILTERED_PAIRS = [('left_arm_gripper_left_link', 'left_arm_gripper_right_link'),
+                  ('right_arm_gripper_left_link', 'right_arm_gripper_right_link'),
+                  ('head_pitch_link', 'lift_link')]
 # (static, dynamic) friction; gripper pads are rubber-like.
 MATERIALS = {'body': (.4, .3), 'finger': (1., .8)}
 
@@ -60,6 +66,10 @@ def author(import_path, output_path):
         drive.CreateTypeAttr('force')
         drive.CreateStiffnessAttr(stiffness * scale)
         drive.CreateDampingAttr(damping * scale)
+
+    for first, second in FILTERED_PAIRS:
+        pair = UsdPhysics.FilteredPairsAPI.Apply(root.GetChild(first))
+        pair.CreateFilteredPairsRel().AddTarget(root.GetChild(second).GetPath())
 
     materials = {}
     for name, (static, dynamic) in MATERIALS.items():
