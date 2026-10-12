@@ -23,6 +23,7 @@ PEN_HELD_GAP = (.010, .03)      # finger gap when closed on the 18-20 mm pen
 PLACE_TILT = np.radians(40)
 PEN_LIFTS = (.10, .08, .06)   # highest straight lift that is reachable
 STANDOFFS = (.08, .05, .03)   # longest reachable handle standoff
+RISES = (.10, .06, .03)       # rise after opening, highest reachable
 CLOSED_TOLERANCE = .005
 
 
@@ -187,6 +188,13 @@ class Solver:
         self.grasp_handle('open')
         self.slide('open', g.OPENING)
         self.release_handle('open')
+
+        # Rise clear of the opened drawer's walls before the free-space move, so
+        # the path to the pen does not skim them.
+        self.enter('pick: rise')
+        released = m.tcp()
+        self.first_reachable(RISES, lambda h: m.move_to_pose_with_screw(self.stage, g.translated(released, [0., 0., h])),
+                             ('joint_limit', 'collision'))
 
         # 2. Pick the pen at its centre of mass.
         _, _, pen = self.poses()
