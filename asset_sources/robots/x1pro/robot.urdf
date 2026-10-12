@@ -1,0 +1,2083 @@
+<robot name="ex001_robot">
+  <link name="base_link">
+    <inertial>
+      <origin xyz="-0.0283324399 -0.00151617127 0.384572279" rpy="0 0 0" />
+      <mass value="52.3491776" />
+      <inertia ixx="8.56268942" ixy="-0.011478292" ixz="0.303087447" iyy="9.09761715" iyz="-0.0207266874" izz="1.46123098" />
+    </inertial>
+    <visual>
+      <origin rpy="0 -0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/visual/chassis_base_link.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="0 0.2618 0" xyz="0.28438 -0.102 0.17463" />
+      <geometry>
+        <mesh filename="meshes/visual/right_tof_link.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="0 0.2618 0" xyz="0.28438 0.102 0.17463" />
+      <geometry>
+        <mesh filename="meshes/visual/left_tof_link.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="0 -0.2618 -0.2618" xyz="0.2612 0.172 0.17811" />
+      <geometry>
+        <mesh filename="meshes/visual/left_front_ultrasonic_link.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.462745098039216 0.462745098039216 0.458823529411765 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="0 -0.2618 -2.8274" xyz="-0.26102 0.17142 0.21811" />
+      <geometry>
+        <mesh filename="meshes/visual/left_rear_ultrasonic_link.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.462745098039216 0.462745098039216 0.458823529411765 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="0 -0.2618 0.2618" xyz="0.2612 -0.172 0.17811" />
+      <geometry>
+        <mesh filename="meshes/visual/right_front_ultrasonic_link.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.462745098039216 0.462745098039216 0.458823529411765 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="0 -0.2618 2.8274" xyz="-0.26102 -0.17142 0.21811" />
+      <geometry>
+        <mesh filename="meshes/visual/right_rear_ultrasonic_link.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.462745098039216 0.462745098039216 0.458823529411765 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="0 -0.34907 0" xyz="0.273 0 0.158" />
+      <geometry>
+        <mesh filename="meshes/visual/max_pro_camera_link.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.301960784313725 0.647058823529412 0.749019607843137 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="0 -0.34907 0" xyz="0.273 0 0.158" />
+      <geometry>
+        <mesh filename="meshes/visual/max_pro_camera_bottom_screw_frame.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.611764705882353 0.749019607843137 0.603921568627451 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="0 -0.34907 0" xyz="0.298662968 0.0315 0.167340677" />
+      <geometry>
+        <mesh filename="meshes/visual/max_pro_camera_infra1_frame.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="-1.22172633 1.19417056e-15 -1.57079633" xyz="0.298662968 0.0315 0.167340677" />
+      <geometry>
+        <mesh filename="meshes/visual/max_pro_camera_infra1_optical_frame.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="0 -0.34907 0" xyz="0.298662968 -0.0315 0.167340677" />
+      <geometry>
+        <mesh filename="meshes/visual/max_pro_camera_infra2_frame.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="-1.22172633 1.19417056e-15 -1.57079633" xyz="0.298662968 -0.0315 0.167340677" />
+      <geometry>
+        <mesh filename="meshes/visual/max_pro_camera_infra2_optical_frame.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="0 -0.34907 0" xyz="0.295552589 -0.0135001323 0.166208577" />
+      <geometry>
+        <mesh filename="meshes/visual/max_pro_camera_color_frame.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="-1.22172633 1.19417056e-15 -1.57079633" xyz="0.295552589 -0.0135001323 0.166208577" />
+      <geometry>
+        <mesh filename="meshes/visual/max_pro_camera_color_optical_frame.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="0 -0.34907 0" xyz="0.298662968 0.0315 0.167340677" />
+      <geometry>
+        <mesh filename="meshes/visual/max_pro_camera_depth_frame.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="-1.22172633 1.19417056e-15 -1.57079633" xyz="0.298662968 0.0315 0.167340677" />
+      <geometry>
+        <mesh filename="meshes/visual/max_pro_camera_depth_optical_frame.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="0 -0 0" xyz="0.235 0 0.219" />
+      <geometry>
+        <mesh filename="meshes/visual/lanhai_lds_e210_r_lidar.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="0 -0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/chassis_base_link_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 -0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/chassis_base_link_1.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0.2618 0" xyz="0.28438 -0.102 0.17463" />
+      <geometry>
+        <mesh filename="meshes/collision/right_tof_link_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0.2618 0" xyz="0.28438 0.102 0.17463" />
+      <geometry>
+        <mesh filename="meshes/collision/left_tof_link_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 -0.2618 -0.2618" xyz="0.2612 0.172 0.17811" />
+      <geometry>
+        <mesh filename="meshes/collision/left_front_ultrasonic_link_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 -0.2618 -2.8274" xyz="-0.26102 0.17142 0.21811" />
+      <geometry>
+        <mesh filename="meshes/collision/left_rear_ultrasonic_link_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 -0.2618 0.2618" xyz="0.2612 -0.172 0.17811" />
+      <geometry>
+        <mesh filename="meshes/collision/right_front_ultrasonic_link_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 -0.2618 2.8274" xyz="-0.26102 -0.17142 0.21811" />
+      <geometry>
+        <mesh filename="meshes/collision/right_rear_ultrasonic_link_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 -0.34907 0" xyz="0.273 0 0.158" />
+      <geometry>
+        <mesh filename="meshes/collision/max_pro_camera_link_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 -0.34907 0" xyz="0.273 0 0.158" />
+      <geometry>
+        <mesh filename="meshes/collision/max_pro_camera_bottom_screw_frame_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 -0.34907 0" xyz="0.298662968 0.0315 0.167340677" />
+      <geometry>
+        <mesh filename="meshes/collision/max_pro_camera_infra1_frame_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="-1.22172633 1.19417056e-15 -1.57079633" xyz="0.298662968 0.0315 0.167340677" />
+      <geometry>
+        <mesh filename="meshes/collision/max_pro_camera_infra1_optical_frame_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 -0.34907 0" xyz="0.298662968 -0.0315 0.167340677" />
+      <geometry>
+        <mesh filename="meshes/collision/max_pro_camera_infra2_frame_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="-1.22172633 1.19417056e-15 -1.57079633" xyz="0.298662968 -0.0315 0.167340677" />
+      <geometry>
+        <mesh filename="meshes/collision/max_pro_camera_infra2_optical_frame_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 -0.34907 0" xyz="0.295552589 -0.0135001323 0.166208577" />
+      <geometry>
+        <mesh filename="meshes/collision/max_pro_camera_color_frame_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="-1.22172633 1.19417056e-15 -1.57079633" xyz="0.295552589 -0.0135001323 0.166208577" />
+      <geometry>
+        <mesh filename="meshes/collision/max_pro_camera_color_optical_frame_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 -0.34907 0" xyz="0.298662968 0.0315 0.167340677" />
+      <geometry>
+        <mesh filename="meshes/collision/max_pro_camera_depth_frame_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="-1.22172633 1.19417056e-15 -1.57079633" xyz="0.298662968 0.0315 0.167340677" />
+      <geometry>
+        <mesh filename="meshes/collision/max_pro_camera_depth_optical_frame_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 -0 0" xyz="0.235 0 0.219" />
+      <geometry>
+        <mesh filename="meshes/collision/lanhai_lds_e210_r_lidar_0.ply" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="chassis_base_joint" type="fixed">
+    <parent link="base_link" />
+    <child link="chassis_base_link" />
+    <origin rpy="0 0 0" xyz="0 0 0" />
+  </joint>
+  <link name="chassis_base_link">
+    </link>
+  <link name="right_wheel_link">
+    <inertial>
+      <origin xyz="-2.2488706e-05 0.034770535 -1.0282457e-05" rpy="0 0 0" />
+      <mass value="4.1486831" />
+      <inertia ixx="0.010547795" ixy="3.1154751e-06" ixz="-9.3934721e-07" iyy="0.017789282" iyz="1.2820213e-06" izz="0.010549381" />
+    </inertial>
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/visual/right_wheel_link.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/right_wheel_link_0.ply" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_wheel_joint" type="continuous">
+    <origin rpy="0 -0 0" xyz="0 -0.24 0.085999" />
+    <parent link="base_link" />
+    <child link="right_wheel_link" />
+    <axis xyz="0 1 0" />
+    <limit effort="5.0" velocity="25.128" />
+  </joint>
+  <link name="left_wheel_link">
+    <inertial>
+      <origin xyz="-2.4659667e-05 -0.034770535 -4.3177917e-06" rpy="0 0 0" />
+      <mass value="4.1486831" />
+      <inertia ixx="0.010547525" ixy="-3.2106598e-06" ixz="-6.1783635e-07" iyy="0.017789282" iyz="-1.0205035e-06" izz="0.01054965" />
+    </inertial>
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/visual/left_wheel_link.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/left_wheel_link_0.ply" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_wheel_joint" type="continuous">
+    <origin rpy="0 -0 0" xyz="0 0.24 0.086001" />
+    <parent link="base_link" />
+    <child link="left_wheel_link" />
+    <axis xyz="0 1 0" />
+    <limit effort="5.0" velocity="25.128" />
+  </joint>
+  <link name="lift_link">
+    <inertial>
+      <origin xyz="0.185644277 -0.000514239726 0.0562292635" rpy="0 0 0" />
+      <mass value="2.48781139" />
+      <inertia ixx="0.32951545" ixy="-0.000446783442" ixz="0.00353215645" iyy="0.179595443" iyz="8.65483482e-05" izz="0.285811883" />
+    </inertial>
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/visual/lift_link.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="-1.57079633 1.57079633 3.14159265" xyz="0.2305 -0.303 -0.025" />
+      <geometry>
+        <mesh filename="meshes/visual/right_up_camera_base_link.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.247058823529412 0.592156862745098 0.627450980392157 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="-1.57079633 1.57079633 3.14159265" xyz="0.2305 0.303 -0.025" />
+      <geometry>
+        <mesh filename="meshes/visual/left_up_camera_base_link.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.247058823529412 0.592156862745098 0.627450980392157 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="3.14159265 -0 0" xyz="0.2319 0 0.021" />
+      <geometry>
+        <mesh filename="meshes/visual/chest_lh_camera_base_link.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.247058823529412 0.592156862745098 0.627450980392157 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="0 -0 0" xyz="0.2305 0.266 0" />
+      <geometry>
+        <mesh filename="meshes/visual/arm_base_link.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="0 -0 0" xyz="0.2305 -0.266 0" />
+      <geometry>
+        <mesh filename="meshes/visual/arm_base_link.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/lift_link_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/lift_link_1.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/lift_link_2.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="-1.57079633 1.57079633 3.14159265" xyz="0.2305 -0.303 -0.025" />
+      <geometry>
+        <mesh filename="meshes/collision/right_up_camera_base_link_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="-1.57079633 1.57079633 3.14159265" xyz="0.2305 0.303 -0.025" />
+      <geometry>
+        <mesh filename="meshes/collision/left_up_camera_base_link_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="3.14159265 -0 0" xyz="0.2319 0 0.021" />
+      <geometry>
+        <mesh filename="meshes/collision/chest_lh_camera_base_link_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 -0 0" xyz="0.2305 0.266 0" />
+      <geometry>
+        <mesh filename="meshes/collision/arm_base_link_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 -0 0" xyz="0.2305 -0.266 0" />
+      <geometry>
+        <mesh filename="meshes/collision/arm_base_link_0.ply" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="lift_joint" type="prismatic">
+    <origin rpy="0 -0 0" xyz="-0.0385 0 0.36" />
+    <parent link="base_link" />
+    <child link="lift_link" />
+    <axis xyz="0 0 1" />
+    <limit effort="2000" lower="0" upper="0.78" velocity="0.2" />
+  </joint>
+  <link name="head_yaw_link">
+    <inertial>
+      <origin xyz="-3.8057344e-05 -0.00036112052 0.057228512" rpy="0 0 0" />
+      <mass value="0.63648168" />
+      <inertia ixx="0.00046214038" ixy="5.250573e-07" ixz="4.0066074e-07" iyy="0.00054831037" iyz="9.8888872e-06" izz="0.00032329301" />
+    </inertial>
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/visual/head_yaw_link.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/head_yaw_link_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/head_yaw_link_1.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/head_yaw_link_2.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/head_yaw_link_3.ply" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="head_yaw_joint" type="revolute">
+    <origin rpy="0 0 0" xyz="0.1595 0 0.3745" />
+    <parent link="lift_link" />
+    <child link="head_yaw_link" />
+    <axis xyz="0 0 1" />
+    <limit effort="1.3" lower="-1.5708" upper="1.5708" velocity="11.517" />
+  </joint>
+  <link name="head_pitch_link">
+    <inertial>
+      <origin xyz="0.0371148945 -0.00919958144 0.0122113106" rpy="0 0 0" />
+      <mass value="0.245893962" />
+      <inertia ixx="0.00114044936" ixy="-2.37120455e-05" ixz="1.04557338e-05" iyy="0.000378317431" iyz="-1.62883966e-05" izz="3.16197423e-05" />
+    </inertial>
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/visual/head_pitch_link.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="0 0.59865 0" xyz="0.023835 -0.00767 0.072827" />
+      <geometry>
+        <mesh filename="meshes/visual/dcw2_camera_bottom_screw_frame.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="0 0.59865 0" xyz="0.023835 -0.00767 0.072827" />
+      <geometry>
+        <mesh filename="meshes/visual/dcw2_camera_link.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="0 0.59865 0" xyz="0.0411586933 -0.02767 0.0758988155" />
+      <geometry>
+        <mesh filename="meshes/visual/dcw2_camera_right_IR_ROS_frame.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="0 0.59865 0" xyz="0.0411586933 0.01233 0.0758988155" />
+      <geometry>
+        <mesh filename="meshes/visual/dcw2_camera_left_IR_ROS_frame.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="0 0.59865 0" xyz="0.0427282778 0 0.0748281128" />
+      <geometry>
+        <mesh filename="meshes/visual/dcw2_camera_RGB_IR_ROS_frame.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="0 0.59865 0" xyz="0.0291389801 -0.037395 0.0840981444" />
+      <geometry>
+        <mesh filename="meshes/visual/dcw2_USB_frame.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.454901960784314 0.454901960784314 0.454901960784314 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="0 0.59865 0" xyz="0.0411586933 0.01233 0.0758988155" />
+      <geometry>
+        <mesh filename="meshes/visual/dcw2_depth_frame.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/head_pitch_link_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/head_pitch_link_1.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/head_pitch_link_2.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/head_pitch_link_3.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0.59865 0" xyz="0.023835 -0.00767 0.072827" />
+      <geometry>
+        <mesh filename="meshes/collision/dcw2_camera_bottom_screw_frame_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0.59865 0" xyz="0.023835 -0.00767 0.072827" />
+      <geometry>
+        <mesh filename="meshes/collision/dcw2_camera_link_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0.59865 0" xyz="0.0411586933 -0.02767 0.0758988155" />
+      <geometry>
+        <mesh filename="meshes/collision/dcw2_camera_right_IR_ROS_frame_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0.59865 0" xyz="0.0411586933 0.01233 0.0758988155" />
+      <geometry>
+        <mesh filename="meshes/collision/dcw2_camera_left_IR_ROS_frame_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0.59865 0" xyz="0.0427282778 0 0.0748281128" />
+      <geometry>
+        <mesh filename="meshes/collision/dcw2_camera_RGB_IR_ROS_frame_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0.59865 0" xyz="0.0291389801 -0.037395 0.0840981444" />
+      <geometry>
+        <mesh filename="meshes/collision/dcw2_USB_frame_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0.59865 0" xyz="0.0411586933 0.01233 0.0758988155" />
+      <geometry>
+        <mesh filename="meshes/collision/dcw2_depth_frame_0.ply" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="head_pitch_joint" type="revolute">
+    <origin rpy="0 0 0" xyz="0 0 0.062" />
+    <parent link="head_yaw_link" />
+    <child link="head_pitch_link" />
+    <axis xyz="0 1 0" />
+    <limit effort="1.3" lower="-0.7745" upper="0.6215" velocity="11.517" />
+  </joint>
+  <link name="left_arm_frame_link">
+    </link>
+  <joint name="left_arm_frame_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0.2305 0.266 0" />
+    <parent link="lift_link" />
+    <child link="left_arm_frame_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="right_arm_frame_link">
+    </link>
+  <joint name="right_arm_frame_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0.2305 -0.266 0" />
+    <parent link="lift_link" />
+    <child link="right_arm_frame_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="head_camera_frame_link">
+    </link>
+  <joint name="head_camera_connector" type="fixed">
+    <origin rpy="0 0.59865 0" xyz="0.023835 -0.00767 0.072827" />
+    <parent link="head_pitch_link" />
+    <child link="head_camera_frame_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="right_up_camera_base_link">
+    </link>
+  <joint name="right_up_camera_base_joint" type="fixed">
+    <origin rpy="1.5707963267949 1.5707963267949 0" xyz="0.2305 -0.303 -0.0249999999999999" />
+    <parent link="lift_link" />
+    <child link="right_up_camera_base_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="right_up_camera_color_frame">
+    </link>
+  <joint name="right_up_camera_color_frame_joint" type="fixed">
+    <origin rpy="3.14159265 -6.98296268e-15 3.14159265" xyz="0.2305 -0.303 -0.0399" />
+    <parent link="lift_link" />
+    <child link="right_up_camera_color_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="left_up_camera_base_link">
+    </link>
+  <joint name="left_up_camera_base_joint" type="fixed">
+    <origin rpy="1.5707963267949 1.5707963267949 0" xyz="0.2305 0.303 -0.0249999999999999" />
+    <parent link="lift_link" />
+    <child link="left_up_camera_base_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="left_up_camera_color_frame">
+    </link>
+  <joint name="left_up_camera_color_frame_joint" type="fixed">
+    <origin rpy="-3.14159265 -0 -3.49148134e-15" xyz="0.2305 0.303 -0.0399" />
+    <parent link="lift_link" />
+    <child link="left_up_camera_color_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="chest_lh_camera_base_link">
+    </link>
+  <joint name="chest_lh_camera_base_joint" type="fixed">
+    <origin rpy="3.14159265358979 0 0" xyz="0.2319 0 0.0210000000000001" />
+    <parent link="lift_link" />
+    <child link="chest_lh_camera_base_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="chest_lh_camera_color_frame">
+    </link>
+  <joint name="chest_lh_camera_color_frame_joint" type="fixed">
+    <origin rpy="-1.57079633 -3.23108915e-15 -1.57079633" xyz="0.2468 0 0.021" />
+    <parent link="lift_link" />
+    <child link="chest_lh_camera_color_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="right_tof_link">
+    </link>
+  <joint name="right_tof_joint" type="fixed">
+    <origin rpy="0 0.2618 0" xyz="0.28438 -0.102 0.17463" />
+    <parent link="base_link" />
+    <child link="right_tof_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="left_tof_link">
+    </link>
+  <joint name="left_tof_joint" type="fixed">
+    <origin rpy="0 0.2618 0" xyz="0.28438 0.102 0.17463" />
+    <parent link="base_link" />
+    <child link="left_tof_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="left_front_ultrasonic_link">
+    </link>
+  <joint name="left_front_ultrasonic_joint" type="fixed">
+    <origin rpy="0 -0.2618 -0.2618" xyz="0.2612 0.172 0.17811" />
+    <parent link="base_link" />
+    <child link="left_front_ultrasonic_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="left_rear_ultrasonic_link">
+    </link>
+  <joint name="left_rear_ultrasonic_joint" type="fixed">
+    <origin rpy="0 -0.2618 -2.8274" xyz="-0.26102 0.17142 0.21811" />
+    <parent link="base_link" />
+    <child link="left_rear_ultrasonic_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="right_front_ultrasonic_link">
+    </link>
+  <joint name="right_front_ultrasonic_joint" type="fixed">
+    <origin rpy="0 -0.2618 0.2618" xyz="0.2612 -0.172 0.17811" />
+    <parent link="base_link" />
+    <child link="right_front_ultrasonic_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="right_rear_ultrasonic_link">
+    </link>
+  <joint name="right_rear_ultrasonic_joint" type="fixed">
+    <origin rpy="0 -0.2618 2.8274" xyz="-0.26102 -0.17142 0.21811" />
+    <parent link="base_link" />
+    <child link="right_rear_ultrasonic_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="2d_laser_link">
+    </link>
+  <joint name="2d_laser_link_connector" type="fixed">
+    <origin rpy="0 -0 0" xyz="0.235 0 0.219" />
+    <parent link="base_link" />
+    <child link="2d_laser_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="3d_laser_link">
+    </link>
+  <joint name="3d_laser_link_connector" type="fixed">
+    <origin rpy="0 -0 0" xyz="0.235 0 0.21" />
+    <parent link="base_link" />
+    <child link="3d_laser_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="base_front_camera_frame_link">
+    </link>
+  <joint name="base_front_camera_connector" type="fixed">
+    <origin rpy="0 -0.34907 0" xyz="0.273 0 0.158" />
+    <parent link="base_link" />
+    <child link="base_front_camera_frame_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="imu_link">
+    </link>
+  <joint name="imu_joint" type="fixed">
+    <origin rpy="0 -0 0" xyz="0.16798 9e-05 0.2076" />
+    <parent link="base_link" />
+    <child link="imu_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <ros2_control name="mobile_base" type="system">
+    <hardware>
+      <plugin>shm_hardware_interface/CanopenMotorInterface</plugin>
+      <param name="state_topic_name">canopen_master/tpdo</param>
+      <param name="cmd_topic_name">canopen_master/rpdo</param>
+      <param name="status_domain">0x04</param>
+      <param name="status_unit">0xb1</param>
+      <param name="status_frame_id">kinco_lift_waist</param>
+    </hardware>
+    <joint name="lift_joint">
+      <state_interface name="position" />
+      <state_interface name="velocity" />
+      <state_interface name="effort" />
+      <state_interface name="status_word" />
+      <state_interface name="error_code" />
+      <state_interface name="mode_of_operation_display" />
+      <command_interface name="position" />
+      <command_interface name="velocity" />
+      <command_interface name="effort" />
+      <command_interface name="control_word" />
+      <command_interface name="mode_of_operation" />
+    </joint>
+  </ros2_control>
+  <link name="left_arm_base_link">
+    </link>
+  <link name="left_arm_link1">
+    <inertial>
+      <origin xyz="0.007798 0.001101 0.024255" rpy="0 0 0" />
+      <mass value="0.251032" />
+      <inertia ixx="0.00042635" ixy="1.025e-05" ixz="-5.981e-05" iyy="0.00026171" iyz="1.002e-05" izz="0.00041384" />
+    </inertial>
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/visual/arm_link1.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/arm_link1_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/arm_link1_1.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/arm_link1_2.ply" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_arm_joint1" type="revolute">
+    <origin rpy="0 -0 0" xyz="0.2305 0.266 0.0613" />
+    <parent link="lift_link" />
+    <child link="left_arm_link1" />
+    <axis xyz="0 0 1" />
+    <limit effort="30" lower="-2.7925" upper="2.7925" velocity="4.188" />
+  </joint>
+  <link name="left_arm_link2">
+    <inertial>
+      <origin xyz="-0.152134 -0.000225 0.001162" rpy="0 0 0" />
+      <mass value="1.644756" />
+      <inertia ixx="0.00139134" ixy="8.696e-05" ixz="-5.745e-05" iyy="0.0381071" iyz="-2.454e-05" izz="0.03815596" />
+    </inertial>
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/visual/arm_link2.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/arm_link2_0.ply" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_arm_joint2" type="revolute">
+    <origin rpy="0 0 0" xyz="0.025 0 0.0542" />
+    <parent link="left_arm_link1" />
+    <child link="left_arm_link2" />
+    <axis xyz="0 1 0" />
+    <limit effort="30" lower="0" upper="3.6652" velocity="4.188" />
+  </joint>
+  <link name="left_arm_link3">
+    <inertial>
+      <origin xyz="0.144455 0.001623 0.063605" rpy="0 0 0" />
+      <mass value="0.729557" />
+      <inertia ixx="0.00157073" ixy="-8.218e-05" ixz="-0.00209657" iyy="0.0115247" iyz="-3.575e-05" izz="0.01124821" />
+    </inertial>
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/visual/arm_link3.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/arm_link3_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/arm_link3_1.ply" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_arm_joint3" type="revolute">
+    <origin rpy="0 0 0" xyz="-0.26 0 0" />
+    <parent link="left_arm_link2" />
+    <child link="left_arm_link3" />
+    <axis xyz="0 1 0" />
+    <limit effort="30" lower="-2.7925" upper="0" velocity="4.188" />
+  </joint>
+  <link name="left_arm_link4">
+    <inertial>
+      <origin xyz="0.042714 0.001361 0.028544" rpy="0 0 0" />
+      <mass value="0.295137" />
+      <inertia ixx="0.00069997" ixy="6.88e-06" ixz="-0.00026423" iyy="0.00080155" iyz="1.126e-05" izz="0.0005044" />
+    </inertial>
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/visual/arm_link4.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/arm_link4_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/arm_link4_1.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/arm_link4_2.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/arm_link4_3.ply" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_arm_joint4" type="revolute">
+    <origin rpy="0 0 0" xyz="0.2315 0 0.075" />
+    <parent link="left_arm_link3" />
+    <child link="left_arm_link4" />
+    <axis xyz="0 1 0" />
+    <limit effort="9" lower="-1.5708" upper="1.5708" velocity="6.77" />
+  </joint>
+  <link name="left_arm_link5">
+    <inertial>
+      <origin xyz="-0.005096 0.000536 -0.065848" rpy="0 0 0" />
+      <mass value="0.962685" />
+      <inertia ixx="0.00127899" ixy="-9.6e-07" ixz="-0.00013861" iyy="0.00133583" iyz="-1.58e-06" izz="0.00045365" />
+    </inertial>
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/visual/arm_link5.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/arm_link5_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/arm_link5_1.ply" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_arm_joint5" type="revolute">
+    <origin rpy="0 0 0" xyz="0.0825 0 0.085" />
+    <parent link="left_arm_link4" />
+    <child link="left_arm_link5" />
+    <axis xyz="0 0 1" />
+    <limit effort="9" lower="-1.5708" upper="1.5708" velocity="6.77" />
+  </joint>
+  <link name="left_arm_link6">
+    <inertial>
+      <origin xyz="0.0470891045 -4.57815157e-05 0.00481383177" rpy="0 0 0" />
+      <mass value="0.51576014" />
+      <inertia ixx="0.000432262292" ixy="-1.00213658e-06" ixz="-4.59499201e-05" iyy="0.000492080231" iyz="2.81121644e-05" izz="0.000330596415" />
+    </inertial>
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/visual/arm_link6.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="0 -0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/visual/gripper_base_link.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.75294 0.75294 0.75294 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="-0.00011032 0.43633 -4.6623e-05" xyz="0.074088 2.0168e-05 0.097993" />
+      <geometry>
+        <mesh filename="meshes/visual/gripper_camera_base_link.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.79216 0.81961 0.93333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="0 -0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_base_link_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 -0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_base_link_1.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 -0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_base_link_2.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="-0.00011032 0.43633 -4.6623e-05" xyz="0.074088 2.0168e-05 0.097993" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_camera_base_link_0.ply" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_arm_joint6" type="revolute">
+    <origin rpy="0 0 0" xyz="0.0395 0 -0.0945" />
+    <parent link="left_arm_link5" />
+    <child link="left_arm_link6" />
+    <axis xyz="1 0 0" />
+    <limit effort="9" lower="-1.9199" upper="1.9199" velocity="6.77" />
+  </joint>
+  <ros2_control name="left_arm" type="system">
+    <hardware>
+      <plugin>x2robot_hardware_interface/CustomMotorSystemInterface</plugin>
+      <param name="can_interface">can1</param>
+      <param name="use_ipc">1</param>
+      <param name="domain">0x04</param>
+      <param name="unit">0x11</param>
+    </hardware>
+    <joint name="left_arm_joint1">
+      <param name="auto_enable">False</param>
+      <param name="motor_id">1</param>
+      <param name="master_id">17</param>
+      <param name="motor_type">dmmotor</param>
+      <param name="motor_hw_type">DM6248</param>
+      <param name="lower_limit">-2.792</param>
+      <param name="upper_limit">2.792</param>
+      <command_interface name="position" />
+      <command_interface name="velocity" />
+      <command_interface name="effort" />
+      <command_interface name="mit_kp" />
+      <command_interface name="mit_kd" />
+      <command_interface name="ctrl_mode" />
+      <state_interface name="position" />
+      <state_interface name="velocity" />
+      <state_interface name="effort" />
+    </joint>
+    <joint name="left_arm_joint2">
+      <param name="auto_enable">False</param>
+      <param name="motor_id">2</param>
+      <param name="master_id">18</param>
+      <param name="motor_type">dmmotor</param>
+      <param name="motor_hw_type">DM6248</param>
+      <param name="lower_limit">0.0</param>
+      <param name="upper_limit">3.44</param>
+      <command_interface name="position" />
+      <command_interface name="velocity" />
+      <command_interface name="effort" />
+      <command_interface name="mit_kp" />
+      <command_interface name="mit_kd" />
+      <command_interface name="ctrl_mode" />
+      <state_interface name="position" />
+      <state_interface name="velocity" />
+      <state_interface name="effort" />
+    </joint>
+    <joint name="left_arm_joint3">
+      <param name="auto_enable">False</param>
+      <param name="motor_id">3</param>
+      <param name="master_id">19</param>
+      <param name="motor_type">dmmotor</param>
+      <param name="motor_hw_type">DM6248</param>
+      <param name="direction">-1.0</param>
+      <param name="lower_limit">-3.14</param>
+      <param name="upper_limit">0.0</param>
+      <command_interface name="position" />
+      <command_interface name="velocity" />
+      <command_interface name="effort" />
+      <command_interface name="mit_kp" />
+      <command_interface name="mit_kd" />
+      <command_interface name="ctrl_mode" />
+      <state_interface name="position" />
+      <state_interface name="velocity" />
+      <state_interface name="effort" />
+    </joint>
+    <joint name="left_arm_joint4">
+      <param name="auto_enable">False</param>
+      <param name="motor_id">4</param>
+      <param name="master_id">20</param>
+      <param name="motor_type">dmmotor</param>
+      <param name="motor_hw_type">DM4340_48</param>
+      <param name="direction">-1.0</param>
+      <param name="lower_limit">-1.57</param>
+      <param name="upper_limit">1.57</param>
+      <command_interface name="position" />
+      <command_interface name="velocity" />
+      <command_interface name="effort" />
+      <command_interface name="mit_kp" />
+      <command_interface name="mit_kd" />
+      <command_interface name="ctrl_mode" />
+      <state_interface name="position" />
+      <state_interface name="velocity" />
+      <state_interface name="effort" />
+    </joint>
+    <joint name="left_arm_joint5">
+      <param name="auto_enable">False</param>
+      <param name="motor_id">5</param>
+      <param name="master_id">21</param>
+      <param name="motor_type">dmmotor</param>
+      <param name="motor_hw_type">DM4340_48</param>
+      <param name="direction">-1.0</param>
+      <param name="lower_limit">-1.4</param>
+      <param name="upper_limit">1.4</param>
+      <command_interface name="position" />
+      <command_interface name="velocity" />
+      <command_interface name="effort" />
+      <command_interface name="mit_kp" />
+      <command_interface name="mit_kd" />
+      <command_interface name="ctrl_mode" />
+      <state_interface name="position" />
+      <state_interface name="velocity" />
+      <state_interface name="effort" />
+    </joint>
+    <joint name="left_arm_joint6">
+      <param name="auto_enable">False</param>
+      <param name="motor_id">6</param>
+      <param name="master_id">22</param>
+      <param name="motor_type">dmmotor</param>
+      <param name="motor_hw_type">DM4340_48</param>
+      <param name="lower_limit">-1.745</param>
+      <param name="upper_limit">1.745</param>
+      <command_interface name="position" />
+      <command_interface name="velocity" />
+      <command_interface name="effort" />
+      <command_interface name="mit_kp" />
+      <command_interface name="mit_kd" />
+      <command_interface name="ctrl_mode" />
+      <state_interface name="position" />
+      <state_interface name="velocity" />
+      <state_interface name="effort" />
+    </joint>
+  </ros2_control>
+  <link name="right_arm_base_link">
+    </link>
+  <link name="right_arm_link1">
+    <inertial>
+      <origin xyz="0.007798 0.001101 0.024255" rpy="0 0 0" />
+      <mass value="0.251032" />
+      <inertia ixx="0.00042635" ixy="1.025e-05" ixz="-5.981e-05" iyy="0.00026171" iyz="1.002e-05" izz="0.00041384" />
+    </inertial>
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/visual/arm_link1.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/arm_link1_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/arm_link1_1.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/arm_link1_2.ply" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_arm_joint1" type="revolute">
+    <origin rpy="0 -0 0" xyz="0.2305 -0.266 0.0613" />
+    <parent link="lift_link" />
+    <child link="right_arm_link1" />
+    <axis xyz="0 0 1" />
+    <limit effort="30" lower="-2.7925" upper="2.7925" velocity="4.188" />
+  </joint>
+  <link name="right_arm_link2">
+    <inertial>
+      <origin xyz="-0.152134 -0.000225 0.001162" rpy="0 0 0" />
+      <mass value="1.644756" />
+      <inertia ixx="0.00139134" ixy="8.696e-05" ixz="-5.745e-05" iyy="0.0381071" iyz="-2.454e-05" izz="0.03815596" />
+    </inertial>
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/visual/arm_link2.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/arm_link2_0.ply" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_arm_joint2" type="revolute">
+    <origin rpy="0 0 0" xyz="0.025 0 0.0542" />
+    <parent link="right_arm_link1" />
+    <child link="right_arm_link2" />
+    <axis xyz="0 1 0" />
+    <limit effort="30" lower="0" upper="3.6652" velocity="4.188" />
+  </joint>
+  <link name="right_arm_link3">
+    <inertial>
+      <origin xyz="0.144455 0.001623 0.063605" rpy="0 0 0" />
+      <mass value="0.729557" />
+      <inertia ixx="0.00157073" ixy="-8.218e-05" ixz="-0.00209657" iyy="0.0115247" iyz="-3.575e-05" izz="0.01124821" />
+    </inertial>
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/visual/arm_link3.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/arm_link3_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/arm_link3_1.ply" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_arm_joint3" type="revolute">
+    <origin rpy="0 0 0" xyz="-0.26 0 0" />
+    <parent link="right_arm_link2" />
+    <child link="right_arm_link3" />
+    <axis xyz="0 1 0" />
+    <limit effort="30" lower="-2.7925" upper="0" velocity="4.188" />
+  </joint>
+  <link name="right_arm_link4">
+    <inertial>
+      <origin xyz="0.042714 0.001361 0.028544" rpy="0 0 0" />
+      <mass value="0.295137" />
+      <inertia ixx="0.00069997" ixy="6.88e-06" ixz="-0.00026423" iyy="0.00080155" iyz="1.126e-05" izz="0.0005044" />
+    </inertial>
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/visual/arm_link4.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/arm_link4_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/arm_link4_1.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/arm_link4_2.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/arm_link4_3.ply" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_arm_joint4" type="revolute">
+    <origin rpy="0 0 0" xyz="0.2315 0 0.075" />
+    <parent link="right_arm_link3" />
+    <child link="right_arm_link4" />
+    <axis xyz="0 1 0" />
+    <limit effort="9" lower="-1.5708" upper="1.5708" velocity="6.77" />
+  </joint>
+  <link name="right_arm_link5">
+    <inertial>
+      <origin xyz="-0.005096 0.000536 -0.065848" rpy="0 0 0" />
+      <mass value="0.962685" />
+      <inertia ixx="0.00127899" ixy="-9.6e-07" ixz="-0.00013861" iyy="0.00133583" iyz="-1.58e-06" izz="0.00045365" />
+    </inertial>
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/visual/arm_link5.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/arm_link5_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/arm_link5_1.ply" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_arm_joint5" type="revolute">
+    <origin rpy="0 0 0" xyz="0.0825 0 0.085" />
+    <parent link="right_arm_link4" />
+    <child link="right_arm_link5" />
+    <axis xyz="0 0 1" />
+    <limit effort="9" lower="-1.5708" upper="1.5708" velocity="6.77" />
+  </joint>
+  <link name="right_arm_link6">
+    <inertial>
+      <origin xyz="0.0470891045 -4.57815157e-05 0.00481383177" rpy="0 0 0" />
+      <mass value="0.51576014" />
+      <inertia ixx="0.000432262292" ixy="-1.00213658e-06" ixz="-4.59499201e-05" iyy="0.000492080231" iyz="2.81121644e-05" izz="0.000330596415" />
+    </inertial>
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/visual/arm_link6.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="0 -0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/visual/gripper_base_link.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.75294 0.75294 0.75294 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="-0.00011032 0.43633 -4.6623e-05" xyz="0.074088 2.0168e-05 0.097993" />
+      <geometry>
+        <mesh filename="meshes/visual/gripper_camera_base_link.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.79216 0.81961 0.93333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="0 -0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_base_link_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 -0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_base_link_1.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 -0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_base_link_2.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="-0.00011032 0.43633 -4.6623e-05" xyz="0.074088 2.0168e-05 0.097993" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_camera_base_link_0.ply" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_arm_joint6" type="revolute">
+    <origin rpy="0 0 0" xyz="0.0395 0 -0.0945" />
+    <parent link="right_arm_link5" />
+    <child link="right_arm_link6" />
+    <axis xyz="1 0 0" />
+    <limit effort="9" lower="-1.9199" upper="1.9199" velocity="6.77" />
+  </joint>
+  <ros2_control name="right_arm" type="system">
+    <hardware>
+      <plugin>x2robot_hardware_interface/CustomMotorSystemInterface</plugin>
+      <param name="can_interface">can2</param>
+      <param name="use_ipc">1</param>
+      <param name="domain">0x04</param>
+      <param name="unit">0x12</param>
+    </hardware>
+    <joint name="right_arm_joint1">
+      <param name="auto_enable">False</param>
+      <param name="motor_id">1</param>
+      <param name="master_id">17</param>
+      <param name="motor_type">dmmotor</param>
+      <param name="motor_hw_type">DM6248</param>
+      <param name="lower_limit">-2.792</param>
+      <param name="upper_limit">2.792</param>
+      <command_interface name="position" />
+      <command_interface name="velocity" />
+      <command_interface name="effort" />
+      <command_interface name="mit_kp" />
+      <command_interface name="mit_kd" />
+      <command_interface name="ctrl_mode" />
+      <state_interface name="position" />
+      <state_interface name="velocity" />
+      <state_interface name="effort" />
+    </joint>
+    <joint name="right_arm_joint2">
+      <param name="auto_enable">False</param>
+      <param name="motor_id">2</param>
+      <param name="master_id">18</param>
+      <param name="motor_type">dmmotor</param>
+      <param name="motor_hw_type">DM6248</param>
+      <param name="lower_limit">0.0</param>
+      <param name="upper_limit">3.44</param>
+      <command_interface name="position" />
+      <command_interface name="velocity" />
+      <command_interface name="effort" />
+      <command_interface name="mit_kp" />
+      <command_interface name="mit_kd" />
+      <command_interface name="ctrl_mode" />
+      <state_interface name="position" />
+      <state_interface name="velocity" />
+      <state_interface name="effort" />
+    </joint>
+    <joint name="right_arm_joint3">
+      <param name="auto_enable">False</param>
+      <param name="motor_id">3</param>
+      <param name="master_id">19</param>
+      <param name="motor_type">dmmotor</param>
+      <param name="motor_hw_type">DM6248</param>
+      <param name="direction">-1.0</param>
+      <param name="lower_limit">-3.14</param>
+      <param name="upper_limit">0.0</param>
+      <command_interface name="position" />
+      <command_interface name="velocity" />
+      <command_interface name="effort" />
+      <command_interface name="mit_kp" />
+      <command_interface name="mit_kd" />
+      <command_interface name="ctrl_mode" />
+      <state_interface name="position" />
+      <state_interface name="velocity" />
+      <state_interface name="effort" />
+    </joint>
+    <joint name="right_arm_joint4">
+      <param name="auto_enable">False</param>
+      <param name="motor_id">4</param>
+      <param name="master_id">20</param>
+      <param name="motor_type">dmmotor</param>
+      <param name="motor_hw_type">DM4340_48</param>
+      <param name="direction">-1.0</param>
+      <param name="lower_limit">-1.57</param>
+      <param name="upper_limit">1.57</param>
+      <command_interface name="position" />
+      <command_interface name="velocity" />
+      <command_interface name="effort" />
+      <command_interface name="mit_kp" />
+      <command_interface name="mit_kd" />
+      <command_interface name="ctrl_mode" />
+      <state_interface name="position" />
+      <state_interface name="velocity" />
+      <state_interface name="effort" />
+    </joint>
+    <joint name="right_arm_joint5">
+      <param name="auto_enable">False</param>
+      <param name="motor_id">5</param>
+      <param name="master_id">21</param>
+      <param name="motor_type">dmmotor</param>
+      <param name="motor_hw_type">DM4340_48</param>
+      <param name="direction">-1.0</param>
+      <param name="lower_limit">-1.4</param>
+      <param name="upper_limit">1.4</param>
+      <command_interface name="position" />
+      <command_interface name="velocity" />
+      <command_interface name="effort" />
+      <command_interface name="mit_kp" />
+      <command_interface name="mit_kd" />
+      <command_interface name="ctrl_mode" />
+      <state_interface name="position" />
+      <state_interface name="velocity" />
+      <state_interface name="effort" />
+    </joint>
+    <joint name="right_arm_joint6">
+      <param name="auto_enable">False</param>
+      <param name="motor_id">6</param>
+      <param name="master_id">22</param>
+      <param name="motor_type">dmmotor</param>
+      <param name="motor_hw_type">DM4340_48</param>
+      <param name="lower_limit">-1.745</param>
+      <param name="upper_limit">1.745</param>
+      <command_interface name="position" />
+      <command_interface name="velocity" />
+      <command_interface name="effort" />
+      <command_interface name="mit_kp" />
+      <command_interface name="mit_kd" />
+      <command_interface name="ctrl_mode" />
+      <state_interface name="position" />
+      <state_interface name="velocity" />
+      <state_interface name="effort" />
+    </joint>
+  </ros2_control>
+  <joint name="left_arm_connector" type="fixed">
+    <parent link="lift_link" />
+    <child link="left_arm_base_link" />
+    <origin rpy="0 -0 0" xyz="0.2305 0.266 0" />
+  </joint>
+  <joint name="right_arm_connector" type="fixed">
+    <parent link="lift_link" />
+    <child link="right_arm_base_link" />
+    <origin rpy="0 -0 0" xyz="0.2305 -0.266 0" />
+  </joint>
+  <link name="left_arm_gripper_base_link">
+    </link>
+  <link name="left_arm_gripper_motor_link">
+    </link>
+  <joint name="left_arm_gripper" type="fixed">
+    <parent link="left_arm_link6" />
+    <child link="left_arm_gripper_motor_link" />
+    <origin rpy="0 -0 0" xyz="0 0 0" />
+  </joint>
+  <link name="left_arm_gripper_left_link">
+    <inertial>
+      <origin xyz="0.011711955 0.00395309564 0.00844296212" rpy="0 0 0" />
+      <mass value="0.16937" />
+      <inertia ixx="0.000159462848" ixy="-2.57655685e-05" ixz="-2.22294829e-05" iyy="0.000105366073" iyz="-1.8751414e-05" izz="0.000194854996" />
+    </inertial>
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/visual/gripper_left_link.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.75294 0.75294 0.75294 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_left_link_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_left_link_1.ply" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_arm_gripper_left_joint" type="prismatic">
+    <origin rpy="0 -0 0" xyz="0.080074 0 -0.018" />
+    <parent link="left_arm_link6" />
+    <child link="left_arm_gripper_left_link" />
+    <axis xyz="0 1 0" />
+    <limit effort="20" lower="0" upper="0.04875" velocity="0.19611962" />
+  </joint>
+  <link name="left_arm_gripper_left_tip_link">
+    </link>
+  <joint name="left_arm_gripper_left_tip_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0.08343 0.00306 0.018" />
+    <parent link="left_arm_gripper_left_link" />
+    <child link="left_arm_gripper_left_tip_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="left_arm_gripper_right_link">
+    <inertial>
+      <origin xyz="0.011711955 -0.00395309564 -0.00844296212" rpy="0 0 0" />
+      <mass value="0.16937" />
+      <inertia ixx="0.000159462848" ixy="2.57655685e-05" ixz="2.22294829e-05" iyy="0.000105366073" iyz="-1.8751414e-05" izz="0.000194854996" />
+    </inertial>
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/visual/gripper_right_link.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.75294 0.75294 0.75294 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_right_link_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_right_link_1.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_right_link_2.ply" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_arm_gripper_right_joint" type="prismatic">
+    <origin rpy="0 -0 0" xyz="0.080074 0 0.018" />
+    <parent link="left_arm_link6" />
+    <child link="left_arm_gripper_right_link" />
+    <axis xyz="0 1 0" />
+    <limit effort="20" lower="-0.04875" upper="0" velocity="0.19611962" />
+  </joint>
+  <link name="left_arm_gripper_right_tip_link">
+    </link>
+  <joint name="left_arm_gripper_right_tip_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0.08343 -0.00306 -0.018" />
+    <parent link="left_arm_gripper_right_link" />
+    <child link="left_arm_gripper_right_tip_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="left_arm_gripper_camera_base_link">
+    </link>
+  <joint name="left_arm_gripper_camera_base_joint" type="fixed">
+    <origin rpy="-0.00011032 0.43633 -4.6623e-05" xyz="0.074088 2.0168e-05 0.097993" />
+    <parent link="left_arm_link6" />
+    <child link="left_arm_gripper_camera_base_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="left_arm_gripper_camera_color_frame">
+    </link>
+  <joint name="left_arm_gripper_camera_color_frame_joint" type="fixed">
+    <origin rpy="-2.00713 -1.94102637e-05 -1.57083795" xyz="0.0868760167 1.95717843e-05 0.0920298859" />
+    <parent link="left_arm_link6" />
+    <child link="left_arm_gripper_camera_color_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <joint name="left_gripper_connector" type="fixed">
+    <parent link="left_arm_link6" />
+    <child link="left_arm_gripper_base_link" />
+    <origin rpy="0 0 0" xyz="0 0 0" />
+  </joint>
+  <ros2_control name="left_arm_gripper" type="system">
+    <hardware>
+      <plugin>x2robot_hardware_interface/CustomMotorSystemInterface</plugin>
+      <param name="can_interface">can1</param>
+      <param name="use_ipc">1</param>
+      <param name="domain">0x04</param>
+      <param name="unit">0x51</param>
+    </hardware>
+    <joint name="left_arm_gripper">
+      <param name="auto_enable">True</param>
+      <param name="motor_id">8</param>
+      <param name="master_id">0</param>
+      <param name="motor_type">dmmotor</param>
+      <param name="motor_hw_type">DM4310</param>
+      <param name="max_torque">2.0</param>
+      <param name="lower_limit">0.0</param>
+      <param name="upper_limit">5.0</param>
+      <param name="default_kp">6.0</param>
+      <param name="default_kd">0.1</param>
+      <command_interface name="position" />
+      <command_interface name="velocity" />
+      <command_interface name="effort" />
+      <command_interface name="mit_kp" />
+      <command_interface name="mit_kd" />
+      <command_interface name="ctrl_mode" />
+      <state_interface name="position" />
+      <state_interface name="velocity" />
+      <state_interface name="effort" />
+    </joint>
+  </ros2_control>
+  <link name="right_arm_gripper_base_link">
+    </link>
+  <link name="right_arm_gripper_motor_link">
+    </link>
+  <joint name="right_arm_gripper" type="fixed">
+    <parent link="right_arm_link6" />
+    <child link="right_arm_gripper_motor_link" />
+    <origin rpy="0 -0 0" xyz="0 0 0" />
+  </joint>
+  <link name="right_arm_gripper_left_link">
+    <inertial>
+      <origin xyz="0.011711955 0.00395309564 0.00844296212" rpy="0 0 0" />
+      <mass value="0.16937" />
+      <inertia ixx="0.000159462848" ixy="-2.57655685e-05" ixz="-2.22294829e-05" iyy="0.000105366073" iyz="-1.8751414e-05" izz="0.000194854996" />
+    </inertial>
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/visual/gripper_left_link.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.75294 0.75294 0.75294 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_left_link_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_left_link_1.ply" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_arm_gripper_left_joint" type="prismatic">
+    <origin rpy="0 -0 0" xyz="0.080074 0 -0.018" />
+    <parent link="right_arm_link6" />
+    <child link="right_arm_gripper_left_link" />
+    <axis xyz="0 1 0" />
+    <limit effort="20" lower="0" upper="0.04875" velocity="0.19611962" />
+  </joint>
+  <link name="right_arm_gripper_left_tip_link">
+    </link>
+  <joint name="right_arm_gripper_left_tip_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0.08343 0.00306 0.018" />
+    <parent link="right_arm_gripper_left_link" />
+    <child link="right_arm_gripper_left_tip_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="right_arm_gripper_right_link">
+    <inertial>
+      <origin xyz="0.011711955 -0.00395309564 -0.00844296212" rpy="0 0 0" />
+      <mass value="0.16937" />
+      <inertia ixx="0.000159462848" ixy="2.57655685e-05" ixz="2.22294829e-05" iyy="0.000105366073" iyz="-1.8751414e-05" izz="0.000194854996" />
+    </inertial>
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/visual/gripper_right_link.ply" />
+      </geometry>
+      <material name="">
+        <color rgba="0.75294 0.75294 0.75294 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_right_link_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_right_link_1.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_right_link_2.ply" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_arm_gripper_right_joint" type="prismatic">
+    <origin rpy="0 -0 0" xyz="0.080074 0 0.018" />
+    <parent link="right_arm_link6" />
+    <child link="right_arm_gripper_right_link" />
+    <axis xyz="0 1 0" />
+    <limit effort="20" lower="-0.04875" upper="0" velocity="0.19611962" />
+  </joint>
+  <link name="right_arm_gripper_right_tip_link">
+    </link>
+  <joint name="right_arm_gripper_right_tip_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0.08343 -0.00306 -0.018" />
+    <parent link="right_arm_gripper_right_link" />
+    <child link="right_arm_gripper_right_tip_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="right_arm_gripper_camera_base_link">
+    </link>
+  <joint name="right_arm_gripper_camera_base_joint" type="fixed">
+    <origin rpy="-0.00011032 0.43633 -4.6623e-05" xyz="0.074088 2.0168e-05 0.097993" />
+    <parent link="right_arm_link6" />
+    <child link="right_arm_gripper_camera_base_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="right_arm_gripper_camera_color_frame">
+    </link>
+  <joint name="right_arm_gripper_camera_color_frame_joint" type="fixed">
+    <origin rpy="-2.00713 -1.94102637e-05 -1.57083795" xyz="0.0868760167 1.95717843e-05 0.0920298859" />
+    <parent link="right_arm_link6" />
+    <child link="right_arm_gripper_camera_color_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <joint name="right_gripper_connector" type="fixed">
+    <parent link="right_arm_link6" />
+    <child link="right_arm_gripper_base_link" />
+    <origin rpy="0 0 0" xyz="0 0 0" />
+  </joint>
+  <ros2_control name="right_arm_gripper" type="system">
+    <hardware>
+      <plugin>x2robot_hardware_interface/CustomMotorSystemInterface</plugin>
+      <param name="can_interface">can2</param>
+      <param name="use_ipc">1</param>
+      <param name="domain">0x04</param>
+      <param name="unit">0x52</param>
+    </hardware>
+    <joint name="right_arm_gripper">
+      <param name="auto_enable">True</param>
+      <param name="motor_id">8</param>
+      <param name="master_id">0</param>
+      <param name="motor_type">dmmotor</param>
+      <param name="motor_hw_type">DM4310</param>
+      <param name="max_torque">2.0</param>
+      <param name="lower_limit">0.0</param>
+      <param name="upper_limit">5.0</param>
+      <param name="default_kp">6.0</param>
+      <param name="default_kd">0.1</param>
+      <command_interface name="position" />
+      <command_interface name="velocity" />
+      <command_interface name="effort" />
+      <command_interface name="mit_kp" />
+      <command_interface name="mit_kd" />
+      <command_interface name="ctrl_mode" />
+      <state_interface name="position" />
+      <state_interface name="velocity" />
+      <state_interface name="effort" />
+    </joint>
+  </ros2_control>
+  <link name="camera_head_front_bottom_screw_frame">
+    </link>
+  <link name="camera_head_front_link">
+    </link>
+  <joint name="camera_head_front_joint" type="fixed">
+    <origin rpy="0 0.59865 0" xyz="0.023835 -0.00767 0.072827" />
+    <parent link="head_pitch_link" />
+    <child link="camera_head_front_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="camera_head_front_infra2_frame">
+    </link>
+  <joint name="camera_head_front_right_IR_frame_joint" type="fixed">
+    <origin rpy="0 0.59865 0" xyz="0.0411586933 -0.02767 0.0758988155" />
+    <parent link="head_pitch_link" />
+    <child link="camera_head_front_infra2_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="camera_head_front_infra2_optical_frame">
+    </link>
+  <joint name="camera_head_front_infra2_optical_frame_joint" type="fixed">
+    <origin rpy="-2.16944633 -1.96754664e-15 -1.57079633" xyz="0.0411586933 -0.02767 0.0758988155" />
+    <parent link="head_pitch_link" />
+    <child link="camera_head_front_infra2_optical_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="camera_head_front_infra1_frame">
+    </link>
+  <joint name="camera_head_front_left_IR_ROS_frame_joint" type="fixed">
+    <origin rpy="0 0.59865 0" xyz="0.0411586933 0.01233 0.0758988155" />
+    <parent link="head_pitch_link" />
+    <child link="camera_head_front_infra1_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="camera_head_front_infra1_optical_frame">
+    </link>
+  <joint name="camera_head_front_infra1_optical_frame_joint" type="fixed">
+    <origin rpy="-2.16944633 -1.96754664e-15 -1.57079633" xyz="0.0411586933 0.01233 0.0758988155" />
+    <parent link="head_pitch_link" />
+    <child link="camera_head_front_infra1_optical_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="camera_head_front_color_frame">
+    </link>
+  <joint name="camera_head_front_RGB_IR_ROS_frame_joint" type="fixed">
+    <origin rpy="0 0.59865 0" xyz="0.0427282778 0 0.0748281128" />
+    <parent link="head_pitch_link" />
+    <child link="camera_head_front_color_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="camera_head_front_color_optical_frame">
+    </link>
+  <joint name="camera_head_front_color_optical_frame_joint" type="fixed">
+    <origin rpy="-2.16944633 -1.96754664e-15 -1.57079633" xyz="0.0427282778 0 0.0748281128" />
+    <parent link="head_pitch_link" />
+    <child link="camera_head_front_color_optical_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="camera_head_front_USB_frame">
+    </link>
+  <joint name="camera_head_front_USB_frame_joint" type="fixed">
+    <origin rpy="0 0.59865 0" xyz="0.0291389801 -0.037395 0.0840981444" />
+    <parent link="head_pitch_link" />
+    <child link="camera_head_front_USB_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="camera_head_front_depth_frame">
+    </link>
+  <joint name="camera_head_front_depth_frame_joint" type="fixed">
+    <origin rpy="0 0.59865 0" xyz="0.0411586933 0.01233 0.0758988155" />
+    <parent link="head_pitch_link" />
+    <child link="camera_head_front_depth_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="camera_head_front_depth_optical_frame">
+    </link>
+  <joint name="camera_head_front_depth_optical_frame_joint" type="fixed">
+    <origin rpy="-2.16944633 -1.96754664e-15 -1.57079633" xyz="0.0411586933 0.01233 0.0758988155" />
+    <parent link="head_pitch_link" />
+    <child link="camera_head_front_depth_optical_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <joint name="head_front_camera_connector" type="fixed">
+    <parent link="head_pitch_link" />
+    <child link="camera_head_front_bottom_screw_frame" />
+    <origin rpy="0 0.59865 0" xyz="0.023835 -0.00767 0.072827" />
+  </joint>
+  <link name="camera_chassis_front_link">
+    </link>
+  <link name="camera_chassis_front_bottom_screw_frame">
+    </link>
+  <joint name="camera_chassis_front_bottom_screw_frame_joint" type="fixed">
+    <origin rpy="0 -0.34907 0" xyz="0.273 0 0.158" />
+    <parent link="base_link" />
+    <child link="camera_chassis_front_bottom_screw_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="camera_chassis_front_infra1_frame">
+    </link>
+  <joint name="camera_chassis_front_infra1_frame_joint" type="fixed">
+    <origin rpy="0 -0.34907 0" xyz="0.298662968 0.0315 0.167340677" />
+    <parent link="base_link" />
+    <child link="camera_chassis_front_infra1_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="camera_chassis_front_infra1_optical_frame">
+    </link>
+  <joint name="camera_chassis_front_infra1_optical_frame_joint" type="fixed">
+    <origin rpy="-1.22172633 1.19417056e-15 -1.57079633" xyz="0.298662968 0.0315 0.167340677" />
+    <parent link="base_link" />
+    <child link="camera_chassis_front_infra1_optical_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="camera_chassis_front_infra2_frame">
+    </link>
+  <joint name="camera_chassis_front_infra2_frame_joint" type="fixed">
+    <origin rpy="0 -0.34907 0" xyz="0.298662968 -0.0315 0.167340677" />
+    <parent link="base_link" />
+    <child link="camera_chassis_front_infra2_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="camera_chassis_front_infra2_optical_frame">
+    </link>
+  <joint name="camera_chassis_front_infra2_optical_frame_joint" type="fixed">
+    <origin rpy="-1.22172633 1.19417056e-15 -1.57079633" xyz="0.298662968 -0.0315 0.167340677" />
+    <parent link="base_link" />
+    <child link="camera_chassis_front_infra2_optical_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="camera_chassis_front_color_frame">
+    </link>
+  <joint name="camera_chassis_front_color_frame_joint" type="fixed">
+    <origin rpy="0 -0.34907 0" xyz="0.295552589 -0.0135001323 0.166208577" />
+    <parent link="base_link" />
+    <child link="camera_chassis_front_color_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="camera_chassis_front_color_optical_frame">
+    </link>
+  <joint name="camera_chassis_front_color_optical_frame_joint" type="fixed">
+    <origin rpy="-1.22172633 1.19417056e-15 -1.57079633" xyz="0.295552589 -0.0135001323 0.166208577" />
+    <parent link="base_link" />
+    <child link="camera_chassis_front_color_optical_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="camera_chassis_front_depth_frame">
+    </link>
+  <joint name="camera_chassis_front_depth_frame_joint" type="fixed">
+    <origin rpy="0 -0.34907 0" xyz="0.298662968 0.0315 0.167340677" />
+    <parent link="base_link" />
+    <child link="camera_chassis_front_depth_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="camera_chassis_front_depth_optical_frame">
+    </link>
+  <joint name="camera_chassis_front_depth_optical_frame_joint" type="fixed">
+    <origin rpy="-1.22172633 1.19417056e-15 -1.57079633" xyz="0.298662968 0.0315 0.167340677" />
+    <parent link="base_link" />
+    <child link="camera_chassis_front_depth_optical_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <joint name="chassis_front_camera_connector" type="fixed">
+    <parent link="base_link" />
+    <child link="camera_chassis_front_link" />
+    <origin rpy="0 -0.34907 0" xyz="0.273 0 0.158" />
+  </joint>
+  <link name="2d_laser_base">
+    </link>
+  <joint name="2d_laser_joint" type="fixed">
+    <origin rpy="0 -0 0" xyz="0.235 0 0.24872" />
+    <parent link="base_link" />
+    <child link="2d_laser" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="2d_laser">
+    </link>
+  <joint name="2d_laser_connector" type="fixed">
+    <parent link="base_link" />
+    <child link="2d_laser_base" />
+    <origin rpy="0 -0 0" xyz="0.235 0 0.219" />
+  </joint>
+</robot>
