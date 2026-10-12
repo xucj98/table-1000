@@ -1,7 +1,6 @@
 """Small Blender modeling helpers shared by the stationery asset sources.
 
-The builder copies this module beside object.py so generated source snapshots
-can be rebuilt without importing the repository package.
+Generated source snapshots import these helpers from the repository package.
 """
 
 from __future__ import annotations
@@ -32,7 +31,6 @@ def material(name, color, roughness=0.35, metallic=0.0, transmission=0.0):
 def asset(name, origin, axes, front):
     root = bpy.data.objects.new(name, None)
     bpy.context.scene.collection.objects.link(root)
-    root["asset_id"] = name
     root["coordinate_frame_normalized"] = True
     root["origin_convention"] = origin
     root["axis_convention"] = axes
@@ -60,6 +58,28 @@ def body(name, root):
     obj["rigid_body_root"] = True
     rigid_settings(obj, "COMPOUND")
     return obj
+
+
+def part(name, root):
+    """A nested Compound semantic component, owned by its independent body."""
+    obj = body(name, root)
+    del obj["rigid_body_root"]
+    obj["semantic_part"] = True
+    return obj
+
+
+def group_part(name, root, visuals, colliders):
+    """Put authored geometry under a part without changing its saved world pose."""
+    bpy.context.view_layer.update()
+    node = part(name, root)
+    bpy.context.view_layer.update()
+    for role, objects in [("visual", visuals), ("collision", colliders)]:
+        for i, obj in enumerate(objects, 1):
+            world = obj.matrix_world.copy()
+            obj.parent = node
+            obj.matrix_world = world
+            obj.name = name + "." + role + (str(i) if len(objects) > 1 else "")
+    return node
 
 
 def mesh(name, vertices, faces, parent, surface=None, shape=None):
@@ -204,7 +224,7 @@ def label_patch(name, radius, depth, position, surface, parent, angle=math.pi / 
     return obj
 
 
-def capped_pen(asset_id, profile):
+def capped_pen(profile):
     """Two top-level rigid bodies; authored visual/collision clearance agrees."""
     g = profile["geometry"]
     n, seat = g["segments"], g["seat_x_m"]
@@ -213,14 +233,12 @@ def capped_pen(asset_id, profile):
                        transmission=profile["cap_transmission"])
     ink = material("Writing tip", (0.018, 0.024, 0.020), 0.35)
     pen, cap = body("body", None), body("cap", None)
-    pen["asset_id"] = asset_id
     pen["coordinate_frame_normalized"] = True
     pen["origin_convention"] = "barrel reference center; cap local origin at mouth"
     pen["axis_convention"] = "+X rear; -X writing tip and cap removal; Y/Z radial"
     pen["semantic_front"] = "writing tip at -X"
     for root, mass in [(pen, profile["body_mass_kg"]), (cap, profile["cap_mass_kg"])]:
         root.rigid_body.mass = mass
-        root["asset_reference"] = asset_id
     cap.location.x = seat
     tip = seat - g["neck_length_m"]
     cylinder("Barrel", g["barrel_radius_m"], g["barrel_end_x_m"]-seat-0.00005,
@@ -306,8 +324,11 @@ def generate(build, source_file, argv=None):
     destination = output / "object.blend"
     bpy.ops.wm.save_as_mainfile(filepath=str(destination))
     source = Path(source_file).resolve()
-    for original in (source, source.parent / "metadata.json", source.parent / "preview.json",
-                     Path(__file__).resolve()):
+    originals = [source, *(source.parent / name for name in ("metadata.json", "preview.json", "README.md"))]
+    thumbnail = source.parent / "three_quarter.jpg"
+    if thumbnail.exists():
+        originals.append(thumbnail)
+    for original in originals:
         target = output / original.name
         if original != target:
             shutil.copyfile(original, target)

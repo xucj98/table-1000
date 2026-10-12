@@ -4,17 +4,11 @@ Local +X points to the rear hinge; +Y width; +Z up. The entire upper
 cover/magazine/driver assembly moves together in this shape-stage model.
 """
 import math
-from pathlib import Path
-import sys
 
 import bpy
 from mathutils import Matrix, Vector
 
-source = Path(__file__).resolve()
-sys.path.insert(0, str(source.parent))
-if not (source.parent / "asset_builders.py").exists():
-    sys.path.insert(0, str(source.parents[4] / "table_1000/modeling"))
-from asset_builders import asset, body, box, collider, cylinder, generate, joint, material, mesh
+from table_1000.modeling.asset_builders import asset, body, box, collider, cylinder, generate, joint, material, mesh, group_part
 
 
 PIVOT = Vector((0.024, 0, 0.017))
@@ -92,7 +86,7 @@ def build():
     blue = material("Baby blue upper cover", (0.27, 0.54, 0.72), 0.29)
     metal = material("Stapler steel", (0.65, 0.68, 0.70), 0.36, metallic=0.85)
     dark = material("Throat and clinch recess", (0.025, 0.03, 0.035), 0.65)
-    root = asset("15_Mini_Stapler", "bottom center of the base", "+X length toward hinge; +Y width; +Z up",
+    root = asset("stapler", "bottom center of the base", "+X length toward hinge; +Y width; +Z up",
                  "staple mouth at -X")
     base = body("Stapler base", root)
     slab("White bottom shell", 0.070, 0.030, -0.00325, 0.00325, 0.00325, 0.0055,
@@ -136,6 +130,51 @@ def build():
     upper.matrix_basis = (Matrix.Translation(PIVOT) @ Matrix.Rotation(OPEN_ANGLE, 4, "Y")
                           @ Matrix.Translation(-PIVOT))
     joint("upper_press", "HINGE", base, upper, PIVOT, (PRESS_LIMIT, 0), (-math.pi / 2, 0, 0))
+
+    organize_parts()
+
+
+def organize_parts():
+    """Group the original geometry while preserving every saved world pose."""
+    owner = bpy.data.objects['Stapler base']
+    owner.name = 'stapler.base'
+    for component, names in [
+        ('shell', ['White bottom shell']),
+        ('plate', ['Steel lower plate']),
+        ('anvil', ['Staple anvil']),
+        ('clinch_groove1', ['Anvil long clinch groove']),
+        ('clinch_groove2', ['Anvil cross clinch groove']),
+        ('hinge_cheek1', ['Rear hinge cheek']),
+        ('hinge_cheek2', ['Rear hinge cheek.001']),
+        ('axle', ['Recessed pivot axle']),
+    ]:
+        visuals = [bpy.data.objects[name] for name in names]
+        collisions = sorted([obj for obj in owner.children
+                             if any(obj.name == "Collision_" + name
+                                    or obj.name.startswith("Collision_" + name + "_")
+                                    for name in names)], key=lambda obj: obj.name)
+        group_part(owner.name + "." + component, owner, visuals, collisions)
+    owner = bpy.data.objects['Stapler moving upper']
+    owner.name = 'stapler.upper'
+    for component, names in [
+        ('cover', ['Complete blue upper cover']),
+        ('channel', ['Steel staple channel']),
+        ('bracket1', ['Channel to cover left bracket']),
+        ('bracket2', ['Channel to cover right bracket']),
+        ('driver', ['Steel driver']),
+        ('rear_bridge', ['Blue rear bridge']),
+    ]:
+        visuals = [bpy.data.objects[name] for name in names]
+        collisions = sorted([obj for obj in owner.children
+                             if any(obj.name == "Collision_" + name
+                                    or obj.name.startswith("Collision_" + name + "_")
+                                    for name in names)], key=lambda obj: obj.name)
+        if component == "channel":
+            collisions = [bpy.data.objects[name] for name in [
+                "Collision_Steel staple channel floor", "Collision_Steel staple channel left wall",
+                "Collision_Steel staple channel right wall", "Collision_Steel channel front stop",
+            ]]
+        group_part(owner.name + "." + component, owner, visuals, collisions)
 
 
 def main(argv=None):

@@ -1,13 +1,9 @@
 """Build the wooden desktop rack and its two independently sliding drawers."""
-from pathlib import Path
 import math
-import sys
 
-source = Path(__file__).resolve()
-sys.path.insert(0, str(source.parent))
-if not (source.parent / "asset_builders.py").exists():
-    sys.path.insert(0, str(source.parents[4] / "table_1000/modeling"))
-from asset_builders import asset, body, box, collider, cylinder, generate, joint, material, mesh
+import bpy
+
+from table_1000.modeling.asset_builders import asset, body, box, collider, cylinder, generate, joint, material, mesh, group_part
 
 
 def wood_material():
@@ -46,7 +42,7 @@ def build():
     wood = wood_material()
     inner = material("Drawer oak interior", (.37, .27, .14), .58)
     white = material("White drawer face", (.83, .84, .81), .42)
-    root = asset("cabinet/000001", "bottom center", "+X width; +Y back; +Z up", "drawer fronts at -Y")
+    root = asset("cabinet", "bottom center", "+X width; +Y back; +Z up", "drawer fronts at -Y")
     housing = body("wooden_rack", root)
     for x, name in [(-.430, "Left cheek"), (.137, "Central divider"), (.430, "Right cheek")]:
         side_panel(name, x, wood, housing)
@@ -82,6 +78,71 @@ def build():
                  axis="Y", radius_end=.013)
         joint(f"drawer{i}_open", "SLIDER", housing, drawer, (.2835, -.163, z),
               (0, .208), rotation=(0, 0, -math.pi / 2))
+
+    organize_parts()
+
+
+def organize_parts():
+    """Group the original geometry while preserving every saved world pose."""
+    owner = bpy.data.objects['wooden_rack']
+    owner.name = 'cabinet.housing'
+    for component, names in [
+        ('side1', ['Left cheek']),
+        ('divider', ['Central divider']),
+        ('side2', ['Right cheek']),
+        ('raised_shelf', ['Left raised shelf']),
+        ('cubby_floor', ['Right open cubby floor']),
+        ('bottom', ['Right cabinet bottom']),
+        ('drawer_shelf', ['Drawer divider shelf']),
+        ('left_upper_rail', ['Left upper rear rail']),
+        ('left_lower_back', ['Left lower rear board']),
+        ('right_upper_rail', ['Right upper rear rail']),
+        ('drawer_back', ['Drawer cabinet back']),
+        ('guide1', ['Fixed side guide']),
+        ('guide2', ['Fixed side guide.001']),
+        ('guide3', ['Fixed side guide.002']),
+        ('guide4', ['Fixed side guide.003']),
+    ]:
+        visuals = [bpy.data.objects[name] for name in names]
+        collisions = sorted([obj for obj in owner.children
+                             if any(obj.name == "Collision_" + name
+                                    or obj.name.startswith("Collision_" + name + "_")
+                                    for name in names)], key=lambda obj: obj.name)
+        group_part(owner.name + "." + component, owner, visuals, collisions)
+    owner = bpy.data.objects['drawer1']
+    owner.name = 'cabinet.drawer1'
+    for component, names in [
+        ('front', ['White drawer front']),
+        ('frame', ['Drawer frame behind face']),
+        ('bottom', ['Open drawer bottom']),
+        ('side1', ['Drawer left wall']),
+        ('side2', ['Drawer right wall']),
+        ('rear', ['Drawer rear wall']),
+        ('handle', ['Oak knob neck', 'Oak knob']),
+    ]:
+        visuals = [bpy.data.objects[name] for name in names]
+        collisions = sorted([obj for obj in owner.children
+                             if any(obj.name == "Collision_" + name
+                                    or obj.name.startswith("Collision_" + name + "_")
+                                    for name in names)], key=lambda obj: obj.name)
+        group_part(owner.name + "." + component, owner, visuals, collisions)
+    owner = bpy.data.objects['drawer2']
+    owner.name = 'cabinet.drawer2'
+    for component, names in [
+        ('front', ['White drawer front.001']),
+        ('frame', ['Drawer frame behind face.001']),
+        ('bottom', ['Open drawer bottom.001']),
+        ('side1', ['Drawer left wall.001']),
+        ('side2', ['Drawer right wall.001']),
+        ('rear', ['Drawer rear wall.001']),
+        ('handle', ['Oak knob neck.001', 'Oak knob.001']),
+    ]:
+        visuals = [bpy.data.objects[name] for name in names]
+        collisions = sorted([obj for obj in owner.children
+                             if any(obj.name == "Collision_" + name
+                                    or obj.name.startswith("Collision_" + name + "_")
+                                    for name in names)], key=lambda obj: obj.name)
+        group_part(owner.name + "." + component, owner, visuals, collisions)
 
 
 def main(argv=None):

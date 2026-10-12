@@ -1,12 +1,8 @@
 """Build this capped pen as two independent top-level rigid-body subtrees."""
-from pathlib import Path
-import sys
 
-source = Path(__file__).resolve()
-sys.path.insert(0, str(source.parent))
-if not (source.parent / "asset_builders.py").exists():
-    sys.path.insert(0, str(source.parents[4] / "table_1000/modeling"))
-from asset_builders import capped_pen, generate
+import bpy
+
+from table_1000.modeling.asset_builders import capped_pen, generate, group_part
 
 PROFILE = {'geometry': {'segments': 16,
               'seat_x_m': -0.032,
@@ -24,7 +20,7 @@ PROFILE = {'geometry': {'segments': 16,
               'shell_inner_radius_m': 0.0086,
               'rigid_lip_clearance_m': 0.0002,
               'label_length_m': 0.046},
- 'barrel_color': [0.008, 0.014, 0.09],
+ 'barrel_color': [0.48, 0.012, 0.018],
  'cap_color': [0.67, 0.7, 0.69],
  'cap_transmission': 0.48,
  'body_mass_kg': 0.012,
@@ -34,7 +30,40 @@ PROFILE = {'geometry': {'segments': 16,
 
 
 def build():
-    capped_pen("pen/000003", PROFILE)
+    capped_pen(PROFILE)
+
+    organize_parts()
+
+
+def organize_parts():
+    """Group the original geometry while preserving every saved world pose."""
+    owner = bpy.data.objects['body']
+    owner.name = 'body'
+    for component, names in [
+        ('barrel', ['Barrel']),
+        ('label', ['Pale paper label']),
+        ('neck', ['Neck']),
+        ('tip', ['Nib']),
+    ]:
+        visuals = [bpy.data.objects[name] for name in names]
+        collisions = sorted([obj for obj in owner.children
+                             if any(obj.name == "Collision_" + name
+                                    or obj.name.startswith("Collision_" + name + "_")
+                                    for name in names)], key=lambda obj: obj.name)
+        group_part(owner.name + "." + component, owner, visuals, collisions)
+    owner = bpy.data.objects['cap']
+    owner.name = 'cap'
+    for component, names in [
+        ('shell', ['Cap shell']),
+        ('lip', ['Cap lip']),
+        ('end', ['Cap end']),
+    ]:
+        visuals = [bpy.data.objects[name] for name in names]
+        collisions = sorted([obj for obj in owner.children
+                             if any(obj.name == "Collision_" + name
+                                    or obj.name.startswith("Collision_" + name + "_")
+                                    for name in names)], key=lambda obj: obj.name)
+        group_part(owner.name + "." + component, owner, visuals, collisions)
 
 
 def main(argv=None):

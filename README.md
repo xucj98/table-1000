@@ -8,7 +8,7 @@ Table-1000 是面向机器人桌面整理任务的 benchmark 与场景资产项�
 - [研究方案](docs/core/research-proposal.md)
 - [技术参考](docs/reference/reference-assessment.md)
 - [开发约定](docs/repository-conventions.md)
-- [资产存储布局](docs/designs/storage-layout.md)
+- [资产生产规范](docs/designs/asset-pipeline/README.md)
 - [操作手册](docs/tutorials/README.md)
 
 ## 开发环境

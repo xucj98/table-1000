@@ -1,6 +1,6 @@
 """Validate asset geometry and generate previews from Blender joints and preview.json.
 
-CLI: uv run python scripts/assets/validate_and_preview.py object.blend [--views preview.json] [--output DIR]
+CLI: uv run python scripts/assets/validate_and_preview.py [--source DIR] [--assets CATEGORY/ID ...] [--device auto|cpu|gpu]
 Requires Blender; MP4 output additionally requires ffmpeg. Source .blend is not saved.
 """
 
@@ -16,13 +16,11 @@ import sys
 import tempfile
 import time
 
+if __name__ == "__main__":
+    # Blender runs this file directly with its own Python environment.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-DEFAULT_VIEWS = {
-    "front.jpg": {"camera": [0, -1, 0, 0, 0, 1]},
-    "right.jpg": {"camera": [1, 0, 0, 0, 0, 1]},
-    "top.jpg": {"camera": [0, 0, 1, 0, 1, 0]},
-    "three_quarter.jpg": {"camera": [0.82, -0.82, 0.72, 0, 0, 1]},
-}
+from table_1000.assets.references import expand_mapping
 
 
 def finite_number(value, label):
@@ -47,12 +45,12 @@ def camera_values(value):
 def pose_values(value):
     if not isinstance(value, dict):
         raise ValueError("joints must be an object")
-    return {name: finite_number(q, f"joint {name}") for name, q in value.items()}
+    return {name: finite_number(q, f"joint {name}") for name, q in expand_mapping(value).items()}
 
 
 def transform_values(value):
     result = {}
-    for name, pose in value.items():
+    for name, pose in expand_mapping(value).items():
         if len(pose) != 7:
             raise ValueError(f"transform {name} requires [x,y,z,w,qx,qy,qz]")
         pose = [finite_number(v, f"transform {name}") for v in pose]
@@ -82,7 +80,7 @@ def interpolate_transform(a, b, t):
 
 
 def read_views(path):
-    entries = json.loads(path.read_text(encoding="utf-8")) if path else DEFAULT_VIEWS
+    entries = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(entries, dict) or not entries:
         raise ValueError("views must be a nonempty JSON object")
     result = {}
@@ -213,17 +211,12 @@ def run_worker(blend, views, output, check_only=False, device="auto"):
     bodies = {obj.name: obj for obj in checks.bodies}
 
     def pose(values, transforms=None):
-        transforms = transforms or {}
-        unknown = values.keys() - joints.keys()
-        if unknown:
-            raise ValueError(f"unknown joints: {sorted(unknown)}")
+        values = expand_mapping(values, joints)
+        transforms = expand_mapping(transforms or {}, bodies)
         for name, (joint, c, limits) in joints.items():
             q = values.get(name, 0.0)
             if limits and not limits[0] - 1e-6 <= q <= limits[1] + 1e-6:
                 raise ValueError(f"{name}={q} outside [{limits[0]}, {limits[1]}]")
-        unknown = transforms.keys() - bodies.keys()
-        if unknown:
-            raise ValueError(f"unknown bodies: {sorted(unknown)}")
         for obj in bodies.values():
             obj.matrix_world = rest[obj.name]
         bpy.context.view_layer.update()
@@ -256,14 +249,15 @@ def run_worker(blend, views, output, check_only=False, device="auto"):
                      @ rotation @ Matrix.Translation(-pivot))
             bodies[name].matrix_world = delta @ bodies[name].matrix_world
         bpy.context.view_layer.update()
+        return values, transforms
 
     output.mkdir(parents=True, exist_ok=True)
     report_path = output / "acceptance.json"
     for output_name, entry in views.items():
         states = entry if output_name.endswith(".jpg") else [interpolate(entry[1], i) for i in range(entry[1][-1]["frame"]+1)]
         for state in states:
-            pose(state["joints"], state.get("transforms"))
-            checks.sample(output_name, state["frame"], state["joints"], state.get("transforms"))
+            values, transforms = pose(state["joints"], state.get("transforms"))
+            checks.sample(output_name, state["frame"], values, transforms)
     checks.report["timings_seconds"] = {"validation": round(time.perf_counter() - started, 3)}
     checks.report["status"] = "failed" if checks.report["failures"] else "passed"
     report_path.write_text(json.dumps(checks.report, indent=2)+"\n", encoding="utf-8")
@@ -431,33 +425,31 @@ def run_worker(blend, views, output, check_only=False, device="auto"):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("object", type=Path)
-    parser.add_argument("--views", type=Path)
-    parser.add_argument("--output", type=Path)
+    parser.add_argument("--source", type=Path, default=Path("assets/objects"))
+    parser.add_argument("--assets", nargs="+", help="Asset directories relative to --source; defaults to all models")
     parser.add_argument("--device", choices=("auto", "cpu", "gpu"), default="auto",
                         help="Cycles device: auto selects one visible GPU, otherwise CPU")
-    parser.add_argument("--check-only", action="store_true", help="Validate geometry and sampled poses without rendering")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     if argv is None:
         argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else sys.argv[1:]
     args = parser.parse_args(argv)
-    blend = args.object.resolve()
-    views_path = args.views.resolve() if args.views else None
-    output = (args.output or blend.parent / "preview").resolve()
-    # A failed rerun must not leave a previous successful report behind.
-    (output / "acceptance.json").unlink(missing_ok=True)
-    views = read_views(views_path)
-    if args.worker:
-        run_worker(blend, views, output, args.check_only, args.device)
-    else:
+    source = args.source.resolve()
+    if not args.worker:
         subprocess.run(["blender", "-b", "--python-exit-code", "1", "-P", str(Path(__file__).resolve()),
-                        "--", str(blend), "--output", str(output), "--worker", "--device", args.device,
-                        *(["--views", str(views_path)] if views_path else []),
-                        *(["--check-only"] if args.check_only else [])], check=True)
+                        "--", "--source", str(source), "--worker", "--device", args.device,
+                        *(["--assets", *args.assets] if args.assets is not None else [])], check=True)
+        return
+    references = ([Path(reference) for reference in args.assets] if args.assets is not None
+                  else [path.parent.relative_to(source) for path in sorted(source.rglob("object.blend"))])
+    for reference in references:
+        asset = source / reference
+        output = asset / "preview"
+        if output.exists():
+            shutil.rmtree(output)
+        output.mkdir(parents=True)
+        views = read_views(asset / "preview.json")
+        run_worker(asset / "object.blend", views, output, device=args.device)
 
 
 if __name__ == "__main__":
-    # Executed directly by Blender; only the package location is shared with
-    # the host, not the host Python environment or its dependencies.
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     main()

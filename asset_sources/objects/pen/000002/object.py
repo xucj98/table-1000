@@ -1,37 +1,44 @@
-"""White/black retractable pen: shell and one moving button/refill body.
+"""Build this capped pen as two independent top-level rigid-body subtrees."""
+import bpy
+from table_1000.modeling.asset_builders import capped_pen, generate, group_part
 
-Local +X points to the button; tip is -X; barrel center is Z=0.005 m.
-The black rear housing is fixed; only its small end button translates.
-"""
-from pathlib import Path
-import sys
-
-source = Path(__file__).resolve()
-sys.path.insert(0, str(source.parent))
-if not (source.parent / "asset_builders.py").exists():
-    sys.path.insert(0, str(source.parents[4] / "table_1000/modeling"))
-from asset_builders import asset, body, cylinder, generate, joint, material, tube
+PROFILE = {'geometry': {'segments': 16,
+              'seat_x_m': -0.032,
+              'barrel_end_x_m': 0.086,
+              'barrel_radius_m': 0.009,
+              'neck_length_m': 0.026,
+              'neck_radius_m': 0.0078,
+              'nib_length_m': 0.013,
+              'nib_tip_radius_m': 0.0022,
+              'nib_base_radius_m': 0.0042,
+              'cap_radius_m': 0.01,
+              'cap_length_m': 0.061,
+              'end_thickness_m': 0.0015,
+              'lip_length_m': 0.003,
+              'shell_inner_radius_m': 0.0086,
+              'rigid_lip_clearance_m': 0.0002,
+              'label_length_m': 0.046},
+ 'barrel_color': [0.008, 0.014, 0.09],
+ 'cap_color': [0.67, 0.7, 0.69],
+ 'cap_transmission': 0.48,
+ 'body_mass_kg': 0.012,
+ 'cap_mass_kg': 0.003,
+ 'metal_point': False,
+ 'label_color': [0.82, 0.82, 0.73]}
 
 
 def build():
-    white = material("White pen plastic", (0.78, 0.80, 0.78), 0.29)
-    black = material("Black pen plastic", (0.009, 0.012, 0.014), 0.30)
-    metal = material("Ballpoint steel", (0.5, 0.54, 0.57), 0.24, metallic=0.92)
-    ink = material("Refill tube", (0.24, 0.20, 0.12), 0.35)
-    root = asset("16_White_Black_Pen", "below barrel reference midpoint; barrel Z=0.005 m",
-                 "+X length toward button; +Y width; +Z up", "ballpoint tip at -X")
-    shell = body("White black pen shell", root)
-    tube("White barrel", 0.0048, 0.0028, 0.102, (0.006, 0, 0.005), white, shell)
-    tube("Black rear housing", 0.0051, 0.0032, 0.011, (0.0625, 0, 0.005), black, shell)
-    tube("Black tapered nose", 0.0008, 0.0005, 0.042, (-0.066, 0, 0.005), black, shell,
-         outer_end=0.0049, inner_end=0.0028)
-    tube("Black shoulder", 0.0055, 0.0028, 0.003, (0.055, 0, 0.005), black, shell,
-         collision=False)
-    moving = body("White black pen button and refill", root)
-    cylinder("Black push button", 0.003, 0.007, (0.0715, 0, 0.005), black, moving)
-    cylinder("Refill shaft", 0.0008, 0.144, (-0.004, 0, 0.005), ink, moving)
-    cylinder("Fine ballpoint", 0.0003, 0.010, (-0.0813, 0, 0.005), metal, moving)
-    joint("button_press", "SLIDER", shell, moving, (0.068, 0, 0.005), (-0.003, 0))
+    capped_pen(PROFILE)
+    for root_name, part_name, visual_name in [
+        ("body", "barrel", "Barrel"), ("body", "label", "Pale paper label"),
+        ("body", "neck", "Neck"), ("body", "tip", "Nib"),
+        ("cap", "shell", "Cap shell"), ("cap", "lip", "Cap lip"), ("cap", "end", "Cap end"),
+    ]:
+        owner = bpy.data.objects[root_name]
+        visual = bpy.data.objects[visual_name]
+        collisions = sorted([obj for obj in owner.children if obj.name == "Collision_" + visual_name
+                             or obj.name.startswith("Collision_" + visual_name + "_")], key=lambda obj: obj.name)
+        group_part(root_name + "." + part_name, owner, [visual], collisions)
 
 
 def main(argv=None):
