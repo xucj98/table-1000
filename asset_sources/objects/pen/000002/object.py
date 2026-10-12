@@ -26,7 +26,7 @@ PROFILE = {'geometry': {'segments': 24,
               'label_length_m': 0.046},
  'barrel_color': [0.008, 0.014, 0.09],
  'cap_color': [0.67, 0.7, 0.69],
- 'cap_transmission': 0.48,
+ 'cap_transmission': 0.90,
  'body_mass_kg': 0.012,
  'cap_mass_kg': 0.003,
  'metal_point': False,
@@ -103,6 +103,7 @@ def ridge_profile(p, d):
 
 def build():
     capped_pen(PROFILE)
+    bpy.data.materials['Cap plastic'].node_tree.nodes.get('Principled BSDF').inputs['Roughness'].default_value = .12
     for root_name, part_name, visual_name in [
         ("body", "barrel", "Barrel"), ("body", "label", "Pale paper label"),
         ("body", "neck", "Neck"), ("body", "tip", "Nib"),
