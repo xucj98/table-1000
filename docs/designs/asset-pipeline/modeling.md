@@ -9,7 +9,7 @@
 - 一个资产一个 `.blend`；Blender 世界坐标系作为资产局部坐标系，原点与轴向按物体常识定义。
 - 米制：`unit_settings.system = "METRIC"`、`scale_length = 1`；应用对象缩放和碰撞修改器。
 - 每个刚体对应一棵明确标识的完整子树，整体允许树或森林。
-- 每个刚体至少包含一个部件；部件包含一个或多个视觉或碰撞网格，允许仅视觉部件。视觉与碰撞不要求一一对应；空腔与活动间隙必须保留。
+- 每个刚体至少包含一个部件；部件包含一个或多个视觉或碰撞网格，允许仅视觉或仅碰撞部件，内部机构的刚体可以只有碰撞几何。视觉与碰撞不要求一一对应；空腔与活动间隙必须保留。
 
 | 对象 | 要求 |
 | --- | --- |
@@ -17,8 +17,10 @@
 | 部件节点 | 刚体根的直接子级；零顶点 Mesh Object；`semantic_part = True`；`collision_shape = "COMPOUND"`；不标记 `rigid_body_root` |
 | 视觉对象 | `geometry_role = "visual"`；部件节点的子级；有网格面和材质；不设刚体；渲染可见 |
 | 碰撞对象 | `geometry_role = "collision"`；部件节点的子级；设置刚体碰撞形状；`hide_render = True` |
-| 碰撞形状 | 当前支持 `BOX`、显式闭合凸网格 `CONVEX_HULL`；`use_margin = True`、`collision_margin = 0` |
+| 碰撞形状 | 当前支持 `BOX`、`SPHERE`、显式闭合凸网格 `CONVEX_HULL`；`use_margin = True`、`collision_margin = 0` |
 | Scene | `penetration_tolerance_m`，单位 m，默认 0.0002 |
+
+`SPHERE` 的显示网格以对象原点为球心、各顶点到球心距离相同；检测和物理导出使用解析球体。
 
 TODO：用现成碰撞引擎替换当前粗测，扩展其他基础形状支持。
 
