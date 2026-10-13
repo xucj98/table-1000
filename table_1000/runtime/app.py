@@ -24,7 +24,7 @@ def isolated_environment(output, environ=None):
     return env
 
 
-def start_app(output, *, gpu, workers=8, headless=True, **config):
+def start_app(output, *, gpu, workers=8, headless=True, extra_args=(), **config):
     """Return a ``SimulationApp`` whose Kit settings stay in ``output/kit``.
 
     ``gpu`` is the physical device index. The readback is written to
@@ -39,7 +39,7 @@ def start_app(output, *, gpu, workers=8, headless=True, **config):
     app = SimulationApp({
         'headless': headless, 'active_gpu': gpu, 'physics_gpu': gpu, 'multi_gpu': False,
         'extra_args': [f'--portable-root={portable}', f'--/app/userConfigPath={user_config}',
-                       f'--{PHYSICS_WORKERS}={int(workers)}'],
+                       f'--{PHYSICS_WORKERS}={int(workers)}', *extra_args],
         **config})
     import carb
     settings = carb.settings.get_settings()

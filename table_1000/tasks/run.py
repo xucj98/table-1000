@@ -22,6 +22,7 @@ VIEWS = {
     'close': {'position': (.78, -.62, 1.25), 'target': (.17, -.24, .82), 'focal_length_mm': 26,
               'resolution': (960, 540)},
 }
+HELD_AFTER_LIFT = .2
 FINGER_LINKS = ('robot.right_arm_gripper_left_link', 'robot.right_arm_gripper_right_link')
 
 
@@ -34,11 +35,22 @@ def views():
                               'resolution': (960, 540)}}
 
 
-def classify(intervals, handle, pen_prefix):
-    """Split robot contacts into expected finger contacts and everything else."""
+def classify(intervals, handle, pen_prefix, held):
+    """Split contacts into expected and unexpected ones.
+
+    Robot links may only touch each other's fingers, the handle and the pen
+    (with the fingers) and the ground (with the wheels). While the pen is held,
+    ``held = (start, end)`` in seconds, it may touch only the fingers and itself.
+    """
     expected, unexpected = [], []
     for entry in intervals:
         a, b = entry['pair']
+        if not (a.startswith('robot') or b.startswith('robot')):
+            end = float('inf') if entry.get('end') is None else entry['end']
+            during = held is not None and entry['start'] < held[1] and end > held[0]
+            internal = a.startswith(pen_prefix) and b.startswith(pen_prefix)
+            (unexpected if during and not internal else expected).append(entry)
+            continue
         robot, other = (a, b) if a.startswith('robot') else (b, a)
         if other.startswith('robot'):
             fingers = {a, b} == set(FINGER_LINKS)
@@ -57,8 +69,9 @@ def child(args):
     output = args.output.resolve()
     run_started = time.perf_counter()
     from table_1000.runtime.app import start_app
+    # RTX Real-Time 2.0 renders the assets' transmissive plastics as in their physics tests.
     app = start_app(output, gpu=args.gpu, workers=4, renderer='RaytracedLighting',
-                    disable_viewport_updates=True)
+                    disable_viewport_updates=True, extra_args=['--/persistent/rtx/modes/rt2/enabled=true'])
     timings = {'startup_s': time.perf_counter() - run_started}
     result = {'status': 'FAIL', 'seed': args.seed, 'offsets_argument': args.offsets}
     env = None
@@ -111,7 +124,12 @@ def child(args):
                                  'details': json.loads(json.dumps(error.details, default=float))}
         env.step(round(.5 / DT))
         evaluation = evaluate(env, solver)
-        expected, unexpected = classify(env.contacts.intervals(), 'cabinet:' + g.HANDLE, 'pen:')
+        starts = {event['stage']: event['time'] for event in solver.events}
+        held = None
+        if 'pick: lift pen' in starts:
+            # The pen leaves the table within the first fraction of a second of the lift.
+            held = (starts['pick: lift pen'] + HELD_AFTER_LIFT, starts.get('place: release pen', env.time))
+        expected, unexpected = classify(env.contacts.intervals(), 'cabinet:' + g.HANDLE, 'pen:', held)
         evaluation['unexpected_contacts'] = len(unexpected)
         success = (result['failure'] is None and evaluation['drawer_closed'] and evaluation['pen_in_drawer']
                    and evaluation['hand_withdrawn'] and not unexpected)

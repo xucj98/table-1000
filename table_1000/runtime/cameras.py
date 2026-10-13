@@ -29,6 +29,10 @@ class Cameras:
         for setting in ['/omni/replicator/captureOnPlay', '/omni/replicator/asyncRendering', '/app/asyncRendering']:
             settings.set(setting, False)
         settings.set('/rtx/post/motionblur/enabled', False)
+        # As in the asset physics tests: closed translucent walls need enough
+        # transmission rays in RTX Real-Time 2.0.
+        for setting in ['/rtx/rtpt/maxBounces', '/rtx/rtpt/maxSpecularAndTransmissionBounces']:
+            settings.set(setting, 12)
         self.rep, self.stage, self.output, self.fps = rep, stage, Path(output), fps
         resolutions = {tuple(view['resolution']) for view in views.values()}
         if len(resolutions) != 1:

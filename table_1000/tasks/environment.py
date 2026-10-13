@@ -24,17 +24,21 @@ def matrix(position, quaternion_wxyz):
 
 
 class Contacts:
-    """PhysX contact reports for the robot's bodies, kept as time intervals."""
+    """PhysX contact reports for the bodies under ``paths``, kept as time intervals.
+
+    Pairs are kept when either side's label starts with one of ``watched``.
+    """
 
     TOUCH = .0005
 
-    def __init__(self, stage, robot_path, labels):
+    def __init__(self, stage, paths, labels, watched):
         from omni.physx import get_physx_simulation_interface
         from pxr import PhysxSchema, Usd, UsdPhysics
-        self.robot_path, self.labels = robot_path, labels
-        for prim in Usd.PrimRange(stage.GetPrimAtPath(robot_path)):
-            if prim.HasAPI(UsdPhysics.RigidBodyAPI):
-                PhysxSchema.PhysxContactReportAPI.Apply(prim).CreateThresholdAttr(0.)
+        self.labels, self.watched = labels, tuple(watched)
+        for path in paths:
+            for prim in Usd.PrimRange(stage.GetPrimAtPath(path)):
+                if prim.HasAPI(UsdPhysics.RigidBodyAPI):
+                    PhysxSchema.PhysxContactReportAPI.Apply(prim).CreateThresholdAttr(0.)
         self.time, self.phase = 0., 'start'
         self.events = []
         self.open = {}
@@ -51,7 +55,7 @@ class Contacts:
         return path
 
     def on_report(self, headers, data):
-        """Track intervals in which a robot body actually touches something.
+        """Track intervals in which a watched body actually touches something.
 
         PhysX reports shape pairs within their contact offset; a pair counts as
         touching while its closest contact point has separation below TOUCH.
@@ -60,7 +64,7 @@ class Contacts:
         for header in headers:
             a = self.label(str(PhysicsSchemaTools.intToSdfPath(header.collider0)))
             b = self.label(str(PhysicsSchemaTools.intToSdfPath(header.collider1)))
-            if not (a.startswith('robot') or b.startswith('robot')):
+            if not (a.startswith(self.watched) or b.startswith(self.watched)):
                 continue
             pair = tuple(sorted((a, b)))
             points = data[header.contact_data_offset:header.contact_data_offset + header.num_contact_data]
@@ -109,7 +113,10 @@ class Environment:
         labels = {scene_stage.ROBOT_PATH: 'robot', scene_stage.TABLE_PATH: 'table',
                   '/World/defaultGroundPlane': 'ground'}
         labels.update({path: key for key, path in self.bodies.items()})
-        self.contacts = Contacts(self.stage, scene_stage.ROBOT_PATH, labels)
+        # Reports come from the robot and the cabinet; reporting on the pen
+        # itself would also deliver its cap detent's contacts on every step.
+        cabinet = [path for key, path in self.bodies.items() if key.startswith('cabinet:')]
+        self.contacts = Contacts(self.stage, [scene_stage.ROBOT_PATH, *cabinet], labels, ('robot', 'pen:'))
         self.robot = self.world.scene.add(SingleArticulation(scene_stage.ROBOT_PATH, name='robot'))
         cabinet_root = next(path for key, path in self.bodies.items() if key == 'cabinet:cabinet.housing')
         self.cabinet = self.world.scene.add(SingleArticulation(cabinet_root, name='cabinet'))
