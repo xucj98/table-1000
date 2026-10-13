@@ -46,8 +46,16 @@ def mark_shutdown(output, task_status):
                                          'monotonic': time.monotonic(), 'epoch': time.time()})
 
 
-def supervise(command, *, cwd, output, env=None, interval_s=1., shutdown_timeout_s=60., term_grace_s=15.):
-    """Run ``command`` in its own process group and return its returncode."""
+def supervise(command, *, cwd, output, env=None, interval_s=1., shutdown_timeout_s=60., term_grace_s=15.,
+              stall_timeout_s=300.):
+    """Run ``command`` in its own process group and return its returncode.
+
+    The child is stopped (TERM, then KILL after ``term_grace_s``) when
+    ``app.close()`` overruns ``shutdown_timeout_s`` after the results were saved,
+    or when its ``heartbeat.json`` (or, before the first heartbeat, its start)
+    is older than ``stall_timeout_s`` -- e.g. a renderer that never finishes
+    starting.
+    """
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     record = {'status': 'starting', 'command': [str(part) for part in command], 'cwd': str(cwd),
@@ -69,7 +77,7 @@ def supervise(command, *, cwd, output, env=None, interval_s=1., shutdown_timeout
                                        stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
             record.update(status='running', child_pid=process.pid)
             write_json(output / LIFECYCLE, record)
-            shutdown_seen = None
+            shutdown_seen = stalled = None
             while process.poll() is None:
                 now = time.monotonic()
                 if shutdown_seen is None:
@@ -78,22 +86,33 @@ def supervise(command, *, cwd, output, env=None, interval_s=1., shutdown_timeout
                         shutdown_seen = now
                         record['shutdown_marker'] = marker
                         write_json(output / LIFECYCLE, record)
-                else:
-                    sent = [row['signal'] for row in record['interventions']]
-                    due = None
+                if shutdown_seen is None and stalled is None:
+                    beat = (read_json(output / 'heartbeat.json') or {}).get('epoch', record['start_epoch'])
+                    if time.time() - beat > stall_timeout_s:
+                        stalled = now
+                sent = [row['signal'] for row in record['interventions']]
+                due = reason = None
+                if shutdown_seen is not None:
+                    reason = 'app.close exceeded the shutdown deadline after results were saved'
                     if not sent and now - shutdown_seen >= shutdown_timeout_s:
                         due = signal.SIGTERM
                     elif sent == [signal.SIGTERM] and now - shutdown_seen >= shutdown_timeout_s + term_grace_s:
                         due = signal.SIGKILL
-                    if due is not None:
-                        try:
-                            os.killpg(process.pid, due)
-                        except ProcessLookupError:
-                            pass
-                        record['interventions'].append({
-                            'signal': int(due), 'epoch': time.time(), 'target_process_group': process.pid,
-                            'reason': 'app.close exceeded the shutdown deadline after results were saved'})
-                        write_json(output / LIFECYCLE, record)
+                elif stalled is not None:
+                    reason = f'no heartbeat for {stall_timeout_s:.0f} s'
+                    if not sent:
+                        due = signal.SIGTERM
+                    elif sent == [signal.SIGTERM] and now - stalled >= term_grace_s:
+                        due = signal.SIGKILL
+                if due is not None:
+                    try:
+                        os.killpg(process.pid, due)
+                    except ProcessLookupError:
+                        pass
+                    record['interventions'].append({
+                        'signal': int(due), 'epoch': time.time(), 'target_process_group': process.pid,
+                        'reason': reason})
+                    write_json(output / LIFECYCLE, record)
                 write_json(output / 'parent-heartbeat.json', {
                     'parent_pid': os.getpid(), 'child_pid': process.pid, 'epoch': time.time(),
                     'child_heartbeat': read_json(output / 'heartbeat.json')})

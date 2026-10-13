@@ -52,6 +52,18 @@ class SuperviseTest(unittest.TestCase):
         self.assertEqual([row['signal'] for row in record['interventions']], [signal.SIGTERM, signal.SIGKILL])
         self.assertTrue(all(row['target_process_group'] == record['child_pid'] for row in record['interventions']))
 
+    def test_stalled_child_without_heartbeat_is_stopped(self):
+        record = self.run_child('import time;time.sleep(10)', stall_timeout_s=.1, term_grace_s=.05)
+        self.assertEqual(record['returncode'], -signal.SIGTERM)
+        self.assertIn('no heartbeat', record['interventions'][0]['reason'])
+
+    def test_fresh_heartbeats_keep_a_child_alive(self):
+        source = ('import json,time\nfor _ in range(6):\n'
+                  '    open("heartbeat.json","w").write(json.dumps({"epoch":time.time()}));time.sleep(.05)')
+        record = self.run_child(source, stall_timeout_s=.2)
+        self.assertEqual(record['returncode'], 0)
+        self.assertEqual(record['interventions'], [])
+
     def test_normal_close_after_marker_is_left_alone(self):
         record = self.run_child(MARK + 'import time;time.sleep(.1)', shutdown_timeout_s=5.)
         self.assertEqual(record['returncode'], 0)

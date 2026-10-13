@@ -69,9 +69,12 @@ def child(args):
     output = args.output.resolve()
     run_started = time.perf_counter()
     from table_1000.runtime.app import start_app
-    # RTX Real-Time 2.0 renders the assets' transmissive plastics as in their physics tests.
-    app = start_app(output, gpu=args.gpu, workers=4, renderer='RaytracedLighting',
-                    disable_viewport_updates=True, extra_args=['--/persistent/rtx/modes/rt2/enabled=true'])
+    # Videos use RTX Real-Time 2.0, which renders the assets' transmissive
+    # plastics as in their physics tests. Runs without video leave it off: its
+    # ray-tracing pipelines are built at startup, and with eight runs starting
+    # at once on two GPUs the build sometimes failed and left the run hanging.
+    app = start_app(output, gpu=args.gpu, workers=4, renderer='RaytracedLighting', disable_viewport_updates=True,
+                    extra_args=['--/persistent/rtx/modes/rt2/enabled=true'] if args.video else [])
     timings = {'startup_s': time.perf_counter() - run_started}
     result = {'status': 'FAIL', 'seed': args.seed, 'offsets_argument': args.offsets}
     env = None
