@@ -8,10 +8,28 @@ import sys
 import unittest
 from unittest.mock import patch
 
-from table_1000.modeling.preview import main
+from table_1000.modeling.preview import main, read_views, interpolate
 
 
 class PreviewTests(unittest.TestCase):
+    def test_geometry_controls_sparse_merge_reset_and_validation(self):
+        data = {'opening.mp4': {'fps': 24, 'frames': [
+            {'frame': 0, 'camera': [1,-1,1,0,0,1]},
+            {'frame': 10, 'controls': {'bag.unzip': .3}},
+            {'frame': 20, 'controls': {'bag.bulge': 1}},
+            {'frame': 30, 'controls': {'bag.unzip': 0}}]}}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'preview.json'
+            path.write_text(json.dumps(data))
+            _, keys = read_views(path)['opening.mp4']
+            self.assertEqual(interpolate(keys, 5)['controls'], {'bag.unzip': .15})
+            self.assertEqual(interpolate(keys, 30)['controls'], {'bag.unzip': 0, 'bag.bulge': 1})
+            for invalid in (True, float('nan'), 'open', []):
+                data['opening.mp4']['frames'][1]['controls'] = {'bag.unzip': invalid}
+                path.write_text(json.dumps(data))
+                with self.assertRaises(ValueError):
+                    read_views(path)
+
     def test_direct_worker_script_imports_package(self):
         script = Path(__file__).resolve().parents[2] / "table_1000/modeling/preview.py"
         subprocess.run([sys.executable, "-I", str(script), "--help"],

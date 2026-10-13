@@ -109,6 +109,8 @@ blender -b --python-exit-code 1 -P scripts/assets/export_asset_tree.py -- \
 
 ## 5. 留存成果
 
+连续袋面等几何若需要随开口变形，采用[连续变形几何接口](../designs/asset-pipeline/modeling.md#第一阶段连续变形几何)，在 `object.py` 定义 `apply_geometry_pose(controls)`，并在 `preview.json` 使用[几何控制量](../designs/asset-pipeline/preview.md#关键帧)。构建、预览和导树入口不变，预览依赖同目录 `object.py` 快照。验收另检查开口边界、目标物品装入及装物后闭合；报告中的变形归属不计入刚体数。此功能仅覆盖第一章，当前不支持第二章物理导出。
+
 自动报告和人工检查均通过后，按[布局规范](../designs/asset-pipeline/README.md#资产布局)留存源码、配置、README 和缩略图；模型、完整预览与报告保留在生成目录。
 
 从完整预览生成黑笔源目录缩略图：

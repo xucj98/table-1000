@@ -1,16 +1,9 @@
-"""Build the blue closed storage binder clip."""
-from pathlib import Path
-import sys
-
-source = Path(__file__).resolve()
-sys.path.insert(0, str(source.parent))
-if not (source.parent / "binder_clip_assets.py").exists():
-    sys.path.insert(0, str(source.parents[4] / "table_1000/modeling"))
-from binder_clip_assets import generate_clip
+"""Build the small blue binder clip with rigid jaws and complete hinged loops."""
+from table_1000.modeling.binder_clip_assets import generate_clip
 
 
 def main(argv=None):
-    generate_clip("blue", __file__, argv)
+    generate_clip("blue", __file__, argv, size="small", articulated=True)
 
 
 if __name__ == "__main__":

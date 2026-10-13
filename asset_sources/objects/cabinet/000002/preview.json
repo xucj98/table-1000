@@ -23,20 +23,20 @@
   "left_open.jpg": {
     "camera": [0.82, -0.82, 0.72, 0, 0, 1],
     "joints": {
-      "drawer_left_slide": 0.17
+      "pegboard_cabinet.drawer_left.slide": 0.17
     }
   },
   "right_open.jpg": {
     "camera": [0.82, -0.82, 0.72, 0, 0, 1],
     "joints": {
-      "drawer_right_slide": 0.17
+      "pegboard_cabinet.drawer_right.slide": 0.17
     }
   },
   "both_open.jpg": {
     "camera": [0.82, -0.82, 0.72, 0, 0, 1],
     "joints": {
-      "drawer_left_slide": 0.17,
-      "drawer_right_slide": 0.17
+      "pegboard_cabinet.drawer_left.slide": 0.17,
+      "pegboard_cabinet.drawer_right.slide": 0.17
     }
   },
   "drawers.mp4": {
@@ -49,25 +49,25 @@
       {
         "frame": 12,
         "joints": {
-          "drawer_left_slide": 0.17
+          "pegboard_cabinet.drawer_left.slide": 0.17
         }
       },
       {
         "frame": 24,
         "joints": {
-          "drawer_right_slide": 0.17
+          "pegboard_cabinet.drawer_right.slide": 0.17
         }
       },
       {
         "frame": 36,
         "joints": {
-          "drawer_left_slide": 0
+          "pegboard_cabinet.drawer_left.slide": 0
         }
       },
       {
         "frame": 48,
         "joints": {
-          "drawer_right_slide": 0
+          "pegboard_cabinet.drawer_right.slide": 0
         }
       }
     ]
@@ -75,7 +75,7 @@
   "attachments_separated.jpg": {
     "camera": [0.82, -0.82, 0.72, 0, 0, 1],
     "transforms": {
-      "tray": [
+      "pegboard_cabinet.tray": [
         -0.04,
         -0.13,
         0,
@@ -84,7 +84,7 @@
         0,
         0
       ],
-      "hook": [
+      "pegboard_cabinet.hook": [
         -0.06,
         -0.1,
         0,
@@ -105,7 +105,7 @@
       {
         "frame": 8,
         "transforms": {
-          "tray": [
+          "pegboard_cabinet.tray": [
             0,
             -0.03,
             0,
@@ -114,7 +114,7 @@
             0,
             0
           ],
-          "hook": [
+          "pegboard_cabinet.hook": [
             0,
             -0.03,
             0,
@@ -128,7 +128,7 @@
       {
         "frame": 16,
         "transforms": {
-          "tray": [
+          "pegboard_cabinet.tray": [
             -0.04,
             -0.13,
             0,
@@ -137,7 +137,7 @@
             0,
             0
           ],
-          "hook": [
+          "pegboard_cabinet.hook": [
             -0.06,
             -0.1,
             0,
@@ -151,7 +151,7 @@
       {
         "frame": 24,
         "transforms": {
-          "tray": [
+          "pegboard_cabinet.tray": [
             0,
             -0.03,
             0,
@@ -160,7 +160,7 @@
             0,
             0
           ],
-          "hook": [
+          "pegboard_cabinet.hook": [
             0,
             -0.03,
             0,
@@ -174,7 +174,7 @@
       {
         "frame": 32,
         "transforms": {
-          "tray": [
+          "pegboard_cabinet.tray": [
             0,
             0,
             0,
@@ -183,7 +183,7 @@
             0,
             0
           ],
-          "hook": [
+          "pegboard_cabinet.hook": [
             0,
             0,
             0,

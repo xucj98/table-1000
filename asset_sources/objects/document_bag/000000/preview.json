@@ -1,0 +1,187 @@
+{
+  "front.jpg": {
+    "camera": [0, -1, 0, 0, 0, 1]
+  },
+  "back.jpg": {
+    "camera": [0, 1, 0, 0, 0, 1]
+  },
+  "left.jpg": {
+    "camera": [-1, 0, 0, 0, 0, 1]
+  },
+  "right.jpg": {
+    "camera": [1, 0, 0, 0, 0, 1]
+  },
+  "top.jpg": {
+    "camera": [0, 0, 1, 0, 1, 0]
+  },
+  "bottom.jpg": {
+    "camera": [0, 0, -1, 0, -1, 0]
+  },
+  "three_quarter.jpg": {
+    "camera": [0.82, -0.82, 0.72, 0, 0, 1]
+  },
+  "small_open.jpg": {
+    "camera": [0.82, -0.82, 0.72, 0, 0, 1],
+    "controls": {
+      "document_bag.unzip": 0.03,
+      "document_bag.bulge": 0.25
+    }
+  },
+  "half_open.jpg": {
+    "camera": [0.82, -0.82, 0.72, 0, 0, 1],
+    "controls": {
+      "document_bag.unzip": 0.162,
+      "document_bag.bulge": 1
+    }
+  },
+  "full_open.jpg": {
+    "camera": [0.82, -0.82, 0.72, 0, 0, 1],
+    "controls": {
+      "document_bag.unzip": 0.324,
+      "document_bag.bulge": 1
+    }
+  },
+  "loaded_closed.jpg": {
+    "camera": [0.82, -0.82, 0.72, 0, 0, 1],
+    "controls": {
+      "document_bag.unzip": 0,
+      "document_bag.bulge": 1
+    }
+  },
+  "ring_negative.jpg": {
+    "camera": [0.82, -0.82, 0.72, 0, 0, 1],
+    "controls": {
+      "document_bag.unzip": 0.324,
+      "document_bag.bulge": 1
+    },
+    "joints": {
+      "document_bag.puller_swing": -1.0471975511965976
+    }
+  },
+  "ring_positive.jpg": {
+    "camera": [0.82, -0.82, 0.72, 0, 0, 1],
+    "controls": {
+      "document_bag.unzip": 0.324,
+      "document_bag.bulge": 1
+    },
+    "joints": {
+      "document_bag.puller_swing": 1.0471975511965976
+    }
+  },
+  "open_close.mp4": {
+    "fps": 24,
+    "frames": [
+      {
+        "frame": 0,
+        "camera": [0.82, -0.82, 0.72, 0, 0, 1],
+        "controls": {
+          "document_bag.unzip": 0,
+          "document_bag.bulge": 0
+        }
+      },
+      {
+        "frame": 6,
+        "controls": {
+          "document_bag.unzip": 0.03,
+          "document_bag.bulge": 0.25
+        }
+      },
+      {
+        "frame": 12,
+        "controls": {
+          "document_bag.unzip": 0.162,
+          "document_bag.bulge": 1
+        }
+      },
+      {
+        "frame": 24,
+        "controls": {
+          "document_bag.unzip": 0.324,
+          "document_bag.bulge": 1
+        }
+      },
+      {
+        "frame": 36,
+        "controls": {
+          "document_bag.unzip": 0,
+          "document_bag.bulge": 1
+        }
+      },
+      {
+        "frame": 48,
+        "controls": {
+          "document_bag.unzip": 0,
+          "document_bag.bulge": 0
+        }
+      }
+    ]
+  },
+  "ring.mp4": {
+    "fps": 24,
+    "frames": [
+      {
+        "frame": 0,
+        "camera": [0.82, -0.82, 0.72, 0, 0, 1],
+        "controls": {
+          "document_bag.unzip": 0.324,
+          "document_bag.bulge": 1
+        },
+        "joints": {
+          "document_bag.puller_swing": 0
+        }
+      },
+      {
+        "frame": 6,
+        "joints": {
+          "document_bag.puller_swing": -1.0471975511965976
+        }
+      },
+      {
+        "frame": 12,
+        "joints": {
+          "document_bag.puller_swing": 0
+        }
+      },
+      {
+        "frame": 18,
+        "joints": {
+          "document_bag.puller_swing": 1.0471975511965976
+        }
+      },
+      {
+        "frame": 24,
+        "joints": {
+          "document_bag.puller_swing": 0
+        }
+      }
+    ]
+  },
+  "ring_zero.jpg": {
+    "camera": [0.82, -0.82, 0.72, 0, 0, 1],
+    "controls": {
+      "document_bag.unzip": 0.324,
+      "document_bag.bulge": 1
+    }
+  },
+  "small_mouth.jpg": {
+    "camera": [0.1, -1, 0.18, 0, 0, 1],
+    "controls": {
+      "document_bag.unzip": 0.03,
+      "document_bag.bulge": 0.25
+    }
+  },
+  "half_mouth.jpg": {
+    "camera": [0.1, -1, 0.18, 0, 0, 1],
+    "controls": {
+      "document_bag.unzip": 0.162,
+      "document_bag.bulge": 1
+    }
+  },
+  "full_mouth.jpg": {
+    "camera": [0.1, -1, 0.18, 0, 0, 1],
+    "controls": {
+      "document_bag.unzip": 0.324,
+      "document_bag.bulge": 1
+    }
+  }
+}

@@ -20,7 +20,7 @@ def asset_forest(objects):
     objects = {obj.name: obj for obj in objects}
     retained = set()
     for obj in objects.values():
-        if obj.get("geometry_role") not in {"visual", "collision"} and not obj.get("rigid_body_root") and not obj.get("semantic_part"):
+        if obj.get("geometry_role") not in {"visual", "collision"} and not obj.get("rigid_body_root") and not obj.get("deformable_root") and not obj.get("semantic_part"):
             continue
         while obj is not None:
             if obj.type not in {"CAMERA", "LIGHT"} and not obj.rigid_body_constraint:
@@ -45,7 +45,7 @@ def _relative_name(name, parent):
 
 def _signature(node):
     obj, children = node
-    return (obj.type, bool(obj.get("rigid_body_root")), bool(obj.get("semantic_part")), obj.get("geometry_role"),
+    return (obj.type, bool(obj.get("rigid_body_root")), bool(obj.get("deformable_root")), bool(obj.get("semantic_part")), obj.get("geometry_role"),
             obj.rigid_body.collision_shape if obj.rigid_body else None,
             tuple(slot.material.name if slot.material else None for slot in obj.material_slots),
             tuple(sorted((child[0].name.startswith(obj.name + "."),
@@ -97,7 +97,7 @@ def format_tree(forest, compact=False, geometry=False, full_names=False):
 
     def visible(node):
         obj, children = node
-        return geometry or obj.get("rigid_body_root") or obj.get("semantic_part") or any(visible(child) for child in children)
+        return geometry or obj.get("rigid_body_root") or obj.get("deformable_root") or obj.get("semantic_part") or any(visible(child) for child in children)
 
     def visit(nodes, indent="", parent_name=None, displayed_parent=None):
         siblings = _siblings([node for node in nodes if visible(node)], compact)
@@ -106,7 +106,7 @@ def format_tree(forest, compact=False, geometry=False, full_names=False):
             if parent_name and name.startswith(parent_name + "."):
                 name = (displayed_parent + name[len(parent_name):] if full_names
                         else name[len(parent_name) + 1:])
-            marker = " [rigid]" if obj.get("rigid_body_root") else ""
+            marker = " [rigid]" if obj.get("rigid_body_root") else " [deformable]" if obj.get("deformable_root") else ""
             lines.append(indent + name + marker)
             visit(children, indent + "  ", obj.name, name)
 
