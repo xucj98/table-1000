@@ -22,7 +22,7 @@ def main(argv=None):
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--gpu', type=int, default=0)
     parser.add_argument('--video', action='store_true')
-    parser.add_argument('--subframes', type=int, default=8,
+    parser.add_argument('--subframes', type=int, default=4,
                         help='renders per video frame; fewer is faster but leaves trails behind fast motion')
     parser.add_argument('--child', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args(argv)

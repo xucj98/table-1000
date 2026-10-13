@@ -22,10 +22,12 @@ class Cameras:
 
     ``subframes`` renders per capture, all of the same physical state. One
     leaves a trail behind fast motion (a released pen) from the renderer's
-    temporal denoising; eight brought it to the level of the render noise.
+    temporal denoising; with the indirect-light caches off (see
+    ``table_1000.runtime.render``), two to eight brought it to the level of the
+    render noise, so four leaves a margin.
     """
 
-    SUBFRAMES = 8
+    SUBFRAMES = 4
 
     def __init__(self, stage, views, output, fps, subframes=SUBFRAMES):
         import omni.replicator.core as rep
