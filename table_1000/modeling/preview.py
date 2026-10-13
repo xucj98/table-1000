@@ -245,6 +245,17 @@ def run_worker(blend, views, output, check_only=False, device="auto"):
         # The hinge baseline must follow the zipper slider at this exact pose.
         pose_rest = ({obj.name: obj.matrix_world.copy() for obj in scene.objects}
                      if geometry_pose.definitions else rest)
+        def transform_body(name):
+            transform = transforms[name]
+            pivot = rest[name].translation
+            rotation = Quaternion(transform[3:]).to_matrix().to_4x4()
+            delta = (Matrix.Translation(Vector(transform[:3]) + pivot)
+                     @ rotation @ Matrix.Translation(-pivot))
+            owners[name].matrix_world = delta @ owners[name].matrix_world
+        children = {c.object2.name for _,c,_ in joints.values()}
+        for name in transforms.keys()-children:
+            transform_body(name)
+        bpy.context.view_layer.update()
         pending = set(joints)
         while pending:
             progressed = False
@@ -262,17 +273,13 @@ def run_worker(blend, views, output, check_only=False, device="auto"):
                     motion = Matrix.Rotation(q, 4, "Z")
                 c.object2.matrix_world = (joint_matrix @ motion @ pose_rest[joint.name].inverted()
                                           @ pose_rest[c.object2.name])
+                if c.object2.name in transforms:
+                    transform_body(c.object2.name)
                 bpy.context.view_layer.update()
                 pending.remove(name)
                 progressed = True
             if not progressed:
                 raise ValueError("joint dependency cycle")
-        for name, transform in transforms.items():
-            pivot = rest[name].translation
-            rotation = Quaternion(transform[3:]).to_matrix().to_4x4()
-            delta = (Matrix.Translation(Vector(transform[:3]) + pivot)
-                     @ rotation @ Matrix.Translation(-pivot))
-            owners[name].matrix_world = delta @ owners[name].matrix_world
         bpy.context.view_layer.update()
         return values, transforms, control_state
 

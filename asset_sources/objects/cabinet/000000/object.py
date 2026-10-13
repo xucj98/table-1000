@@ -204,7 +204,7 @@ def drawer_joint(housing_body, drawer_body, index, z):
 
 def build():
     white = material("Ivory white molded plastic", (0.78, 0.80, 0.78), 0.29)
-    smoke = material("Smoky translucent drawer plastic", (0.51, 0.56, 0.58), 0.22, transmission=0.73)
+    smoke = material("Smoky translucent drawer plastic", (0.86, 0.88, 0.90), 0.08, transmission=0.98)
     root, collection = asset("cabinet")
     convention = "local +X = width; local +Y = depth/assembly travel; local +Z = up"
     root["axis_convention"] = convention

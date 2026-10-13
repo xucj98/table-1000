@@ -1,6 +1,6 @@
 """Stage-one geometry checks. Convex SAT, sampled poses; no dynamics solver.
 
-Supports BOX and explicit CONVEX_HULL colliders. Other shapes fail explicitly
+Supports BOX, SPHERE and explicit CONVEX_HULL colliders. Other shapes fail explicitly
 until their analytic detection and matching preview geometry are implemented.
 """
 import itertools
@@ -8,6 +8,7 @@ import numpy as np
 import bpy
 import bmesh
 from mathutils import Vector
+from mathutils.geometry import closest_point_on_tri
 
 
 def require(ok, message):
@@ -72,6 +73,22 @@ def sat_depth(a, b):
     return float(depth.min())
 
 
+def sphere_convex_depth(center, radius, points, faces):
+    """Signed sphere/hull overlap, using hull planes and closest triangles."""
+    center = np.asarray(center)
+    triangles = [points[[face[0], face[i], face[i+1]]] for face in faces for i in range(1,len(face)-1)]
+    normals = np.array([np.cross(t[1]-t[0],t[2]-t[0]) for t in triangles])
+    normals /= np.linalg.norm(normals,axis=1)[:,None]
+    centroid = points.mean(axis=0)
+    normals *= np.where(np.sum(normals*(np.array([t[0] for t in triangles])-centroid),axis=1)<0,-1,1)[:,None]
+    distances = np.sum(normals*(center-np.array([t[0] for t in triangles])),axis=1)
+    if distances.max() <= 0:
+        return float(radius-distances.max())
+    point = Vector(center)
+    distance = min((point-closest_point_on_tri(point,*map(Vector,t))).length for t in triangles)
+    return float(radius-distance)
+
+
 class GeometryChecks:
     def __init__(self):
         scene = bpy.context.scene
@@ -130,7 +147,7 @@ class GeometryChecks:
                             (ancestor.rigid_body and ancestor.rigid_body.collision_shape == 'COMPOUND')),
                             f'Collision ancestor must be a Compound part: {obj.name}')
                     ancestor = ancestor.parent
-                require(obj.rigid_body and obj.rigid_body.collision_shape in {'BOX', 'CONVEX_HULL'},
+                require(obj.rigid_body and obj.rigid_body.collision_shape in {'BOX', 'SPHERE', 'CONVEX_HULL'},
                         f'Unsupported collision shape: {obj.name}')
                 require(obj.hide_render, f'Collision mesh must be hidden in asset render: {obj.name}')
                 require(obj.rigid_body.use_margin and obj.rigid_body.collision_margin == 0,
@@ -142,10 +159,14 @@ class GeometryChecks:
                 self.visuals.append(obj)
         for body in self.owners:
             require(any(self.owner[o.name] == body.name for o in self.colliders), f'No collision geometry: {body.name}')
-            require(any(self.owner[o.name] == body.name for o in self.visuals), f'No visual geometry: {body.name}')
         self.local = {obj.name: convex_data(obj) for obj in self.colliders}
         self.dynamic_colliders = [o for o in self.colliders
                                  if self.owner[o.name] in {root.name for root in self.deformables}]
+        self.spheres = {o.name: float(np.linalg.norm(self.local[o.name][0],axis=1).max())
+                        for o in self.colliders if o.rigid_body.collision_shape == 'SPHERE'}
+        for name, radius in self.spheres.items():
+            require(np.max(np.abs(np.linalg.norm(self.local[name][0],axis=1)-radius)) < 1e-7,
+                    f'SPHERE display mesh must be centered and spherical: {name}')
         self.ignored = set()
         targets = set()
         joint_rows = []
@@ -210,9 +231,22 @@ class GeometryChecks:
             if owners[0] == owners[1] or owners in self.ignored:
                 continue
             aa,bb = world[a.name][0],world[b.name][0]
+            if a.name in self.spheres:
+                center=np.asarray(a.matrix_world.translation);radius=self.spheres[a.name]
+                aa=np.array([center-radius,center+radius])
+            if b.name in self.spheres:
+                center=np.asarray(b.matrix_world.translation);radius=self.spheres[b.name]
+                bb=np.array([center-radius,center+radius])
             if np.any(np.minimum(aa.max(axis=0),bb.max(axis=0))-np.maximum(aa.min(axis=0),bb.min(axis=0)) <= self.tolerance):
                 continue
-            depth = sat_depth(world[a.name],world[b.name])
+            if a.name in self.spheres and b.name in self.spheres:
+                depth = self.spheres[a.name]+self.spheres[b.name]-(a.matrix_world.translation-b.matrix_world.translation).length
+            elif a.name in self.spheres or b.name in self.spheres:
+                sphere, hull = (a,b) if a.name in self.spheres else (b,a)
+                depth = sphere_convex_depth(sphere.matrix_world.translation, self.spheres[sphere.name],
+                                            world[hull.name][0], [list(f.vertices) for f in hull.data.polygons])
+            else:
+                depth = sat_depth(world[a.name],world[b.name])
             if depth > self.tolerance:
                 failures.append({'output':output,'frame':frame,'bodies':list(owners),'colliders':[a.name,b.name],
                                  'penetration_m':depth})

@@ -25,8 +25,10 @@ export MKL_NUM_THREADS=1
 | 文件 | 编写内容 |
 | --- | --- |
 | [physics.py](../../asset_sources/objects/pen/000002/physics.py) | 按[物理属性规范](../designs/asset-pipeline/physics.md)通过官方 API 配置质量、接触材料与驱动；质心和惯量可由引擎计算 |
-| [behavior.py](../../asset_sources/objects/pen/000002/behavior.py)（可选） | 按[行为规范](../designs/asset-pipeline/behaviors.md)补充原生物理无法表达的行为；本例为笔帽等效保持力 |
+| `behavior.py`（可选） | 按[行为规范](../designs/asset-pipeline/behaviors.md)补充原生物理无法表达的行为；本章两个资产均不需要 |
 | [physics_test.py](../../asset_sources/objects/pen/000002/physics_test.py) | 按[测试规范](../designs/asset-pipeline/physics-tests.md)定义初态、相机、受力或夹具、时长及关注曲线，将测试函数登记到 `TESTS` |
+
+笔帽通过三颗钢珠与笔颈凸棱的真实接触保持。每颗球通过径向滑动关节连接帽壳，关节驱动提供弹簧力；`physics.py` 设置质量、接触材料和驱动参数，无需脚本控制吸附、配对或分离。
 
 运行构建：
 
@@ -34,31 +36,27 @@ export MKL_NUM_THREADS=1
 "$ISAAC_PYTHON" scripts/assets/build_physics.py --assets pen/000002 cabinet/000000 --gpu 0
 ```
 
-`--source`、`--output` 默认为 `asset_sources/objects`、`assets/objects`；模型从输出根下对应资产目录读取。`--assets` 可指定多个相对资产目录，省略时构建所有包含 `physics.py` 的资产。`--gpu` 选择可用显卡。产物写入对应资产目录，包括 `geometry.usdc`、生成的 `physics.usda`、`object.usdz`、源码快照及 `physics_build.json`。检查报告：本例应有 **2 个刚体、7 个部件、36 个碰撞形状**，三抽屉盒应有 **4 个刚体、26 个部件、33 个碰撞形状**。构建器自动核对质量和碰撞材料绑定。
+`--source`、`--output` 默认为 `asset_sources/objects`、`assets/objects`；模型从输出根下对应资产目录读取。`--assets` 可指定多个相对资产目录，省略时构建所有包含 `physics.py` 的资产。`--gpu` 选择可用显卡。产物写入对应资产目录，包括 `geometry.usdc`、生成的 `physics.usda`、`object.usdz`、源码快照及 `physics_build.json`。检查报告：本例应有 **5 个刚体、11 个部件、79 个碰撞形状**（其中 3 个为球体），三抽屉盒应有 **4 个刚体、26 个部件、33 个碰撞形状**。构建器自动核对质量和碰撞材料绑定。
 
 带行为资产另生成 `object.usda`，引用 USDZ 并挂载旁置脚本。使用时加载该入口，保留整个资产目录；测试入口已启用官方脚本组件，详见[行为分发](../designs/asset-pipeline/behaviors.md#分发)。
 
 ## 3. 运行测试并验收
 
-先运行拔帽和合帽：
+运行笔帽测试：
 
 ```bash
 "$ISAAC_PYTHON" scripts/assets/physics_test.py assets/objects/pen/000002 \
-  --script asset_sources/objects/pen/000002/physics_test.py --tests pull close --gpu 0
+  --script asset_sources/objects/pen/000002/physics_test.py --gpu 0
 ```
 
-去掉 `--tests pull close` 运行全部测试。省略 `--script` 时使用资产目录中的测试快照；修改 `physics.py` 或行为后需重新构建。
+使用 `--tests` 可选择测试名；省略时运行全部四项。省略 `--script` 时使用资产目录中的测试快照；修改几何后需重新执行建模与预览；修改 `physics.py` 或行为后需重新构建物理资产。
 
 | 测试 | 内容 |
 | --- | --- |
-| `pull`、`close` | 固定笔身，弱力与强力拔合，撤力后观察运动与保持 |
-| `pressure_hold` | 持续施压稳定性 |
-| `free_cap` | 已分离笔帽受偏心短脉冲后的自由运动 |
-| `drop_0.2m_4ms`、`drop_0.5m_4ms`、`drop_1m_4ms` | 不同初始原点高度的跌落 |
-| `drop_1m_2ms` | 1 m 跌落的步长对照 |
-| `drop_zero_friction_*` | 去除笔帽保持摩擦及笔内接触摩擦的跌落对照 |
-| `exchanged_caps` | 两帽拔出、交换、插回并释放夹具 |
-| `loose_cap_rotation` | 夹持两支笔，从笔盖朝上的竖直姿态缓慢转至朝下，对照紧帽与松帽 |
+| `pull_comparison` | 同场景紧松两笔，固定笔身，沿 X 轴逐渐施加 0–5 N 拉力；完全分离后接住并放稳。记录两帽拉力及 X 位置 |
+| `close` | 固定笔身，先用小于 0.5 N 的轻推力停在卡扣前，再加力盖紧并撤力。记录推力及帽的 X 位置 |
+| `drop_heights` | 同场景三笔从 0.2、0.5、1 m 同时落地，观察冲击后运动与恢复 |
+| `gravity_rotation` | 同场景紧松两笔，从帽朝上的竖直姿态慢转 180°，观察紧帽保持、松帽滑落 |
 
 三抽屉盒使用原生关节摩擦和阻尼，无需行为脚本：
 
@@ -72,8 +70,8 @@ export MKL_NUM_THREADS=1
 
 ```text
 physics_test/
-  pull.mp4
-  pull/
+  pull_comparison.mp4
+  pull_comparison/
     trace.csv
     plots.jpg
     result.json
@@ -83,6 +81,6 @@ physics_test/
 
 **验收分两步：** 查看完整视频和关注曲线，判断是否符合实验预期；查看 `result.json` 中的执行状态、实际条件及无渲染/含视频两种 RTF。标准条件与计时方法见 [RTF 基准](../designs/asset-pipeline/physics-tests.md#rtf-基准)。
 
-当前笔示例的拔合和自由运动测试通过，合帽缝隙约 0.258 mm。持续施压仍有抖动；跌落仅通过宏观粗测，步长结果未收敛。零摩擦对照在撞地前已脱帽，属于失败诊断。竖直旋转测试中，松帽先因重力向内坐回，随后仍保持，未实现预期的松帽滑落对照。保持力是未标定的等效模型，GUI 加载尚未验证。抽屉示例已通过上述运动粗测，质量与摩擦参数同样未经实物标定。
+笔帽采用未标定的钢珠弹簧代理，每颗半径 0.8 mm 的球使用 1 g 质量。主要通过视频验收紧松帽拔出、分段施力盖合和重力翻转，结合力与位置曲线判断过程。载荷和动作速度应根据实际响应调整，保留上述测试意图；高速跌落允许短时穿透，但应检查后续能否稳定恢复，不能据此推断真实脱帽高度。抽屉的质量与摩擦参数同样未经实物标定。
 
 有问题时修改对应源码，重新构建并运行受影响的测试。按[资产布局](../designs/asset-pipeline/README.md#资产布局)保存源码和生成物。

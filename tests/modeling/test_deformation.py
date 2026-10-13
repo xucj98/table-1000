@@ -87,13 +87,16 @@ class DeformationTests(unittest.TestCase):
             directory=Path(tmp);path=self.build(directory,target_x=10,hardware=True)
             cam=[1,-1,1,0,0,1]
             views={'moved.jpg':[{'frame':0,'camera':cam,'controls':{'bag.open':1},'joints':{'swing':.5}}],
+                   'transformed.jpg':[{'frame':0,'camera':cam,'controls':{'bag.open':1},
+                       'joints':{'swing':.5},'transforms':{'slider':[.5,0,0,1,0,0,0]}}],
                    'reset.jpg':[{'frame':0,'camera':cam,'joints':{}}]}
             original=GeometryChecks.sample
             def capture(checks,output,frame,values,transforms=None,controls=None):
                 q=controls['bag.open']
-                np.testing.assert_allclose(bpy.data.objects['slider'].matrix_world.translation,(q,0,2),atol=1e-6)
+                x=q+(transforms or {}).get('slider',[0])[0]
+                np.testing.assert_allclose(bpy.data.objects['slider'].matrix_world.translation,(x,0,2),atol=1e-6)
                 np.testing.assert_allclose(bpy.data.objects['swing'].matrix_world.translation,(q,0,2.5),atol=1e-6)
-                expected=Matrix.Translation((q,0,2.5))@Matrix.Rotation(values.get('swing',0),4,'Z')@Matrix.Translation((0,0,.5))
+                expected=Matrix.Translation((x,0,2.5))@Matrix.Rotation(values.get('swing',0),4,'Z')@Matrix.Translation((0,0,.5))
                 np.testing.assert_allclose(bpy.data.objects['ring'].matrix_world,expected,atol=1e-6)
                 return original(checks,output,frame,values,transforms,controls)
             with patch.object(GeometryChecks,'sample',capture):

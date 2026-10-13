@@ -8,13 +8,19 @@ class Camera:
         from pxr import Gf, UsdGeom, UsdLux
         for setting in ['/omni/replicator/captureOnPlay', '/omni/replicator/asyncRendering', '/app/asyncRendering']:
             carb.settings.get_settings().set(setting, False)
+        # Closed translucent walls need enough transmission rays in RTX Real-Time 2.0.
+        for setting in ['/rtx/rtpt/maxBounces', '/rtx/rtpt/maxSpecularAndTransmissionBounces']:
+            carb.settings.get_settings().set(setting, 12)
         self.rep, self.size = rep, config['resolution']
         camera = UsdGeom.Camera.Define(stage, '/World/Camera')
         camera.CreateFocalLengthAttr(config['focal_length_mm'])
         camera.CreateClippingRangeAttr(Gf.Vec2f(.001, 100))
         transform = Gf.Matrix4d().SetLookAt(Gf.Vec3d(*config['position']), Gf.Vec3d(*config['target']), Gf.Vec3d(*config['up'])).GetInverse()
         UsdGeom.Xformable(camera).AddTransformOp().Set(transform)
-        UsdLux.DomeLight.Define(stage, '/World/Light').CreateIntensityAttr(1000)
+        UsdLux.DomeLight.Define(stage, '/World/Light').CreateIntensityAttr(900)
+        sun = UsdLux.DistantLight.Define(stage, '/World/Sun')
+        sun.CreateIntensityAttr(2500)
+        UsdGeom.Xformable(sun).AddRotateXYZOp().Set(Gf.Vec3f(-40, 20, 0))
         self.product = rep.create.render_product(camera.GetPath(), tuple(self.size))
         self.rgb = rep.AnnotatorRegistry.get_annotator('rgb')
         self.rgb.attach([self.product])

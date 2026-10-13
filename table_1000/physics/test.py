@@ -3,6 +3,7 @@ import argparse
 import csv
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
 import statistics
@@ -22,7 +23,7 @@ def ground_clearance(model, rows, instance_names, ground_z):
     """Evaluate collision hull vertices against the plane from recorded poses."""
     import numpy as np
     from table_1000.physics.simulation import rotation
-    worlds, owners, points = {}, {}, {}
+    worlds, owners, points, spheres = {}, {}, {}, {}
     for node in model['nodes']:
         name,parent=node['name'],node['parent']
         worlds[name]=worlds.get(parent,np.eye(4)) @ np.array(node['matrix'])
@@ -30,8 +31,11 @@ def ground_clearance(model, rows, instance_names, ground_z):
         if node.get('role')=='collision':
             body=owners[name]
             transform=np.linalg.inv(worlds[body]) @ worlds[name]
-            vertices=np.c_[node['vertices'],np.ones(len(node['vertices']))]
-            points.setdefault(body,[]).extend((vertices @ transform.T)[:,:3])
+            if node.get('shape')=='SPHERE':
+                spheres.setdefault(body,[]).append((transform[:3,3],node['radius']))
+            else:
+                vertices=np.c_[node['vertices'],np.ones(len(node['vertices']))]
+                points.setdefault(body,[]).extend((vertices @ transform.T)[:,:3])
     points={body:np.array(vertices) for body,vertices in points.items()}
     minimum=[]
     for row in rows:
@@ -41,12 +45,17 @@ def ground_clearance(model, rows, instance_names, ground_z):
                 prefix=f'{instance}.{body}.'
                 quaternion=[row[prefix+'quaternion.'+axis] for axis in 'wxyz']
                 values.append(float((vertices @ rotation(quaternion).T)[:,2].min()+row[prefix+'position.z']-ground_z))
+            for body,entries in spheres.items():
+                prefix=f'{instance}.{body}.'
+                quaternion=[row[prefix+'quaternion.'+axis] for axis in 'wxyz']
+                r=rotation(quaternion)
+                values.extend(float((r@center)[2]+row[prefix+'position.z']-radius-ground_z) for center,radius in entries)
         minimum.append(min(values))
     index=int(np.argmin(minimum))
     return {'minimum_collision_clearance_m':minimum[index],
             'maximum_geometry_penetration_m':max(0.,-minimum[index]),'time_s':rows[index]['time'],
             'sampling_interval_s':rows[1]['time']-rows[0]['time'],
-            'method':'collision hull vertices transformed by recorded rigid poses; geometric overlap excludes contact margins'}
+            'method':'collision hull vertices and analytic sphere extents transformed by recorded rigid poses; geometric overlap excludes contact margins'}
 
 
 def benchmark(asset,name,test,app):
@@ -60,7 +69,7 @@ def benchmark(asset,name,test,app):
             ctx=TestContext(asset,name=name,app=app,warmup=True)
             construction=time.perf_counter()-start
             test(ctx)
-            seconds+=ctx.session.time;wall+=ctx.integrating_seconds
+            seconds+=ctx.session.time;wall+=time.perf_counter()-ctx.experiment_started
             prepare+=construction+ctx.preparation_seconds;warmup+=ctx.warmup_seconds
             finals.append(ctx.rows[-1])
             ctx.close()
@@ -105,18 +114,27 @@ def conditions(ctx):
                 'stiffnesses':instance.articulation.get_dof_stiffnesses().tolist(),
                 'dampings':instance.articulation.get_dof_dampings().tolist()}
     cpu=next(line.split(':',1)[1].strip() for line in Path('/proc/cpuinfo').read_text().splitlines() if line.startswith('model name'))
-    return {'engine':'Isaac Sim / CPU PhysX','isaac_version':get_version(),'dt':ctx.dt,'solver':'TGS','gpu_dynamics':False,'CCD':True,
+    scene=next(p for p in ctx.session.stage.Traverse() if p.IsA(UsdPhysics.Scene))
+    scene_ccd=PhysxSchema.PhysxSceneAPI(scene).GetEnableCCDAttr().Get()
+    return {'engine':'Isaac Sim / CPU PhysX','isaac_version':get_version(),'dt':ctx.dt,'solver':'TGS','gpu_dynamics':False,'scene_CCD':scene_ccd,
             'instances':len(ctx.session.instances),'gravity':ctx.gravity,'ground':getattr(ctx,'ground_config',None),
             'physics_values_from_engine':engine,'cpu':cpu,
+            'load_average':list(os.getloadavg()),'environment_threads':{key:os.getenv(key) for key in ['OMP_NUM_THREADS','OPENBLAS_NUM_THREADS','MKL_NUM_THREADS','NUMEXPR_NUM_THREADS']},
             'worker_controls':{'carb_tasking':settings.get('/plugins/carb.tasking.plugin/threadCount'),
                  'tbb':settings.get('/plugins/omni.tbb.globalcontrol/maxThreadCount'),
                  'physx':settings.get(_physx.SETTING_NUM_THREADS)},'native_math_threadpools':threadpool_info(),
-            'render_settings':{path:settings.get(path) for path in ['/rtx/rendermode','/rtx/post/motionblur/enabled',
+            'render_settings':{path:settings.get(path) for path in ['/rtx/rendermode','/persistent/rtx/modes/rt2/enabled',
+              '/rtx/rtpt/maxBounces','/rtx/rtpt/maxSpecularAndTransmissionBounces','/rtx/post/motionblur/enabled',
                 '/rtx/directLighting/sampledLighting/enabled','/rtx/directLighting/sampledLighting/samplesPerPixel',
                 '/rtx/directLighting/sampledLighting/denoisingTechnique','/rtx/directLighting/domeLight/sampleCount',
                 '/rtx/directLighting/domeLight/denoisingTechnique','/rtx/shadows/sampleCount','/rtx/shadows/denoiser/enable',
                 '/rtx/reflections/sampledLighting/samplesPerPixel','/rtx/reflections/denoiser/enabled','/rtx/post/taa/samples']},
-            'camera':ctx.camera_config,'standard_dt':ctx.dt==.004}
+            'camera':ctx.camera_config,
+            'lighting':{'dome_intensity':ctx.session.stage.GetPrimAtPath('/World/Light').GetAttribute('inputs:intensity').Get(),
+                        'sun_intensity':ctx.session.stage.GetPrimAtPath('/World/Sun').GetAttribute('inputs:intensity').Get(),
+                        'sun_rotation_xyz_degrees':list(ctx.session.stage.GetPrimAtPath('/World/Sun').GetAttribute('xformOp:rotateXYZ').Get())}
+                       if ctx.camera_instance else None,
+            'standard_dt':ctx.dt==.004}
 
 
 def run_video(asset,name,test,output,app,startup,rtf,gpu):
@@ -144,7 +162,7 @@ def run_video(asset,name,test,output,app,startup,rtf,gpu):
         result={'test':name,'execution_status':'completed','review_status':'pending','asset':str(asset),
             'conditions':{**conditions(ctx),'gpu':gpu},'columns':ctx.units,'plots':ctx.plot_columns,
             'steps':ctx.session.steps,'frames':len(ctx.images),'sampling':'state after integration at t; action columns are the force applied over [t-dt,t); initial t=0 has zero actions',
-            'physics_callbacks':'actions/state priority -100; official BehaviorScript priority 0; batched force flush priority 100; one physical step, no hidden substeps',
+            'physics_callbacks':'actions/state priority -100; official BehaviorScript priority 0 when present; batched force flush priority 100; one external physical step; TGS position iterations internally subdivide solver work',
             'performance':{'no_render':rtf,'video_end_to_end':{'simulated_seconds':ctx.session.time,'wall_seconds':wall,'RTF':ctx.session.time/wall},
                  'preparation':{'process_startup_seconds':startup,'construction_seconds':construction,'initialization_render_warmup_reset_seconds':ctx.preparation_seconds,'physical_warmup_seconds':ctx.warmup_seconds},
                  'independent_no_render_vs_video_final_max_scalar_error':max(errors)},
@@ -200,9 +218,10 @@ def main(argv=None):
         ['nvidia-smi','--query-gpu=index,name,driver_version,memory.used,utilization.gpu','--format=csv'],
         check=True,capture_output=True,text=True).stdout.strip()}
     from isaacsim import SimulationApp
-    app=SimulationApp({'headless':True,'create_new_stage':False,'active_gpu':args.gpu,'physics_gpu':args.gpu,'multi_gpu':False,
+    app=SimulationApp({'headless':True,'create_new_stage':False,'active_gpu':args.gpu,'physics_gpu':0 if os.getenv('CUDA_VISIBLE_DEVICES') == str(args.gpu) else args.gpu,'multi_gpu':False,
          'disable_viewport_updates':True,'limit_cpu_threads':4,'renderer':'RaytracedLighting','width':960,'height':480,
-         'extra_args':['--/persistent/physics/numThreads=4','--/rtx/post/motionblur/enabled=False']})
+         'extra_args':['--/persistent/physics/numThreads=4','--/rtx/post/motionblur/enabled=False',
+                       '--/persistent/rtx/modes/rt2/enabled=true']})
     startup=time.perf_counter()-started
     try:
         import carb
