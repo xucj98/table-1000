@@ -2,7 +2,7 @@
 
 ![preview](three_quarter.jpg)
 
-带抬升柱、双 6 自由度手臂和平动二指夹爪的轮式机器人，底座固定使用。`robot.urdf` 来自真机控制容器中的 xacro 展开（底盘 dvt1、从臂 hy_1.0、夹爪 fx001_h_evt1），关节、限位、质量与惯量保持真机值。
+带抬升柱、双 6 自由度手臂和平动二指夹爪的轮式机器人，底座固定使用。`robot.urdf` 来自真机控制容器中的 xacro 展开（底盘 dvt1、从臂 hy_1.0、夹爪 fx001_h_evt1），关节、限位、质量与惯量保持真机值。真机导出的原始 URDF 包（`ex001_render`，含 157.7 MB 外观 STL 与未采用的厂商碰撞网格，共 193 MB）留存在已忽略的 `assets/robots/x1pro/raw/ex001_render/`，不进入 Git；机器人构建只重写 `assets/robots/x1pro/` 下的 `import/` 与生成文件，不触及 `raw/`。
 
 ## 关节
 
