@@ -36,5 +36,5 @@
 "$ISAAC_PYTHON" -m table_1000.robots.preview asset_sources/robots/x1pro --joints '{"lift_joint": 0.4, "head_pitch_joint": 0.3, "right_arm_joint2": 0.4, "right_arm_joint3": -1.0, "left_arm_joint2": 0.4, "left_arm_joint3": -1.0, "right_arm_gripper_left_joint": 0.03, "right_arm_gripper_right_joint": -0.03, "left_arm_gripper_left_joint": 0.03, "left_arm_gripper_right_joint": -0.03}'
 ```
 
-构建约 4 s。检查脚本在地面上保持一个姿态 2 s（4 ms 步长）：22 个刚体、86 个碰撞形状，每步约 1 ms，实时因子约 4，关节跟踪误差小于 1 mrad。缩略图需要 Blender。
+缩略图左侧为外观网格，右侧为碰撞凸块，每个刚体一种颜色。构建约 4 s。检查脚本在地面上保持一个姿态 2 s（4 ms 步长）：22 个刚体、86 个碰撞形状，每步约 1 ms，实时因子约 4，关节跟踪误差小于 1 mrad。缩略图需要 Blender。
 

@@ -1,4 +1,5 @@
-"""Three-quarter thumbnail of a URDF robot: visual meshes left, collision right.
+"""Three-quarter thumbnail of a URDF robot: visual meshes left, collision right
+(one colour per rigid body).
 
 ``python -m table_1000.robots.preview asset_sources/robots/x1pro`` runs Blender
 in the background on this file and writes ``three_quarter.jpg`` (1920 x 960)
@@ -57,7 +58,7 @@ def link_poses(urdf, joints):
 
 
 def parts(urdf, joints):
-    """``{'visual': [(mesh path, 4x4)], 'collision': [...]}`` in the robot frame."""
+    """``{'visual': [(mesh path, 4x4, link)], 'collision': [...]}`` in the robot frame."""
     root, poses = link_poses(urdf, joints)
     result = {'visual': [], 'collision': []}
     for link in root.findall('link'):
@@ -66,7 +67,8 @@ def parts(urdf, joints):
                 mesh = element.find('geometry/mesh')
                 if mesh is not None:
                     path = (Path(urdf).parent / mesh.get('filename')).resolve()
-                    result[kind].append((str(path), (poses[link.get('name')] @ origin(element)).tolist()))
+                    result[kind].append((str(path), (poses[link.get('name')] @ origin(element)).tolist(),
+                                         link.get('name')))
     return result
 
 
@@ -76,18 +78,29 @@ def render(spec):
     from mathutils import Matrix, Vector
     bpy.ops.wm.read_factory_settings(use_empty=True)
     scene = bpy.context.scene
-    groups = {}
-    colours = {'visual': (.78, .78, .8, 1.), 'collision': (.95, .45, .15, 1.)}
+    import colorsys
+    groups, materials = {}, {}
+
+    def material(name, colour):
+        if name not in materials:
+            materials[name] = bpy.data.materials.new(name)
+            materials[name].use_nodes = True
+            materials[name].node_tree.nodes['Principled BSDF'].inputs['Base Color'].default_value = colour
+        return materials[name]
+
+    # Collision bodies get hues spaced by the golden angle, so neighbours differ.
+    bodies = list(dict.fromkeys(link for _, _, link in spec['parts']['collision']))
+    hues = {link: (i * .618034) % 1. for i, link in enumerate(bodies)}
     for kind, entries in spec['parts'].items():
-        material = bpy.data.materials.new(kind)
-        material.use_nodes = True
-        material.node_tree.nodes['Principled BSDF'].inputs['Base Color'].default_value = colours[kind]
         groups[kind] = []
-        for path, transform in entries:
+        for path, transform, link in entries:
             bpy.ops.wm.ply_import(filepath=path)
             obj = bpy.context.selected_objects[0]
             obj.matrix_world = Matrix(transform)
-            obj.data.materials.append(material)
+            if kind == 'visual':
+                obj.data.materials.append(material('visual', (.78, .78, .8, 1.)))
+            else:
+                obj.data.materials.append(material(link, (*colorsys.hsv_to_rgb(hues[link], .85, .8), 1.)))
             groups[kind].append(obj)
     bpy.context.view_layer.update()
     points = [obj.matrix_world @ Vector(corner) for obj in groups['visual'] for corner in obj.bound_box]
