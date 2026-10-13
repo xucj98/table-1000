@@ -44,6 +44,11 @@ class Cameras:
         self.product = rep.create.render_product(str(self.camera.GetPath()), resolutions.pop())
         self.rgb = rep.AnnotatorRegistry.get_annotator('rgb')
         self.rgb.attach([self.product])
+        # Replicator's orchestrator is created on an app update; without one a
+        # first capture can find it missing.
+        import omni.kit.app
+        for _ in range(3):
+            omni.kit.app.get_app().update()
 
     def world_transform(self, view):
         from pxr import Gf, UsdGeom

@@ -21,7 +21,7 @@ OPENING = .12
 # into the cabinet, tilted down by HANDLE_PITCH, and stops with the fingertips
 # HANDLE_TIP_CLEARANCE in front of the drawer face.
 HANDLE_PITCH = np.radians(30)
-HANDLE_TIP_CLEARANCE = .004
+HANDLE_TIP_CLEARANCE = .006
 # Pen grasp: top-down, fingers across the barrel at the pen's centre of mass
 # (so it does not pivot between the pads), kept within PEN_BARREL along the
 # axis (body frame); fingertips PEN_TIP_CLEARANCE above the table.
