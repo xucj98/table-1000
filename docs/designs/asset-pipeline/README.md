@@ -27,15 +27,16 @@ physics.py ──配置──> physics.usda
                   └──仿真测试──> MP4 / trace.csv / plots.jpg / result.json
 ```
 
-**机器人** 以 URDF 为模型源：Isaac Sim URDF 导入器生成 USD，`physics.py` 在其上叠加驱动、求解器与接触材料层 `robot.usda`。
+**机器人** 以厂商 URDF 包为原始输入：`prepare.py` 写明所选配置与碰撞划分，转换工具生成仓库中的 URDF 与网格；Isaac Sim URDF 导入器生成 USD，`physics.py` 在其上叠加驱动、求解器与接触材料层 `robot.usda`。详见[机器人资产规范](robots.md)。
 
 ```text
+raw/ 厂商 URDF 包 + prepare.py ──转换与检查──> robot.urdf + meshes/ + check.json
 robot.urdf + meshes/ ──导入──> import/robot.usd
 physics.py ──配置──> robot.usda
 robot.urdf ──Blender 渲染──> three_quarter.jpg
 ```
 
-**场景** 以 `scene.py` 为源码，写明引用的资产、桌子、机器人位姿和物体区域，并以普通函数表达按 seed 的初始摆放与布局约束；运行时由 `table_1000/scenes/` 把它组装进 Isaac Sim 舞台，不另生成场景文件。
+**场景** 以 `scene.py` 为源码，写明引用的资产、桌子、机器人位姿和物体区域，并以普通函数表达按 seed 的初始摆放与布局约束；运行时由 `table_1000/scenes/` 把它组装进 Isaac Sim 舞台，不另生成场景文件。场景、专家脚本与批量验收见[场景与专家任务规范](../scenes-and-tasks.md)。
 
 模型保存刚体划分、几何和关节定义；物理配置补充质量、材料与驱动。带行为资产使用生成的 `object.usda` 作为加载入口，见[行为分发](behaviors.md#分发)。几何预览配置与物理测试脚本均作为资产源码保存。已提供带盖笔与三抽屉盒的构建和测试示例。
 
@@ -70,8 +71,9 @@ robot.urdf ──Blender 渲染──> three_quarter.jpg
 | --- | --- | --- |
 | `asset_sources/objects/<category>/<id>/` | object.py、preview.json、metadata.json、README.md、three_quarter.jpg；第二阶段增加 physics.py、physics_test.py、可选 behavior.py | 提交 |
 | `assets/objects/<category>/<id>/` | object.blend、geometry.usdc、physics.usda、object.usdz、源码及配置快照、README.md、已有 three_quarter.jpg、可选 object.usda 与行为依赖、preview/、physics_test/ | 忽略 |
-| `asset_sources/robots/<name>/` | robot.urdf 及其按相对路径引用的 meshes/、physics.py、README.md、three_quarter.jpg | 提交 |
-| `assets/robots/<name>/` | URDF 导入结果 import/、加载入口 robot.usda、源码快照 | 忽略 |
+| `asset_sources/robots/<name>/` | robot.urdf 及其按相对路径引用的 meshes/、prepare.py、physics.py、README.md、three_quarter.jpg | 提交 |
+| `assets/robots/<name>/raw/` | 厂商原始 URDF 包 | 忽略；存档于 Hugging Face 数据集，版本见 `assets.lock.json` |
+| `assets/robots/<name>/` 其余 | URDF 导入结果 import/、加载入口 robot.usda、源码快照、prepare.json、check.json | 忽略 |
 | `asset_sources/scenes/scene-<id>/` | scene.py、README.md | 提交 |
 | `outputs/` | 临时实验结果与日志 | 忽略 |
 
