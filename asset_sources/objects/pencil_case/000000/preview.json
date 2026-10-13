@@ -1,0 +1,167 @@
+{
+  "front.jpg": {
+    "camera": [0, -1, 0, 0, 0, 1]
+  },
+  "back.jpg": {
+    "camera": [0, 1, 0, 0, 0, 1]
+  },
+  "left.jpg": {
+    "camera": [-1, 0, 0, 0, 0, 1]
+  },
+  "right.jpg": {
+    "camera": [1, 0, 0, 0, 0, 1]
+  },
+  "top.jpg": {
+    "camera": [0, 0, 1, 0, 1, 0]
+  },
+  "bottom.jpg": {
+    "camera": [0, 0, -1, 0, -1, 0]
+  },
+  "three_quarter.jpg": {
+    "camera": [0.82, -0.82, 0.72, 0, 0, 1]
+  },
+  "half_unzip.jpg": {
+    "camera": [0.82, -0.82, 0.72, 0, 0, 1],
+    "joints": {
+      "pencil_case.unzip": 0.108
+    }
+  },
+  "unzipped_closed.jpg": {
+    "camera": [0.82, -0.82, 0.72, 0, 0, 1],
+    "joints": {
+      "pencil_case.unzip": 0.216
+    }
+  },
+  "part_open.jpg": {
+    "camera": [0.82, -0.82, 0.72, 0, 0, 1],
+    "joints": {
+      "pencil_case.unzip": 0.216,
+      "pencil_case.front_lip_open": 0.39269908169872414,
+      "pencil_case.back_lip_open": -0.39269908169872414
+    }
+  },
+  "open.jpg": {
+    "camera": [0.82, -0.82, 0.72, 0, 0, 1],
+    "joints": {
+      "pencil_case.unzip": 0.216,
+      "pencil_case.front_lip_open": 0.7853981633974483,
+      "pencil_case.back_lip_open": -0.7853981633974483
+    }
+  },
+  "open_top.jpg": {
+    "camera": [0, 0, 1, 0, 1, 0],
+    "joints": {
+      "pencil_case.unzip": 0.216,
+      "pencil_case.front_lip_open": 0.7853981633974483,
+      "pencil_case.back_lip_open": -0.7853981633974483
+    }
+  },
+  "front_lip_endpoint.jpg": {
+    "camera": [0.82, -0.82, 0.72, 0, 0, 1],
+    "joints": {
+      "pencil_case.unzip": 0.216,
+      "pencil_case.front_lip_open": 0.7853981633974483
+    }
+  },
+  "back_lip_endpoint.jpg": {
+    "camera": [0.82, -0.82, 0.72, 0, 0, 1],
+    "joints": {
+      "pencil_case.unzip": 0.216,
+      "pencil_case.back_lip_open": -0.7853981633974483
+    }
+  },
+  "ring_negative.jpg": {
+    "camera": [0.82, -0.82, 0.72, 0, 0, 1],
+    "joints": {
+      "pencil_case.unzip": 0.216,
+      "pencil_case.front_lip_open": 0.7853981633974483,
+      "pencil_case.back_lip_open": -0.7853981633974483,
+      "pencil_case.ring_swing": -1.5707963267948966
+    }
+  },
+  "ring_positive.jpg": {
+    "camera": [0.82, -0.82, 0.72, 0, 0, 1],
+    "joints": {
+      "pencil_case.unzip": 0.216,
+      "pencil_case.front_lip_open": 0.7853981633974483,
+      "pencil_case.back_lip_open": -0.7853981633974483,
+      "pencil_case.ring_swing": 1.5707963267948966
+    }
+  },
+  "open_and_close.mp4": {
+    "fps": 24,
+    "frames": [
+      {
+        "frame": 0,
+        "camera": [0.82, -0.82, 0.72, 0, 0, 1]
+      },
+      {
+        "frame": 12,
+        "joints": {
+          "pencil_case.unzip": 0.216
+        }
+      },
+      {
+        "frame": 24,
+        "joints": {
+          "pencil_case.unzip": 0.216,
+          "pencil_case.front_lip_open": 0.7853981633974483,
+          "pencil_case.back_lip_open": -0.7853981633974483
+        }
+      },
+      {
+        "frame": 36,
+        "joints": {
+          "pencil_case.unzip": 0.216,
+          "pencil_case.front_lip_open": 0.7853981633974483,
+          "pencil_case.back_lip_open": -0.7853981633974483
+        }
+      },
+      {
+        "frame": 48,
+        "joints": {
+          "pencil_case.front_lip_open": 0,
+          "pencil_case.back_lip_open": 0
+        }
+      },
+      {
+        "frame": 60,
+        "joints": {
+          "pencil_case.unzip": 0
+        }
+      }
+    ]
+  },
+  "ring_swing.mp4": {
+    "fps": 12,
+    "frames": [
+      {
+        "frame": 0,
+        "camera": [0.82, -0.82, 0.72, 0, 0, 1],
+        "joints": {
+          "pencil_case.unzip": 0.216,
+          "pencil_case.front_lip_open": 0.7853981633974483,
+          "pencil_case.back_lip_open": -0.7853981633974483
+        }
+      },
+      {
+        "frame": 8,
+        "joints": {
+          "pencil_case.ring_swing": -1.5707963267948966
+        }
+      },
+      {
+        "frame": 16,
+        "joints": {
+          "pencil_case.ring_swing": 1.5707963267948966
+        }
+      },
+      {
+        "frame": 24,
+        "joints": {
+          "pencil_case.ring_swing": 0
+        }
+      }
+    ]
+  }
+}

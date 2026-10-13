@@ -16,6 +16,17 @@ class Object(dict):
 
 
 class AssetTreeTests(unittest.TestCase):
+    def test_deformable_owner_is_not_labeled_or_compacted_as_rigid(self):
+        root = Object('bag', kind='EMPTY')
+        film = Object('bag.panel1', root)
+        film['deformable_root'] = True
+        hardware = Object('bag.panel2', root, rigid=True)
+        part = Object('bag.panel1.film', film)
+        part['semantic_part'] = True
+        visual = Object('bag.panel1.film.visual', part, 'visual')
+        self.assertEqual(format_tree(asset_forest([root, film, hardware, part, visual]), True),
+                         'bag\n  panel1 [deformable]\n    film\n  panel2 [rigid]\n')
+
     def test_actual_parent_forest_and_auxiliary_filter(self):
         body = Object("body", rigid=True)
         cap = Object("cap", rigid=True)

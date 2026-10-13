@@ -95,36 +95,56 @@ class GeometryChecks:
         require(scene.unit_settings.system == 'METRIC' and abs(scene.unit_settings.scale_length-1) < 1e-8,
                 'Use metre scene units and unit scale 1')
         self.bodies = [o for o in scene.objects if o.get('rigid_body_root')]
-        require(self.bodies, 'No identified rigid bodies')
+        self.deformables = [o for o in scene.objects if o.get('deformable_root')]
+        self.owners = self.bodies + self.deformables
+        require(self.owners, 'No identified geometry owners')
         self.colliders = []
         self.visuals = []
         self.owner = {}
         for body in self.bodies:
             require(body.rigid_body and body.rigid_body.collision_shape == 'COMPOUND', f'Expected Compound: {body.name}')
             require(body.type == 'MESH' and len(body.data.vertices) == 0, f'Compound frame must have no geometry: {body.name}')
+        for owner in self.deformables:
+            require(not owner.get('rigid_body_root') and not owner.rigid_body,
+                    f'Deformable owner must not be a rigid body: {owner.name}')
+            require(owner.type == 'MESH' and len(owner.data.vertices) == 0,
+                    f'Deformable frame must have no geometry: {owner.name}')
+            require(any(c.get('semantic_part') for c in owner.children),
+                    f'Deformable owner requires semantic parts: {owner.name}')
+        for body in self.owners:
             ancestor = body.parent
             while ancestor:
-                require(ancestor not in self.bodies, f'Nested independent rigid bodies: {body.name}')
+                require(ancestor not in self.owners, f'Nested independent geometry owners: {body.name}')
                 ancestor = ancestor.parent
         for obj in scene.objects:
             require(all(abs(v-1) < 1e-6 for v in obj.scale), f'Unapplied scale: {obj.name}')
-            if obj.type != 'MESH' or obj in self.bodies:
+            if obj.type != 'MESH' or obj in self.owners:
                 continue
             root = obj.parent
-            while root and root not in self.bodies:
+            while root and root not in self.owners:
                 root = root.parent
             require(root is not None, f'Geometry without body owner: {obj.name}')
             if obj.get('semantic_part'):
-                require(len(obj.data.vertices) == 0 and obj.rigid_body and obj.rigid_body.collision_shape == 'COMPOUND',
-                        f'Semantic part must be an empty Compound: {obj.name}')
+                if root in self.deformables:
+                    require(obj.parent == root and len(obj.data.vertices) == 0 and not obj.rigid_body,
+                            f'Deformable part must be a direct nonrigid empty frame: {obj.name}')
+                else:
+                    require(len(obj.data.vertices) == 0 and obj.rigid_body and obj.rigid_body.collision_shape == 'COMPOUND',
+                            f'Semantic part must be an empty Compound: {obj.name}')
                 continue
+            if root in self.deformables:
+                require(obj.parent.get('semantic_part') and obj.parent.parent == root,
+                        f'Deformable geometry must belong to a direct semantic part: {obj.name}')
+                require(not obj.modifiers and not obj.data.shape_keys,
+                        f'Deformable preview requires explicit mesh vertices: {obj.name}')
             self.owner[obj.name] = root.name
             role = obj.get('geometry_role')
             require(role in {'visual', 'collision'}, f'Missing geometry role: {obj.name}')
             if role == 'collision':
                 ancestor = obj.parent
                 while ancestor != root:
-                    require(ancestor.get('semantic_part') and ancestor.rigid_body and ancestor.rigid_body.collision_shape == 'COMPOUND',
+                    require(ancestor.get('semantic_part') and (root in self.deformables or
+                            (ancestor.rigid_body and ancestor.rigid_body.collision_shape == 'COMPOUND')),
                             f'Collision ancestor must be a Compound part: {obj.name}')
                     ancestor = ancestor.parent
                 require(obj.rigid_body and obj.rigid_body.collision_shape in {'BOX', 'SPHERE', 'CONVEX_HULL'},
@@ -137,9 +157,11 @@ class GeometryChecks:
                 require(not obj.hide_render and not obj.rigid_body, f'Visual role mismatch: {obj.name}')
                 require(len(obj.data.polygons) > 0 and obj.data.materials, f'Missing visual surface: {obj.name}')
                 self.visuals.append(obj)
-        for body in self.bodies:
+        for body in self.owners:
             require(any(self.owner[o.name] == body.name for o in self.colliders), f'No collision geometry: {body.name}')
         self.local = {obj.name: convex_data(obj) for obj in self.colliders}
+        self.dynamic_colliders = [o for o in self.colliders
+                                 if self.owner[o.name] in {root.name for root in self.deformables}]
         self.spheres = {o.name: float(np.linalg.norm(self.local[o.name][0],axis=1).max())
                         for o in self.colliders if o.rigid_body.collision_shape == 'SPHERE'}
         for name, radius in self.spheres.items():
@@ -183,8 +205,19 @@ class GeometryChecks:
                        'complexity':totals,'bodies':len(self.bodies),'joints':joint_rows,
                        'ignored_body_pairs':[list(p) for p in sorted(self.ignored)],
                        'penetration_tolerance_m':self.tolerance,'samples':[],'failures':[]}
+        if self.deformables:
+            self.report['deformables'] = [{'name': root.name,
+                'visual_meshes': sum(self.owner[o.name] == root.name for o in self.visuals),
+                'colliders': sum(self.owner[o.name] == root.name for o in self.colliders)}
+                for root in self.deformables]
+            self.report['deformation_scope'] = ('Explicit stage-one geometry; dynamic convex data recomputed each sample; '
+                'no material dynamics or same-owner self-collision check')
 
-    def sample(self, output, frame, values, transforms=None):
+    def sample(self, output, frame, values, transforms=None, controls=None):
+        # Both opening and reset need fresh vertices, face normals and edge axes.
+        # Refresh before broad phase too: old bounds can otherwise hide penetration.
+        for obj in self.dynamic_colliders:
+            self.local[obj.name] = convex_data(obj)
         world = {}
         for obj in self.colliders:
             p,n,e = self.local[obj.name]
@@ -220,5 +253,7 @@ class GeometryChecks:
         self.report['samples'].append({'output':output,'frame':frame,'joints':values.copy(),'penetrations':len(failures)})
         if transforms:
             self.report['samples'][-1]['transforms'] = transforms.copy()
+        if controls is not None:
+            self.report['samples'][-1]['controls'] = controls.copy()
         self.report['failures'].extend(failures)
         return failures

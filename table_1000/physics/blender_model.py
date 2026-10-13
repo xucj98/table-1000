@@ -17,6 +17,8 @@ def extract(blend):
         scene.rigidbody_world.enabled = False
     bpy.context.view_layer.update()
     checks = GeometryChecks()
+    if checks.deformables:
+        raise ValueError('Stage-one deformable geometry has no physical export implementation')
     graph = bpy.context.evaluated_depsgraph_get()
     nodes = []
 

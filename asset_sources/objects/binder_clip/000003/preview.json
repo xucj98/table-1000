@@ -1,0 +1,203 @@
+{
+  "front.jpg": {
+    "camera": [0, -1, 0, 0, 0, 1]
+  },
+  "back.jpg": {
+    "camera": [0, 1, 0, 0, 0, 1]
+  },
+  "left.jpg": {
+    "camera": [-1, 0, 0, 0, 0, 1]
+  },
+  "right.jpg": {
+    "camera": [1, 0, 0, 0, 0, 1]
+  },
+  "top.jpg": {
+    "camera": [0, 0, 1, 0, 1, 0]
+  },
+  "bottom.jpg": {
+    "camera": [0, 0, -1, 0, -1, 0]
+  },
+  "three_quarter.jpg": {
+    "camera": [1, -0.45, 0.25, 0, 1, 0]
+  },
+  "handles_working.jpg": {
+    "camera": [1, -0.45, 0.25, 0, 1, 0]
+  },
+  "front_handle_outward.jpg": {
+    "camera": [1, -0.45, 0.25, 0, 1, 0],
+    "joints": {
+      "binder_clip.front_handle_turn": -0.5235987755982988
+    }
+  },
+  "rear_handle_outward.jpg": {
+    "camera": [1, -0.45, 0.25, 0, 1, 0],
+    "joints": {
+      "binder_clip.rear_handle_turn": -0.5235987755982988
+    }
+  },
+  "handles_outward.jpg": {
+    "camera": [1, -0.45, 0.25, 0, 1, 0],
+    "joints": {
+      "binder_clip.front_handle_turn": -0.5235987755982988,
+      "binder_clip.rear_handle_turn": -0.5235987755982988
+    }
+  },
+  "closed_side.jpg": {
+    "camera": [1, 0, 0, 0, 1, 0]
+  },
+  "open_side.jpg": {
+    "camera": [1, 0, 0, 0, 1, 0],
+    "joints": {
+      "binder_clip.front_jaw_open": 0.2617993877991494,
+      "binder_clip.rear_jaw_open": 0.2617993877991494
+    }
+  },
+  "open_three_quarter.jpg": {
+    "camera": [1, -0.45, 0.25, 0, 1, 0],
+    "joints": {
+      "binder_clip.front_jaw_open": 0.2617993877991494,
+      "binder_clip.rear_jaw_open": 0.2617993877991494
+    }
+  },
+  "handles.mp4": {
+    "fps": 24,
+    "frames": [
+      {
+        "frame": 0,
+        "camera": [1, 0, 0, 0, 1, 0],
+        "joints": {
+          "binder_clip.front_jaw_open": 0,
+          "binder_clip.rear_jaw_open": 0,
+          "binder_clip.front_handle_turn": 0,
+          "binder_clip.rear_handle_turn": 0
+        }
+      },
+      {
+        "frame": 12,
+        "joints": {
+          "binder_clip.front_handle_turn": -0.5235987755982988
+        }
+      },
+      {
+        "frame": 24,
+        "joints": {
+          "binder_clip.front_handle_turn": 0
+        }
+      },
+      {
+        "frame": 36,
+        "joints": {
+          "binder_clip.rear_handle_turn": -0.5235987755982988
+        }
+      },
+      {
+        "frame": 48,
+        "joints": {
+          "binder_clip.rear_handle_turn": 0
+        }
+      }
+    ]
+  },
+  "jaws.mp4": {
+    "fps": 24,
+    "frames": [
+      {
+        "frame": 0,
+        "camera": [1, 0, 0, 0, 1, 0],
+        "joints": {
+          "binder_clip.front_jaw_open": 0,
+          "binder_clip.rear_jaw_open": 0,
+          "binder_clip.front_handle_turn": 0,
+          "binder_clip.rear_handle_turn": 0
+        }
+      },
+      {
+        "frame": 18,
+        "joints": {
+          "binder_clip.front_jaw_open": 0.2617993877991494,
+          "binder_clip.rear_jaw_open": 0.2617993877991494,
+          "binder_clip.front_handle_turn": 0.0,
+          "binder_clip.rear_handle_turn": 0.0
+        }
+      },
+      {
+        "frame": 30,
+        "joints": {
+          "binder_clip.front_jaw_open": 0.2617993877991494,
+          "binder_clip.rear_jaw_open": 0.2617993877991494,
+          "binder_clip.front_handle_turn": 0.0,
+          "binder_clip.rear_handle_turn": 0.0
+        }
+      },
+      {
+        "frame": 48,
+        "joints": {
+          "binder_clip.front_jaw_open": 0,
+          "binder_clip.rear_jaw_open": 0,
+          "binder_clip.front_handle_turn": 0,
+          "binder_clip.rear_handle_turn": 0
+        }
+      }
+    ]
+  },
+  "operation.mp4": {
+    "fps": 24,
+    "frames": [
+      {
+        "frame": 0,
+        "camera": [1, -0.45, 0.25, 0, 1, 0],
+        "joints": {
+          "binder_clip.front_jaw_open": 0,
+          "binder_clip.rear_jaw_open": 0,
+          "binder_clip.front_handle_turn": 0,
+          "binder_clip.rear_handle_turn": 0
+        }
+      },
+      {
+        "frame": 12,
+        "joints": {
+          "binder_clip.front_jaw_open": 0.08726646259971647,
+          "binder_clip.rear_jaw_open": 0.08726646259971647,
+          "binder_clip.front_handle_turn": 0.0,
+          "binder_clip.rear_handle_turn": 0.0
+        }
+      },
+      {
+        "frame": 30,
+        "joints": {
+          "binder_clip.front_jaw_open": 0.2617993877991494,
+          "binder_clip.rear_jaw_open": 0.2617993877991494,
+          "binder_clip.front_handle_turn": 0.0,
+          "binder_clip.rear_handle_turn": 0.0
+        }
+      },
+      {
+        "frame": 42,
+        "joints": {
+          "binder_clip.front_jaw_open": 0.2617993877991494,
+          "binder_clip.rear_jaw_open": 0.2617993877991494,
+          "binder_clip.front_handle_turn": 0.0,
+          "binder_clip.rear_handle_turn": 0.0
+        }
+      },
+      {
+        "frame": 60,
+        "joints": {
+          "binder_clip.front_jaw_open": 0.08726646259971647,
+          "binder_clip.rear_jaw_open": 0.08726646259971647,
+          "binder_clip.front_handle_turn": 0.0,
+          "binder_clip.rear_handle_turn": 0.0
+        }
+      },
+      {
+        "frame": 72,
+        "joints": {
+          "binder_clip.front_jaw_open": 0,
+          "binder_clip.rear_jaw_open": 0,
+          "binder_clip.front_handle_turn": 0,
+          "binder_clip.rear_handle_turn": 0
+        }
+      }
+    ]
+  }
+}

@@ -60,10 +60,24 @@ def body(name, root):
     return obj
 
 
+def deformable(name, root):
+    """Stage-one deforming geometry owner, not a physical rigid body."""
+    obj = bpy.data.objects.new(name, bpy.data.meshes.new(name + "_frame"))
+    bpy.context.scene.collection.objects.link(obj)
+    obj.parent = root
+    obj["deformable_root"] = True
+    return obj
+
+
 def part(name, root):
-    """A nested Compound semantic component, owned by its independent body."""
-    obj = body(name, root)
-    del obj["rigid_body_root"]
+    """Semantic component; Compound only when owned by a rigid body."""
+    if root.get("deformable_root"):
+        obj = bpy.data.objects.new(name, bpy.data.meshes.new(name + "_frame"))
+        bpy.context.scene.collection.objects.link(obj)
+        obj.parent = root
+    else:
+        obj = body(name, root)
+        del obj["rigid_body_root"]
     obj["semantic_part"] = True
     return obj
 
@@ -316,7 +330,8 @@ def generate(build, source_file, argv=None):
     scene.unit_settings.length_unit = "METERS"
     scene.frame_start, scene.frame_end = 0, 48
     build()
-    scene.rigidbody_world.enabled = False
+    if scene.rigidbody_world:
+        scene.rigidbody_world.enabled = False
     scene["penetration_tolerance_m"] = 0.0002
     scene.frame_set(0)
     bpy.context.view_layer.update()
