@@ -12,14 +12,16 @@ import numpy as np
 
 
 class Cameras:
-    """Views rendered in turn through one camera and one render product.
+    """One camera, render product and RGB annotator per view, rendered together.
 
-    With a render product per view, the annotators were seen returning images
-    of the wrong view; one product whose camera is moved between views, with a
-    settling render after each move, gives each view its own image.
+    Each view keeps its own camera so the renderer's temporal accumulation
+    carries over between frames. Moving one camera between views cleared it on
+    every frame and the videos flickered (about ten times the frame-to-frame
+    change of a fixed camera on a static scene). Fixed cameras are placed once;
+    cameras that follow a prim are moved before each capture.
     """
 
-    SETTLE_RENDERS = 1
+    RT_SUBFRAMES = 1
 
     def __init__(self, stage, views, output, fps):
         import carb
@@ -34,20 +36,19 @@ class Cameras:
         for setting in ['/rtx/rtpt/maxBounces', '/rtx/rtpt/maxSpecularAndTransmissionBounces']:
             settings.set(setting, 12)
         self.rep, self.stage, self.output, self.fps = rep, stage, Path(output), fps
-        resolutions = {tuple(view['resolution']) for view in views.values()}
-        if len(resolutions) != 1:
-            raise ValueError('all views share one render product and need one resolution')
-        self.camera = UsdGeom.Camera.Define(stage, '/World/Cameras/view')
-        self.camera.CreateClippingRangeAttr(Gf.Vec2f(.01, 100))
-        self.focal = self.camera.CreateFocalLengthAttr(24.)
-        self.transform = UsdGeom.Xformable(self.camera).AddTransformOp()
         self.views = views
         self.counts = {name: 0 for name in views}
-        for name in views:
+        self.transforms, self.products, self.annotators = {}, {}, {}
+        for name, view in views.items():
             (self.output / name).mkdir(parents=True, exist_ok=True)
-        self.product = rep.create.render_product(str(self.camera.GetPath()), resolutions.pop())
-        self.rgb = rep.AnnotatorRegistry.get_annotator('rgb')
-        self.rgb.attach([self.product])
+            camera = UsdGeom.Camera.Define(stage, f'/World/Cameras/{name}')
+            camera.CreateClippingRangeAttr(Gf.Vec2f(.01, 100))
+            camera.CreateFocalLengthAttr(float(view['focal_length_mm']))
+            self.transforms[name] = UsdGeom.Xformable(camera).AddTransformOp()
+            self.transforms[name].Set(self.world_transform(view))
+            self.products[name] = rep.create.render_product(str(camera.GetPath()), tuple(view['resolution']))
+            self.annotators[name] = rep.AnnotatorRegistry.get_annotator('rgb')
+            self.annotators[name].attach([self.products[name]])
         # Replicator's orchestrator is created on an app update; without one a
         # first capture can find it missing.
         import omni.kit.app
@@ -67,11 +68,11 @@ class Cameras:
         from omni.physx import get_physx_interface
         get_physx_interface().update_transformations(True, True, True, False)
         for name, view in self.views.items():
-            self.focal.Set(float(view['focal_length_mm']))
-            self.transform.Set(self.world_transform(view))
-            for _ in range(1 + self.SETTLE_RENDERS):
-                self.rep.orchestrator.step(rt_subframes=1, delta_time=0., pause_timeline=False)
-            image = Image.fromarray(self.rgb.get_data()[:, :, :3])
+            if 'parent' in view:
+                self.transforms[name].Set(self.world_transform(view))
+        self.rep.orchestrator.step(rt_subframes=self.RT_SUBFRAMES, delta_time=0., pause_timeline=False)
+        for name in self.views:
+            image = Image.fromarray(self.annotators[name].get_data()[:, :, :3])
             draw = ImageDraw.Draw(image)
             draw.rectangle((0, 0, image.width, 18), fill='white')
             draw.text((6, 3), f't={env.time:5.2f}s  {env.contacts.phase}', fill='black')
@@ -92,5 +93,6 @@ class Cameras:
         return written
 
     def close(self):
-        self.rgb.detach()
-        self.product.destroy()
+        for name in self.views:
+            self.annotators[name].detach()
+            self.products[name].destroy()

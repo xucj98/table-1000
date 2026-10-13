@@ -1,7 +1,7 @@
 """Three-quarter thumbnail of a URDF robot: visual meshes left, collision right.
 
 ``python -m table_1000.robots.preview asset_sources/robots/x1pro`` runs Blender
-in the background on this file and writes ``three_quarter.jpg`` (480 x 240)
+in the background on this file and writes ``three_quarter.jpg`` (1920 x 960)
 next to the URDF, posed by ``--joints`` (JSON, missing joints at zero).
 This file is also the script Blender runs, so its top level imports only what
 Blender's Python has.
@@ -16,7 +16,7 @@ import xml.etree.ElementTree as ET
 
 import numpy as np
 
-PANEL = 240
+PANEL = 960
 VIEW = (1., -.75, .55)  # camera direction from the robot, robot frame
 
 
