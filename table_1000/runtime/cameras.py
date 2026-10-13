@@ -19,23 +19,21 @@ class Cameras:
     every frame and the videos flickered (about ten times the frame-to-frame
     change of a fixed camera on a static scene). Fixed cameras are placed once;
     cameras that follow a prim are moved before each capture.
+
+    ``subframes`` renders per capture, all of the same physical state. One
+    leaves a trail behind fast motion (a released pen) from the renderer's
+    temporal denoising; eight brought it to the level of the render noise.
     """
 
-    RT_SUBFRAMES = 1
+    SUBFRAMES = 8
 
-    def __init__(self, stage, views, output, fps):
-        import carb
+    def __init__(self, stage, views, output, fps, subframes=SUBFRAMES):
         import omni.replicator.core as rep
         from pxr import Gf, UsdGeom
-        settings = carb.settings.get_settings()
-        for setting in ['/omni/replicator/captureOnPlay', '/omni/replicator/asyncRendering', '/app/asyncRendering']:
-            settings.set(setting, False)
-        settings.set('/rtx/post/motionblur/enabled', False)
-        # As in the asset physics tests: closed translucent walls need enough
-        # transmission rays in RTX Real-Time 2.0.
-        for setting in ['/rtx/rtpt/maxBounces', '/rtx/rtpt/maxSpecularAndTransmissionBounces']:
-            settings.set(setting, 12)
+        from table_1000.runtime import render
+        render.configure()
         self.rep, self.stage, self.output, self.fps = rep, stage, Path(output), fps
+        self.subframes = int(subframes)
         self.views = views
         self.counts = {name: 0 for name in views}
         self.transforms, self.products, self.annotators = {}, {}, {}
@@ -70,7 +68,7 @@ class Cameras:
         for name, view in self.views.items():
             if 'parent' in view:
                 self.transforms[name].Set(self.world_transform(view))
-        self.rep.orchestrator.step(rt_subframes=self.RT_SUBFRAMES, delta_time=0., pause_timeline=False)
+        self.rep.orchestrator.step(rt_subframes=self.subframes, delta_time=0., pause_timeline=False)
         for name in self.views:
             image = Image.fromarray(self.annotators[name].get_data()[:, :, :3])
             draw = ImageDraw.Draw(image)

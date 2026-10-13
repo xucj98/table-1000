@@ -69,12 +69,10 @@ def child(args):
     output = args.output.resolve()
     run_started = time.perf_counter()
     from table_1000.runtime.app import start_app
-    # Videos use RTX Real-Time 2.0, which renders the assets' transmissive
-    # plastics as in their physics tests. Runs without video leave it off: its
-    # ray-tracing pipelines are built at startup, and with eight runs starting
-    # at once on two GPUs the build sometimes failed and left the run hanging.
+    from table_1000.runtime.render import RT2_ARGS
+    # Only video runs need RTX Real-Time 2.0 (see table_1000.runtime.render).
     app = start_app(output, gpu=args.gpu, workers=4, renderer='RaytracedLighting', disable_viewport_updates=True,
-                    extra_args=['--/persistent/rtx/modes/rt2/enabled=true'] if args.video else [])
+                    extra_args=RT2_ARGS if args.video else ())
     timings = {'startup_s': time.perf_counter() - run_started}
     result = {'status': 'FAIL', 'seed': args.seed, 'offsets_argument': args.offsets}
     env = None
@@ -91,8 +89,8 @@ def child(args):
             offsets = {'cabinet': tuple(args.offsets[:2]), 'pen': tuple(args.offsets[2:])}
         layout = scene.placement(seed=args.seed, offsets=offsets)
         result['layout'] = {'offsets': layout['offsets'], 'problems': scene.check(layout)}
-        cameras = (lambda stage: Cameras(stage, views(), output / 'frames', fps=round(1 / (DT * RENDER_EVERY)))) \
-            if args.video else None
+        cameras = (lambda stage: Cameras(stage, views(), output / 'frames', fps=round(1 / (DT * RENDER_EVERY)),
+                                         subframes=args.subframes)) if args.video else None
         env = Environment(scene, layout, ASSETS, cameras=cameras)
         initial = env.body_poses()
         result['initial_poses'] = {key: initial[key].tolist() for key in ('cabinet:cabinet.housing', 'pen:body')}
@@ -176,7 +174,7 @@ def parent(args, script):
     if args.offsets:
         command += ['--offsets', *map(str, args.offsets)]
     if args.video:
-        command.append('--video')
+        command += ['--video', '--subframes', str(args.subframes)]
     code = supervise(command, cwd=ROOT, output=output, env=isolated_environment(output))
     result = json.loads((output / 'result.json').read_text()) if (output / 'result.json').exists() else {}
     summary = {'status': result.get('status', 'NO_RESULT'), 'returncode': code, 'failure': result.get('failure'),

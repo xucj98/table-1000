@@ -9,6 +9,8 @@ from pathlib import Path
 
 import numpy as np
 
+from table_1000.runtime import render
+
 ROBOT_PATH, TABLE_PATH = '/World/Robot', '/World/Table'
 OBJECT_PATHS = {'cabinet': '/World/Cabinet', 'pen': '/World/Pen'}
 
@@ -70,14 +72,6 @@ def add_reference(stage, path, entry, transform):
     return prim
 
 
-def add_lights(stage):
-    from pxr import Gf, UsdGeom, UsdLux
-    UsdLux.DomeLight.Define(stage, '/World/Light').CreateIntensityAttr(900)
-    sun = UsdLux.DistantLight.Define(stage, '/World/Sun')
-    sun.CreateIntensityAttr(2500)
-    UsdGeom.Xformable(sun).AddRotateXYZOp().Set(Gf.Vec3f(-40, 20, 0))
-
-
 def populate(stage, scene, layout, assets):
     """Add the table, robot and placed objects to ``stage`` (no ground or physics scene)."""
     from pxr import UsdGeom
@@ -87,7 +81,7 @@ def populate(stage, scene, layout, assets):
     add_reference(stage, ROBOT_PATH, asset_entry(assets, scene.ROBOT['asset']), robot_base(scene))
     for name, path in OBJECT_PATHS.items():
         add_reference(stage, path, asset_entry(assets, getattr(scene, name.upper())['asset']), layout[name])
-    add_lights(stage)
+    render.add_lights(stage)
 
 
 def named_bodies(stage, root):

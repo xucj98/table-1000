@@ -1,4 +1,12 @@
-"""Batch of supervised drawer-and-pen runs (see scripts/tasks/drawer_pen_batch.py)."""
+"""Batch of supervised drawer-and-pen runs (see scripts/tasks/drawer_pen_batch.py).
+
+A run that ends without ``result.json`` failed before or outside the task --
+with eight runs at once, Isaac sometimes failed to build its ray-tracing
+pipelines at startup and hung until the supervisor stopped it. Such a run is
+moved aside to ``<case>.no-result-<n>`` and started again, up to ATTEMPTS times;
+a run with a result, PASS or FAIL, is never repeated. Starts on one GPU are
+spaced by START_GAP_S.
+"""
 
 from concurrent.futures import ThreadPoolExecutor
 import csv
@@ -6,9 +14,13 @@ import itertools
 import json
 import subprocess
 import sys
+import threading
 import time
 
 from table_1000.runtime.process import write_json
+
+ATTEMPTS = 2
+START_GAP_S = 20.
 
 
 def cases(kind, first=0, count=0, half_range=.05):
@@ -49,14 +61,30 @@ def main(args, script):
     todo = cases(args.set, args.first, args.count)
     started = time.time()
 
+    locks = {gpu: threading.Lock() for gpu in args.gpus}
+    last_start = {gpu: 0. for gpu in args.gpus}
+
+    def start_slot(gpu):
+        with locks[gpu]:
+            wait = last_start[gpu] + START_GAP_S - time.monotonic()
+            if wait > 0:
+                time.sleep(wait)
+            last_start[gpu] = time.monotonic()
+
     def run(index_case):
         index, (name, arguments) = index_case
         directory = output / name
-        if not (directory / 'result.json').exists():
-            gpu = args.gpus[index % len(args.gpus)]
+        gpu = args.gpus[index % len(args.gpus)]
+        attempts = 0
+        while not (directory / 'result.json').exists() and attempts < ATTEMPTS:
+            if directory.exists():
+                directory.rename(output / f'{name}.no-result-{len(list(output.glob(name + ".no-result-*"))) + 1}')
+            start_slot(gpu)
+            attempts += 1
             subprocess.run([sys.executable, str(script), *arguments, '--output', str(directory), '--gpu', str(gpu)],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return summarize(directory)
+        return {**summarize(directory), 'attempts': attempts,
+                'no_result_attempts': len(list(output.glob(name + '.no-result-*')))}
 
     with ThreadPoolExecutor(args.jobs) as pool:
         rows = list(pool.map(run, enumerate(todo)))
