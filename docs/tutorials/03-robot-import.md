@@ -2,13 +2,30 @@
 
 以双臂移动机器人 [X1Pro](../../asset_sources/robots/x1pro/) 为例，把厂商的 URDF 包变成仿真可用的机器人：**取回原始包 → 编写转换选择 → 生成机器人源码 → 物理层与构建 → 机器人描述与控制接口 → 验收与留存**。交付物包括可以导入仿真器的模型，规划器、控制接口（关节控制和末端位姿控制），并在仿真中验证行为和性能。各文件的要求见[机器人资产规范](../designs/asset-pipeline/robots.md)。
 
-**输入：** 真机导出的 URDF 包 `ex001_render`（193 MB：URDF、44 个外观 STL 共 157.7 MB、厂商碰撞网格）。
+**输入（开发机器人时）：** 真机导出的 URDF 包 `ex001_render`（193 MB：URDF、44 个外观 STL 共 157.7 MB、厂商碰撞网格）。
 
 **输出：** 不超过 10 MB 的机器人源码 `asset_sources/robots/x1pro/`，以及构建产物 `assets/robots/x1pro/robot.usda`。
 
 ![X1Pro：左为外观，右为碰撞凸块（每个刚体一种颜色）](../../asset_sources/robots/x1pro/three_quarter.jpg)
 
-## 1. 准备环境与原始包
+## 两种用法
+
+| 角色 | 需要 | 步骤 |
+| --- | --- | --- |
+| **使用机器人**：场景、任务和其他资产的开发者 | 仓库中的 `asset_sources/robots/x1pro/` 与 `table_1000/`；不需要原始包，也不需要数据集权限 | 构建（第 4 节），之后按需运行验收与遥控（第 6 节） |
+| **开发机器人**：修改转换选择、重新生成网格、更新厂商数据 | 另需厂商原始包（Hugging Face 私有数据集） | 第 1–6 节全部 |
+
+使用机器人只需三条命令（环境同第二章）：
+
+```bash
+"$ISAAC_PYTHON" scripts/assets/build_robot.py x1pro --gpu 0
+"$ISAAC_PYTHON" scripts/robots/check_robot.py x1pro --output outputs/robots/x1pro-check --gpu 0
+"$ISAAC_PYTHON" scripts/robots/teleop.py x1pro --output outputs/robots/x1pro-teleop --gpu 0 --port 8765
+```
+
+构建把 `assets/robots/x1pro/robot.usda` 写到已忽略的 `assets/` 下，场景按 `robots/x1pro` 引用它；代码里用 `table_1000.robots.load_spec('x1pro')` 取机器人描述，`RobotModel` 做运动学与规划，`Env` 控制仿真中的机器人（第 5 节）。构建、源码检查、验收和遥控都只读源码目录；只有第 3 节的重新生成需要原始包。
+
+## 1. 准备环境与原始包（开发机器人）
 
 环境同第二章（`ISAAC_PYTHON`、`OMNI_KIT_ACCEPT_EULA`）。该 Python 环境另需 trimesh、open3d、coacd、huggingface_hub，缩略图需要 Blender。
 
@@ -21,7 +38,7 @@
 
 原始包落在 `assets/robots/x1pro/raw/ex001_render/`。`remote.py list` 显示清单；`remote.py push <assets 下的目录> -m "说明"` 上传一个目录并把新版本写入清单，随后提交清单。
 
-## 2. 编写转换选择
+## 2. 编写转换选择（开发机器人）
 
 机器人目录中的 [prepare.py](../../asset_sources/robots/x1pro/prepare.py) 只写这台机器人的选择，转换流程由 [table_1000/robots/prepare.py](../../table_1000/robots/prepare.py) 统一完成：
 
@@ -34,7 +51,7 @@
 
 厂商 URDF 自带的碰撞网格是非凸网格，PhysX 的动态刚体只能用凸体，所以不直接使用；碰撞凸块从简化后的外观网格生成，保证外观在碰撞体内。
 
-## 3. 生成机器人源码
+## 3. 生成机器人源码（开发机器人）
 
 ```bash
 "$ISAAC_PYTHON" scripts/assets/prepare_robot.py x1pro
@@ -47,7 +64,7 @@
 3. 每个外观网格用 CoACD 分为凸块，按质心排序写出，结果不随线程调度变化。
 4. 应用 `edit(root)`，并把固定关节连接的零件并入所属运动刚体（78 个连杆 → 22 个刚体），质量与惯量按平行轴定理合并。Isaac 导入器只合并无质量连杆，不合并时导入后有 78 个刚体，仿真慢且接近 articulation 上限。
 
-转换结束后自动检查，也可单独运行（约 10 s）：
+转换结束后自动检查，也可单独运行（约 10 s，只读源码，不需要原始包）：
 
 ```bash
 "$ISAAC_PYTHON" scripts/assets/prepare_robot.py x1pro --check

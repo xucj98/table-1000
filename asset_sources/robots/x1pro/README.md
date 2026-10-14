@@ -35,15 +35,21 @@
 - **指垫扭转摩擦**：接触片半径 6 mm（`torsionalPatchRadius`），否则物体可绕两指连线自由转动。
 - **底盘**：虚拟关节刚度 1e5 N/m、8000 N·m/rad，推力上限 116 N、扭矩上限 28 N·m（两个轮电机各 5 N·m，轮半径 0.086 m，轮距 0.48 m）。挡住时停下，不会把障碍物硬推开。机器人与地面的碰撞关闭，轮子只随动。每个夹爪的两指之间、头与躯干之间、每只手臂的上臂（link2）与前臂（link4）之间不检测碰撞（规划模型也排除）：它们的凸块互相重叠，真机上由导轨、装配或关节限位保证不接触。零位时手臂折叠，joint2、joint3 都在限位上，前臂外壳贴在上臂上，两者不能更近。机身连杆不受重力，相当于理想的重力补偿控制，位置目标没有下垂；手中物体仍受重力。增益与摩擦是仿真取值，未对照真机控制器标定。
 
-## 生成、构建与预览
+## 使用与修改
 
-`prepare.py` 写明所用的 URDF 配置、每个连杆的凸块数和关节改动；转换工具据此从原始包重新生成 `robot.urdf` 与 `meshes/`，再检查碰撞覆盖与目录大小。
+使用这台机器人只需本目录：构建出 `assets/robots/x1pro/robot.usda` 后即可在场景中引用，验收与遥控同样不需要原始包。
+
+```bash
+"$ISAAC_PYTHON" scripts/assets/build_robot.py x1pro --gpu 0
+"$ISAAC_PYTHON" scripts/robots/check_robot.py x1pro --output outputs/robots/x1pro-check --gpu 0
+"$ISAAC_PYTHON" scripts/robots/teleop.py x1pro --output outputs/robots/x1pro-teleop --gpu 0 --port 8765
+```
+
+修改机器人时才需要原始包：`prepare.py` 写明所用的 URDF 配置、每个连杆的凸块数和关节改动，转换工具据此从原始包重新生成 `robot.urdf` 与 `meshes/`，再检查碰撞覆盖与目录大小；之后重新构建、验收并更新缩略图。
 
 ```bash
 "$ISAAC_PYTHON" scripts/assets/remote.py pull robots/x1pro/raw/ex001_render
 "$ISAAC_PYTHON" scripts/assets/prepare_robot.py x1pro
-"$ISAAC_PYTHON" scripts/assets/build_robot.py x1pro --gpu 0
-"$ISAAC_PYTHON" scripts/robots/check_robot.py x1pro --output outputs/robots/x1pro-check --gpu 0
 "$ISAAC_PYTHON" -m table_1000.robots.preview asset_sources/robots/x1pro --joints '{"lift_joint": 0.4, "head_pitch_joint": 0.3, "right_arm_joint2": 0.4, "right_arm_joint3": -1.0, "left_arm_joint2": 0.4, "left_arm_joint3": -1.0, "right_arm_gripper_left_joint": 0.03, "right_arm_gripper_right_joint": -0.03, "left_arm_gripper_left_joint": 0.03, "left_arm_gripper_right_joint": -0.03}'
 ```
 

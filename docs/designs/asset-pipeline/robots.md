@@ -21,6 +21,8 @@ table_1000/robots/<name>.py (SPEC) ──> 运动学与规划模型、控制器 
 | `assets/robots/<name>/raw/` | 厂商原始包，原样保存 | 否；存档于数据集，版本记录在 `assets.lock.json` |
 | `assets/robots/<name>/` 其余 | `import/`、`robot.usda`、源码快照、`build.json`、`prepare.json`、`check.json` | 否；可由源码重建 |
 
+使用机器人只需 Git 中的源码：构建、源码检查（`--check`）、验收和遥控都不读取原始包，场景、任务和其他资产的开发者不需要数据集权限。只有重新生成源码（改 `prepare.py` 的选择或转换工具、厂商数据更新）才需要原始包。
+
 源码目录不超过 10 MB，不依赖上游 ROS 包即可构建：URDF 只用相对路径，不用 `package://`。README 写明原始包名称、所选 URDF 配置和对厂商数据的全部改动。
 
 ## 运动学与刚体
