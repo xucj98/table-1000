@@ -58,9 +58,11 @@ class SuperviseTest(unittest.TestCase):
         self.assertIn('no heartbeat', record['interventions'][0]['reason'])
 
     def test_fresh_heartbeats_keep_a_child_alive(self):
-        source = ('import json,time\nfor _ in range(6):\n'
-                  '    open("heartbeat.json","w").write(json.dumps({"epoch":time.time()}));time.sleep(.05)')
-        record = self.run_child(source, stall_timeout_s=.2)
+        # Runs 2.5 times the stall timeout; the timeout leaves room for a slow
+        # interpreter start on a loaded machine before the first heartbeat.
+        source = ('import json,time\nfor _ in range(50):\n'
+                  '    open("heartbeat.json","w").write(json.dumps({"epoch":time.time()}));time.sleep(.1)')
+        record = self.run_child(source, stall_timeout_s=2.)
         self.assertEqual(record['returncode'], 0)
         self.assertEqual(record['interventions'], [])
 
