@@ -165,7 +165,7 @@ class Server:
             self.condition.notify_all()
 
 
-def run(env, layout, output, port, views, render_every=2):
+def run(env, layout, output, port, views, render_every=5):
     """Teleoperate ``env`` until interrupted; renders every ``render_every`` control steps."""
     from table_1000.robots.controllers import CONTROL_HZ
     dt = 1 / CONTROL_HZ
@@ -173,9 +173,11 @@ def run(env, layout, output, port, views, render_every=2):
     server = Server(keys, views, port)
     arms = list(env.spec.arms)
     arm, gaps = arms[0], {name: 0. for name in arms}
-    log = (Path(output) / 'actions.jsonl').open('a')
+    log = (Path(output) / 'actions.jsonl').open('a', buffering=1)
     env.reset(layout)
-    step = 0
+    step, wall = 0, time.perf_counter()
+    costs = {'physics': 0., 'render': 0., 'total': 0.}
+    before = dict(env.backend.timings)
     print(f'teleop on http://<host>:{port}/', flush=True)
     while True:
         started = time.perf_counter()
@@ -186,6 +188,7 @@ def run(env, layout, output, port, views, render_every=2):
                 gaps[arm] = env.spec.arms[arm].max_gap * .8 if gaps[arm] == 0. else 0.
             elif key == 'Backspace':
                 env.reset(layout)
+                wall = time.perf_counter()
                 log.write(json.dumps({'reset': True}) + '\n')
         action = action_from_keys(keys, arm, gaps[arm], dt)
         obs, info = env.step(action)
@@ -197,9 +200,15 @@ def run(env, layout, output, port, views, render_every=2):
         server.status = (f'arm {arm}  gap {gaps[arm]:.3f}  t {env.time:7.2f}s  '
                          f'base ({base[0]:+.3f}, {base[1]:+.3f}, {np.degrees(base[2]):+.1f} deg)  '
                          f'tcp ({tcp[0]:+.3f}, {tcp[1]:+.3f}, {tcp[2]:+.3f})  lift {obs["qpos"]["lift_joint"][0]:.3f}'
+                         + f'  realtime x{env.time / max(time.perf_counter() - wall, 1e-9):.2f}'
+                         + '  ms/step physics {:.0f} render {:.0f} total {:.0f}'.format(
+                             *(1e3 * costs[k] / max(step, 1) for k in ('physics', 'render', 'total')))
                          + (f'  IK FAILED: {", ".join(failed)}' if failed else ''))
         if step % render_every == 0:
             server.publish(env.backend.capture(save=False))
+        costs['physics'] = env.backend.timings['step_s'] - before['step_s']
+        costs['render'] = env.backend.timings['render_s'] - before['render_s']
+        costs['total'] += time.perf_counter() - started
         spare = dt - (time.perf_counter() - started)
         if spare > 0:
             time.sleep(spare)
