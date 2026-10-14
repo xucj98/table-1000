@@ -27,6 +27,15 @@ physics.py ──配置──> physics.usda
                   └──仿真测试──> MP4 / trace.csv / plots.jpg / result.json
 ```
 
+**机器人** 以厂商 URDF 包为原始输入：`prepare.py` 写明所选配置与碰撞划分，转换工具生成仓库中的 URDF 与网格；Isaac Sim URDF 导入器生成 USD，`physics.py` 在其上叠加驱动、求解器与接触材料层 `robot.usda`。详见[机器人资产规范](robots.md)。
+
+```text
+raw/ 厂商 URDF 包 + prepare.py ──转换与检查──> robot.urdf + meshes/ + check.json
+robot.urdf + meshes/ ──导入──> import/robot.usd
+physics.py ──配置──> robot.usda
+robot.urdf ──Blender 渲染──> three_quarter.jpg
+```
+
 模型保存刚体划分、几何和关节定义；物理配置补充质量、材料与驱动。带行为资产使用生成的 `object.usda` 作为加载入口，见[行为分发](behaviors.md#分发)。几何预览配置与物理测试脚本均作为资产源码保存。已提供带盖笔与三抽屉盒的构建和测试示例。
 
 ## 文件分工
@@ -54,12 +63,15 @@ physics.py ──配置──> physics.usda
 
 ## 资产布局
 
-对象路径为 `objects/<category>/<六位编号>`，场景路径为 `scenes/scene-<六位编号>`；编号从 `000000` 开始。
+对象路径为 `objects/<category>/<六位编号>`，场景路径为 `scenes/scene-<六位编号>`，机器人路径为 `robots/<名称>`；编号从 `000000` 开始。
 
 | 位置 | 内容 | Git |
 | --- | --- | --- |
 | `asset_sources/objects/<category>/<id>/` | object.py、preview.json、metadata.json、README.md、three_quarter.jpg；第二阶段增加 physics.py、physics_test.py、可选 behavior.py | 提交 |
 | `assets/objects/<category>/<id>/` | object.blend、geometry.usdc、physics.usda、object.usdz、源码及配置快照、README.md、已有 three_quarter.jpg、可选 object.usda 与行为依赖、preview/、physics_test/ | 忽略 |
+| `asset_sources/robots/<name>/` | robot.urdf 及其按相对路径引用的 meshes/、prepare.py、physics.py、README.md、three_quarter.jpg | 提交 |
+| `assets/robots/<name>/raw/` | 厂商原始 URDF 包 | 忽略；存档于 Hugging Face 数据集，版本见 `assets.lock.json` |
+| `assets/robots/<name>/` 其余 | URDF 导入结果 import/、加载入口 robot.usda、源码快照、prepare.json、check.json | 忽略 |
 | `outputs/` | 临时实验结果与日志 | 忽略 |
 
 源码快照重建依赖同版本的 `table_1000` 包，共用模块不复制到资产目录。外部资源引用须注明版本、来源和许可，不使用私有绝对路径。

@@ -11,6 +11,8 @@ import subprocess
 import time
 import traceback
 
+from table_1000.runtime.render import RT2_ARGS
+
 
 def load_tests(path):
     spec = importlib.util.spec_from_file_location('table1000_asset_tests',path)
@@ -220,8 +222,7 @@ def main(argv=None):
     from isaacsim import SimulationApp
     app=SimulationApp({'headless':True,'create_new_stage':False,'active_gpu':args.gpu,'physics_gpu':0 if os.getenv('CUDA_VISIBLE_DEVICES') == str(args.gpu) else args.gpu,'multi_gpu':False,
          'disable_viewport_updates':True,'limit_cpu_threads':4,'renderer':'RaytracedLighting','width':960,'height':480,
-         'extra_args':['--/persistent/physics/numThreads=4','--/rtx/post/motionblur/enabled=False',
-                       '--/persistent/rtx/modes/rt2/enabled=true']})
+         'extra_args':['--/persistent/physics/numThreads=4','--/rtx/post/motionblur/enabled=False',*RT2_ARGS]})
     startup=time.perf_counter()-started
     try:
         import carb
