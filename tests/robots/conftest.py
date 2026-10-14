@@ -6,7 +6,7 @@ gripper, collision from boxes and cylinders, no mobile base, lift or head.
 
 import pytest
 
-from table_1000.robots.agent import ArmSpec, RobotSpec
+from table_1000.robots.spec import ArmSpec, RobotSpec
 
 # (joint, axis, origin of the child link in the parent, collision box of the child (size, centre))
 CHAIN = [

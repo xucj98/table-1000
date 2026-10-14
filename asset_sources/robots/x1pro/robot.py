@@ -1,4 +1,4 @@
-"""X1Pro description (:data:`SPEC`, see table_1000/robots/agent.py).
+"""X1Pro description (:data:`SPEC`, see table_1000/robots/spec.py).
 
 TCP: a frame on ``<side>_arm_link6`` 0.145 m along the gripper axis, centred
 between the finger pads; +X is the approach direction, +Y the direction in
@@ -9,7 +9,7 @@ Fingers are driven in metres: the left finger at ``+gap/2`` and the right at
 ``-gap/2`` gives a pad gap of ``gap`` (0 to 0.0975 m).
 """
 
-from table_1000.robots.agent import ArmSpec, BaseSpec, RobotSpec
+from table_1000.robots.spec import ArmSpec, BaseSpec, RobotSpec
 
 TCP_OFFSET = (.145, 0., 0.)
 MAX_GAP = .0975

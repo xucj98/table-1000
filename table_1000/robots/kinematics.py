@@ -22,7 +22,7 @@ import time
 
 import numpy as np
 
-from table_1000.planning.model import write_planning_urdf, write_srdf
+from table_1000.robots.planning_model import write_planning_urdf, write_srdf
 from table_1000.planning.screw import plan_screw
 from table_1000.planning.world import pose
 

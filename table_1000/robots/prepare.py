@@ -33,7 +33,7 @@ SIZE_BUDGET = 10e6        # bytes for the whole robot source directory
 PLACEHOLDER = '0.001 0.001 0.001'
 
 
-def load_spec(source):
+def load_prepare(source):
     spec = importlib.util.spec_from_file_location('robot_prepare', Path(source) / 'prepare.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -191,7 +191,7 @@ def merge(root):
 def prepare(source, raw):
     """Rewrite ``source/robot.urdf`` and ``source/meshes/`` from the raw package."""
     source, raw = Path(source), Path(raw)
-    spec = load_spec(source)
+    spec = load_prepare(source)
     root = ET.parse(raw / spec.URDF).getroot()
     meshes = source / 'meshes'
     shutil.rmtree(meshes, ignore_errors=True)
@@ -296,7 +296,7 @@ def main(argv=None):
     output = args.assets / 'robots' / args.robot
     output.mkdir(parents=True, exist_ok=True)
     if not args.check:
-        report = prepare(source, args.assets / load_spec(source).RAW)
+        report = prepare(source, args.assets / load_prepare(source).RAW)
         (output / 'prepare.json').write_text(json.dumps(report, indent=2) + '\n')
         worst = max(report['visual'].items(), key=lambda item: item[1]['error_m'])
         print(f"{len(report['visual'])} visual meshes, {sum(report['collision'].values())} collision pieces, "

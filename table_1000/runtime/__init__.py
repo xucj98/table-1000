@@ -1,1 +1,1 @@
-"""Process and application lifecycle for simulator runs."""
+"""Isaac Sim application start-up, cameras and render settings."""

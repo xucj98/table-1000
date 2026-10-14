@@ -11,7 +11,7 @@ import xml.etree.ElementTree as ET
 import numpy as np
 import trimesh
 
-from table_1000.planning.model import write_planning_urdf, write_srdf
+from table_1000.robots.planning_model import write_planning_urdf, write_srdf
 from table_1000.planning.world import PlanningScene, asset_objects, model_shapes
 
 

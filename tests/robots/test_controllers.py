@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from table_1000.robots import controllers as c
-from table_1000.robots.agent import BaseSpec
+from table_1000.robots.spec import BaseSpec
 
 from conftest import arm_spec
 

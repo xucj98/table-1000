@@ -22,7 +22,7 @@ def source_dir(name, root=ROOT):
 
 
 def load_spec(name, root=ROOT):
-    """The :class:`~table_1000.robots.agent.RobotSpec` in ``asset_sources/robots/<name>/robot.py``, or None."""
+    """The :class:`~table_1000.robots.spec.RobotSpec` in ``asset_sources/robots/<name>/robot.py``, or None."""
     module = source_module(source_dir(name, root), 'robot')
     return getattr(module, 'SPEC', None) if module else None
 
