@@ -105,7 +105,7 @@ def render(spec):
     for kind, entries in spec['parts'].items():
         groups[kind] = []
         for path, transform, link in entries:
-            bpy.ops.wm.ply_import(filepath=path)
+            (bpy.ops.wm.stl_import if path.endswith('.stl') else bpy.ops.wm.ply_import)(filepath=path)
             obj = bpy.context.selected_objects[0]
             obj.matrix_world = Matrix(transform)
             if kind == 'visual':

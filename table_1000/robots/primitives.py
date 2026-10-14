@@ -182,7 +182,7 @@ def apply(source, shapes, keep=()):
                 else:
                     geometry.set('radius', f'{dimensions[0]:.6g}')
     for part in fitted:
-        for path in folder.glob(f'{part}_*.ply'):
+        for path in folder.glob(f'{part}_*'):
             if path.stem.rsplit('_', 1)[0] == part:
                 path.unlink()
     ET.indent(tree.getroot())

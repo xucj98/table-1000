@@ -143,7 +143,7 @@ def part_gaps(source):
     source = Path(source)
     result = {}
     for part, links in parts(source).items():
-        files = sorted((source / 'meshes' / 'collision').glob(f'{part}_*.ply'),
+        files = sorted((f for f in (source / 'meshes' / 'collision').glob(f'{part}_*') if f.suffix in ('.ply', '.stl')),
                        key=lambda f: int(f.stem.rsplit('_', 1)[1]))
         files = [f for f in files if f.stem.rsplit('_', 1)[0] == part]
         if not files:
@@ -170,7 +170,7 @@ def edit_source(base, target, cap=False, pieces=None):
     shutil.copytree(base, target, ignore=shutil.ignore_patterns('__pycache__'))
     folder = target / 'meshes' / 'collision'
     if cap:
-        for path in folder.glob('*.ply'):
+        for path in [*folder.glob('*.ply'), *folder.glob('*.stl')]:
             hull = trimesh.load(path, force='mesh', process=False).convex_hull
             if len(hull.vertices) > prepare.MAX_VERTICES:
                 prepare.enclose(hull).export(path)
@@ -179,7 +179,7 @@ def edit_source(base, target, cap=False, pieces=None):
     for part, count in (pieces or {}).items():
         mesh = prepare.load_mesh(target / 'meshes' / 'visual' / f'{part}.ply')
         hulls = prepare.convex_pieces(mesh, count, clips.get(part, []))
-        for path in folder.glob(f'{part}_*.ply'):
+        for path in folder.glob(f'{part}_*'):
             if path.stem.rsplit('_', 1)[0] == part:
                 path.unlink()
         for index, hull in enumerate(hulls):
@@ -200,7 +200,24 @@ def edit_source(base, target, cap=False, pieces=None):
                               filename=f'meshes/collision/{part}_{index}.ply')
     ET.indent(tree.getroot())
     tree.write(target / 'robot.urdf', encoding='unicode')
+    as_stl(target)
     return target
+
+
+def as_stl(source):
+    """Store the collision meshes of a robot source as STL. Isaac's mesh converter crashes (SIGSEGV, in a
+    worker thread) on most builds whose collision is many small PLY hulls; the same hulls as STL import."""
+    import trimesh
+    source = Path(source)
+    for path in (source / 'meshes' / 'collision').glob('*.ply'):
+        trimesh.load(path, force='mesh', process=False).export(path.with_suffix('.stl'))
+        path.unlink()
+    tree = ET.parse(source / 'robot.urdf')
+    for mesh in tree.getroot().iter('mesh'):
+        name = mesh.get('filename')
+        if name.startswith('meshes/collision/') and name.endswith('.ply'):
+            mesh.set('filename', name[:-4] + '.stl')
+    tree.write(source / 'robot.urdf', encoding='unicode')
 
 
 def _bytes(path):
