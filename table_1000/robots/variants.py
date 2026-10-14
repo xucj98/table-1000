@@ -37,6 +37,9 @@ COPIED = ('table_1000', 'scripts', 'asset_sources', 'pyproject.toml')
 SAMPLES_PER_M2 = 2e5
 MIN_SAMPLES = 2000
 BUILD_ATTEMPTS = 3
+# The hand as committed: the drawer-and-pen grasps fail on millimetre changes, so variants of the arm and
+# body keep it to stay comparable.
+HAND = ('gripper_left_link', 'gripper_right_link', 'gripper_base_link', 'gripper_camera_base_link')
 
 
 def group(link):
@@ -157,9 +160,9 @@ def part_gaps(source):
     return result
 
 
-def edit_source(base, target, cap=False, pieces=None):
+def edit_source(base, target, cap=False, pieces=None, keep=()):
     """Copy the robot source ``base`` to ``target``; with ``cap`` every collision piece is reduced to at
-    most MAX_VERTICES vertices (still enclosing it); ``pieces`` (``{part: count}``) re-decomposes those
+    most MAX_VERTICES vertices (still enclosing it), except the ``keep`` parts; ``pieces`` (``{part: count}``) re-decomposes those
     parts with CoACD (the robot's ``COLLISION_CLIP`` applies)."""
     import copy
     import trimesh
@@ -171,6 +174,8 @@ def edit_source(base, target, cap=False, pieces=None):
     folder = target / 'meshes' / 'collision'
     if cap:
         for path in [*folder.glob('*.ply'), *folder.glob('*.stl')]:
+            if path.stem.rsplit('_', 1)[0] in keep:
+                continue
             hull = trimesh.load(path, force='mesh', process=False).convex_hull
             if len(hull.vertices) > prepare.MAX_VERTICES:
                 prepare.enclose(hull).export(path)
@@ -232,7 +237,7 @@ def size(source, built):
     elements = ET.parse(source / 'robot.urdf').getroot().findall('.//collision/geometry/*')
     kinds = {kind: sum(element.tag == kind for element in elements) for kind in ('mesh', 'box', 'cylinder', 'sphere')}
     return {'collision_files': len(files), 'collision_bytes': sum(f.stat().st_size for f in files),
-            'collision_vertices': int(sum(len(trimesh.load(f, force='mesh', process=False).vertices) for f in files)),
+            'collision_vertices': int(sum(len(trimesh.load(f, force='mesh').vertices) for f in files)),
             'collision_elements': len(elements), 'collision_kinds': kinds,
             'source_bytes': _bytes(source), 'built_bytes': _bytes(built)}
 

@@ -4,12 +4,13 @@ Regions are ranges in each visual mesh's own frame (m). Arm links are modelled
 by hand: every joint housing is a cylinder along its joint axis (axes and
 positions from robot.urdf), the segments between them boxes. Body parts use
 slabs chosen by primitives.design (least primitive volume for the count).
-Parts not listed get one minimum-volume box; the fingers keep their convex
-pieces (wedges, the grasp contact). The torso's bracket inside the lift column
+Parts not listed get one minimum-volume box. The hand (fingers, gripper base,
+wrist camera) keeps its convex pieces: the grasps of the drawer-and-pen task
+fail on millimetre changes of it. The torso's bracket inside the lift column
 (x < .075) gets no collision.
 """
 
-KEEP = ('gripper_left_link', 'gripper_right_link')
+KEEP = ('gripper_left_link', 'gripper_right_link', 'gripper_base_link', 'gripper_camera_base_link')
 
 SHAPES = {
     # Joint 1 housing (axis z at the origin), joint 2 housing (axis y at x .025, z .054).
