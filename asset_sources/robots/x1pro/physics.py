@@ -16,7 +16,9 @@ DRIVES = {
     'lift_joint': (20000., 1000.),
     'head_': (30., 3.),
     '_arm_joint': (1000., 60.),
-    '_arm_gripper_': (1500., 20.),
+    # The left finger is driven; the right one follows it (MIMIC_FINGERS).
+    '_arm_gripper_left_joint': (1500., 20.),
+    '_arm_gripper_right_joint': (0., 0.),
     '_wheel_joint': (0., 1.),
     # Virtual planar base joints (see table_1000.robots.build): stiff and close
     # to critically damped for the 73.5 kg robot.
@@ -25,6 +27,12 @@ DRIVES = {
     'base_yaw_joint': (8000., 500.),
 }
 SOLVER_ITERATIONS = (16, 4)
+# One motor moves both fingers of the real gripper through a rack. Two
+# independently driven fingers, both at their force limit on a held object,
+# have no restoring force along the closing axis: an acceleration of the hand
+# shifts fingers and object sideways together (13 mm in a base turn). Each right
+# finger therefore mimics its left one: right + left = 0.
+MIMIC_FINGERS = [(f'{side}_arm_gripper_right_joint', f'{side}_arm_gripper_left_joint') for side in ('left', 'right')]
 # Body pairs that never collide on the real robot but whose convex hulls
 # overlap: each gripper's two fingers (guided racks that pass each other) and
 # the head housing seated on the torso.
@@ -76,6 +84,14 @@ def author(import_path, output_path):
         drive.CreateStiffnessAttr(stiffness * scale)
         drive.CreateDampingAttr(damping * scale)
 
+    joints = {prim.GetName(): prim for prim in Usd.PrimRange(root) if prim.IsA(UsdPhysics.Joint)}
+    for follower, leader in MIMIC_FINGERS:
+        # Single-degree-of-freedom joints ignore the axis token.
+        mimic = PhysxSchema.PhysxMimicJointAPI.Apply(joints[follower], 'rotX')
+        mimic.CreateGearingAttr(1.)
+        mimic.CreateOffsetAttr(0.)
+        mimic.CreateReferenceJointRel().SetTargets([joints[leader].GetPath()])
+
     for first, second in FILTERED_PAIRS:
         pair = UsdPhysics.FilteredPairsAPI.Apply(root.GetChild(first))
         pair.CreateFilteredPairsRel().AddTarget(root.GetChild(second).GetPath())
@@ -93,6 +109,10 @@ def author(import_path, output_path):
             kind = 'finger' if prim.GetName().endswith(('_gripper_left_link', '_gripper_right_link')) else 'body'
             UsdShade.MaterialBindingAPI.Apply(prim).Bind(materials[kind], materialPurpose='physics')
             if kind == 'finger':
+                # The importer instances colliders; a finger's own copy can be edited.
+                for child in Usd.PrimRange(prim, Usd.TraverseInstanceProxies()):
+                    if child.IsInstance():
+                        child.SetInstanceable(False)
                 for shape in Usd.PrimRange(prim):
                     if shape.HasAPI(UsdPhysics.CollisionAPI):
                         collision = PhysxSchema.PhysxCollisionAPI.Apply(shape)

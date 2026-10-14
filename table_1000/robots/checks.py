@@ -264,6 +264,11 @@ class Checker:
     def tcp(self, arm='right'):
         return self.env.obs['tcp'][arm][0]
 
+    def held(self, body, arm='right'):
+        """Pose of ``body`` in the frame of the arm's TCP link, both as simulated."""
+        link = self.backend.link_pose(self.spec.arms[arm].tcp[0])[0]
+        return np.linalg.inv(link) @ self.backend.body_poses()[f'{body}:body'][0]
+
     def on_table(self, x, y, height):
         return translation(x, y, TOP + height / 2)
 
@@ -321,7 +326,7 @@ class Checker:
                 resting_on_robot = pose[2, 3] > .1 and speed < .02
                 gap = self.visual.distance(primitive_surface(body, pose)) if resting_on_robot else None
                 results[f'{name}/{body}'] = {'link': link, 'resting_on_robot': bool(resting_on_robot),
-                                             'gap_to_visual_m': gap, 'penetration_m': self.penetration(False)}
+                                             'gap_to_visual_m': gap, 'penetration_m': self.penetration()}
         gaps = [r['gap_to_visual_m'] for r in results.values() if r['gap_to_visual_m'] is not None]
         result = {'drops': results, 'max_gap_m': max(gaps, default=0.)}
         result['checks'] = {'no_deep_drop_penetration': all(r['penetration_m'] <= PENETRATION_LIMIT
@@ -411,11 +416,10 @@ class Checker:
         results = {}
         for body, (pose, height) in objects.items():
             gap = self._grasp(body, pose, height)
-            relative = np.linalg.inv(self.tcp()) @ self.backend.body_poses()[f'{body}:body'][0]
             lifted = self.ik('right', translation(*self.tcp()[:3, 3] + [0., 0., .08], down(90)))
             self.move_joints('right', lifted, 1.5)
             self.step(count=round(.5 / DT))
-            relative = np.linalg.inv(self.tcp()) @ self.backend.body_poses()[f'{body}:body'][0]
+            relative = self.held(body)
             joint6 = self.spec.arms['right'].joints[-1]
             for sign in (1, -1, 1, -1):
                 target = lifted.copy()
@@ -423,8 +427,7 @@ class Checker:
                 self.move_joints('right', target, .5)
             self.move_joints('right', lifted, .5)
             self.step(count=round(.5 / DT))
-            after = np.linalg.inv(self.tcp()) @ self.backend.body_poses()[f'{body}:body'][0]
-            drift = float(np.linalg.norm(after[:3, 3] - relative[:3, 3]))
+            drift = float(np.linalg.norm(self.held(body)[:3, 3] - relative[:3, 3]))
             held_z = self.backend.body_poses()[f'{body}:body'][0][2, 3]
             self.step({'right_gripper': [[.08]]}, count=round(1.5 / DT))
             final = self.backend.body_poses()[f'{body}:body'][0][2, 3]
@@ -455,18 +458,23 @@ class Checker:
         lifted = self.ik('right', translation(*self.tcp()[:3, 3] + [0., 0., .08], down(90)))
         self.move_joints('right', lifted, 1.5)
         self.step(count=round(.5 / DT))
-        relative = np.linalg.inv(self.tcp()) @ self.backend.body_poses()['box:body'][0]
+        relative = self.held('box')
 
         def drift():
-            after = np.linalg.inv(self.tcp()) @ self.backend.body_poses()['box:body'][0]
-            return float(np.linalg.norm(after[:3, 3] - relative[:3, 3]))
+            return float(np.linalg.norm(self.held('box')[:3, 3] - relative[:3, 3]))
 
         phases = {}
         for name, command, seconds in (('drive', [-.5, 0.], 1.5), ('stop', [0., 0.], 1.), ('turn', [0., 1.], 1.),
                                        ('stop after turn', [0., 0.], 1.)):
             self.step({'base': [command]}, count=round(seconds / DT))
             phases[name] = drift()
-        result = {'drift_m': max(phases.values()), 'drift_by_phase_m': phases}
+            fingers = self.q(self.spec.arms['right'].fingers)
+            phases[name + ' finger_centre'] = float(fingers.sum() / 2)
+        arm = self.spec.arms['right']
+        sim = self.backend.link_pose(arm.tcp[0])[0] @ translation(*arm.tcp[1])
+        result = {'drift_m': max(v for k, v in phases.items() if 'finger' not in k), 'drift_by_phase_m': phases,
+                  'model_vs_sim_tcp_m': _pose_error(sim, self.tcp())[0],
+                  'base_pose': self.env.obs['base_pose'][0].tolist()}
         result['checks'] = {'held_without_slip': result['drift_m'] <= HOLD_DRIFT_LIMIT}
         return self.common(result)
 
@@ -509,12 +517,12 @@ class Checker:
                 if not model.self_collisions(q):
                     free.append(q)
             # Model vs simulator TCP at the same joint values.
+            # Measured joint values, since a random pose may meet the table and be pushed.
             errors = []
             for q in free[:30]:
-                values = dict(zip(arm.joints, q[indices]))
-                self.reset(robot=values)
+                self.reset(robot=dict(zip(arm.joints, q[indices])))
                 sim = self.backend.link_pose(arm.tcp[0])[0] @ translation(*arm.tcp[1])
-                position, rotation = _pose_error(sim, model.tcp(arm_name, model.vector(values), world=True))
+                position, rotation = _pose_error(sim, self.tcp(arm_name))
                 errors.append((position, rotation))
             errors = np.array(errors)
             # IK on reachable poses.
@@ -573,10 +581,11 @@ class Checker:
                 'settle_to_2mrad_s_max': float(max(settle, default=np.nan))}
 
     def base_metrics(self):
-        """Speed tracking, an in-place turn and a 1 m drive."""
+        """Speed tracking (backing away from the table) and an in-place turn in the open."""
         self.reset()
-        self.step({'base': [[.4, 0.]]}, count=round(2. / DT))
-        speed = float(np.mean([self.env.obs['qvel'][j][0] for j in self.spec.base.virtual_joints[:1]]))
+        self.step({'base': [[-.4, 0.]]}, count=round(2. / DT))
+        velocity = [self.env.obs['qvel'][j][0] for j in self.spec.base.virtual_joints[:2]]
+        speed = float(np.linalg.norm(velocity))
         self.step({'base': [[0., 0.]]}, count=round(1. / DT))
         start = self.env.obs['base_pose'][0].copy()
         self.step({'base': [[0., .8]]}, count=round(2. / DT))
