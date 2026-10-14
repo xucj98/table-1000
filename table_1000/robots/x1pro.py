@@ -1,4 +1,4 @@
-"""X1Pro right-arm conventions and its MPlib planner.
+"""X1Pro description (:data:`SPEC`) and the legacy right-arm planner.
 
 TCP: a frame on ``right_arm_link6`` 0.145 m along the gripper axis, centred
 between the finger pads; +X is the approach direction, +Y the direction in
@@ -12,6 +12,8 @@ Fingers are driven in metres: the left finger at ``+gap/2`` and the right at
 from pathlib import Path
 
 import numpy as np
+
+from table_1000.robots.agent import ArmSpec, BaseSpec, RobotSpec
 
 ARM = [f'right_arm_joint{i}' for i in range(1, 7)]
 FINGERS = ['right_arm_gripper_left_joint', 'right_arm_gripper_right_joint']
@@ -30,6 +32,35 @@ PLANNING_PADDING = .002
 SEATED = [('head_pitch_link', 'lift_link'),
           ('left_arm_gripper_left_link', 'left_arm_gripper_right_link'),
           ('right_arm_gripper_left_link', 'right_arm_gripper_right_link')]
+
+
+def _arm(side):
+    return ArmSpec(
+        name=side, joints=tuple(f'{side}_arm_joint{i}' for i in range(1, 7)),
+        tcp_link=f'{side}_tcp', tcp=(f'{side}_arm_link6', TCP_OFFSET),
+        fingers=(f'{side}_arm_gripper_left_joint', f'{side}_arm_gripper_right_joint'),
+        finger_links=(f'{side}_arm_gripper_left_link', f'{side}_arm_gripper_right_link'),
+        max_gap=MAX_GAP, velocity_limit=VELOCITY_LIMIT, acceleration_limit=ACCELERATION_LIMIT)
+
+
+# Arms raised in front of the torso, head looking at the work surface. (At all
+# zeros the folded arms' link2 and link4 hulls overlap.)
+_READY = {'lift_joint': .40, 'head_pitch_joint': .30,
+          **{f'{side}_arm_joint{i}': value for side in ('left', 'right')
+             for i, value in zip((2, 3), (.4, -1.))}}
+
+SPEC = RobotSpec(
+    name='x1pro', urdf='asset_sources/robots/x1pro/robot.urdf',
+    arms={'right': _arm('right'), 'left': _arm('left')},
+    # Wheels on base_link at (0, +-0.24, 0.086); speed limits are simulation
+    # values, not the real controller's.
+    base=BaseSpec(wheels=('left_wheel_joint', 'right_wheel_joint'), wheel_radius=.086, track=.48,
+                  max_speed=(.5, 1.), max_acceleration=(1., 2.)),
+    lift=('lift_joint',), head=('head_yaw_joint', 'head_pitch_joint'),
+    keyframes={'ready': _READY},
+    seated=tuple(SEATED),
+    unpadded=tuple(f'{side}_arm_gripper_{finger}_link' for side in ('left', 'right') for finger in ('left', 'right')),
+    planning_padding=PLANNING_PADDING)
 
 
 HEAD_CAMERA = 'camera_head_front_color_optical_frame'

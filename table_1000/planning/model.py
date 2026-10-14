@@ -47,7 +47,8 @@ def write_planning_urdf(source, output, active, frozen, tcp, padding=0., unpadde
     """Write ``output`` and return it.
 
     ``active`` joint names stay movable; every other movable joint is fixed at
-    ``frozen.get(name, 0)``. ``tcp`` is ``(parent_link, name, xyz, rpy)``.
+    ``frozen.get(name, 0)``. ``tcp`` is ``(parent_link, name, xyz, rpy)``, or a
+    list of them.
     The convex hulls are grown by ``padding`` on every side, except those of
     the ``unpadded`` links (meshes shared with padded links are not allowed).
     """
@@ -78,12 +79,12 @@ def write_planning_urdf(source, output, active, frozen, tcp, padding=0., unpadde
     missing = set(active) - {joint.get('name') for joint in root.findall('joint') if joint.get('type') != 'fixed'}
     if missing:
         raise ValueError(f'active joints not in URDF: {sorted(missing)}')
-    parent, name, xyz, rpy = tcp
-    ET.SubElement(root, 'link', name=name)
-    joint = ET.SubElement(root, 'joint', name=name + '_joint', type='fixed')
-    ET.SubElement(joint, 'parent', link=parent)
-    ET.SubElement(joint, 'child', link=name)
-    ET.SubElement(joint, 'origin', xyz=' '.join(map(str, xyz)), rpy=' '.join(map(str, rpy)))
+    for parent, name, xyz, rpy in ([tcp] if isinstance(tcp[0], str) else tcp):
+        ET.SubElement(root, 'link', name=name)
+        joint = ET.SubElement(root, 'joint', name=name + '_joint', type='fixed')
+        ET.SubElement(joint, 'parent', link=parent)
+        ET.SubElement(joint, 'child', link=name)
+        ET.SubElement(joint, 'origin', xyz=' '.join(map(str, xyz)), rpy=' '.join(map(str, rpy)))
     ET.ElementTree(root).write(output, encoding='unicode')
     return output
 

@@ -50,13 +50,14 @@ def endpoint_error(planner, ee_index, goal, qpos):
 
 def plan_screw(planner, goal, qpos, *, qpos_step=.03, time_step=.004,
                position_tolerance=1e-3, rotation_tolerance=1e-3, wrt_world=True,
-               max_iterations=2000):
+               max_iterations=2000, locked=()):
     """Move along the screw from the current to the ``goal`` pose.
 
     ``goal`` is an ``mplib.Pose`` of the planner's move-group link. Each step
     moves at most ``qpos_step`` (joint-space norm) toward the remaining screw
-    residual. Returns MPlib's result dictionary; a failure has
-    ``status != 'Success'`` and a ``reason``.
+    residual; joints at the full-configuration indices ``locked`` stay put.
+    Returns MPlib's result dictionary; a failure has ``status != 'Success'``
+    and a ``reason``.
     """
     # Measured joints can sit a few mrad past a limit; like MPlib's plan_pose,
     # start from the clipped state.
@@ -80,6 +81,7 @@ def plan_screw(planner, goal, qpos, *, qpos_step=.03, time_step=.004,
         residual = exp_coordinates((goal * current.inv()).to_transformation_matrix())
         planner.pinocchio_model.compute_full_jacobian(qpos)
         jacobian = planner.pinocchio_model.get_link_jacobian(ee_index, local=False)
+        jacobian[:, list(locked)] = 0.
         delta_q = np.linalg.pinv(jacobian) @ residual
         norm = float(np.linalg.norm(delta_q))
         if not np.isfinite(norm) or norm < 1e-7:
