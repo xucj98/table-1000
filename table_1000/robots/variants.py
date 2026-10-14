@@ -36,6 +36,7 @@ ROOT = Path(__file__).resolve().parents[2]
 COPIED = ('table_1000', 'scripts', 'asset_sources', 'pyproject.toml')
 SAMPLES_PER_M2 = 2e5
 MIN_SAMPLES = 2000
+BUILD_ATTEMPTS = 3
 
 
 def group(link):
@@ -57,8 +58,12 @@ def _origin(element):
 
 def _meshes(source, link, kind):
     import trimesh
+    from table_1000.robots.primitives import element_mesh
     meshes = []
     for element in link.findall(kind):
+        if element.find('geometry/mesh') is None:
+            meshes.append(element_mesh(element))
+            continue
         mesh = trimesh.load(source / element.find('geometry/mesh').get('filename'), force='mesh', process=False)
         mesh.apply_transform(_origin(element))
         meshes.append(mesh)
@@ -207,9 +212,11 @@ def size(source, built):
     import trimesh
     source = Path(source)
     files = sorted((source / 'meshes' / 'collision').glob('*'))
+    elements = ET.parse(source / 'robot.urdf').getroot().findall('.//collision/geometry/*')
+    kinds = {kind: sum(element.tag == kind for element in elements) for kind in ('mesh', 'box', 'cylinder', 'sphere')}
     return {'collision_files': len(files), 'collision_bytes': sum(f.stat().st_size for f in files),
             'collision_vertices': int(sum(len(trimesh.load(f, force='mesh', process=False).vertices) for f in files)),
-            'collision_elements': len(ET.parse(source / 'robot.urdf').getroot().findall('.//collision')),
+            'collision_elements': len(elements), 'collision_kinds': kinds,
             'source_bytes': _bytes(source), 'built_bytes': _bytes(built)}
 
 
@@ -275,10 +282,17 @@ def run(robot, name, source, output, gpus, jobs=4, per_process=5, skip_task=Fals
     checkout = make_checkout(robot, Path(source).resolve(), folder / 'checkout')
     robot_source = checkout / 'asset_sources' / 'robots' / robot
     build = time.perf_counter()
-    subprocess.run([sys.executable, str(checkout / 'scripts/assets/build_robot.py'), robot,
-                    '--source', str(robot_source.parent), '--output', str(checkout / 'assets/robots'),
-                    '--gpu', str(gpus[0])], check=True, cwd=checkout,
-                   stdout=(folder / 'build.log').open('w'), stderr=subprocess.STDOUT)
+    # Isaac's mesh converter sometimes crashes (SIGSEGV) on many small hulls; a new process usually succeeds.
+    for attempt in range(BUILD_ATTEMPTS):
+        completed = subprocess.run([sys.executable, str(checkout / 'scripts/assets/build_robot.py'), robot,
+                                    '--source', str(robot_source.parent), '--output', str(checkout / 'assets/robots'),
+                                    '--gpu', str(gpus[0])], cwd=checkout,
+                                   stdout=(folder / f'build-{attempt}.log').open('w'), stderr=subprocess.STDOUT)
+        if completed.returncode == 0:
+            break
+    else:
+        raise RuntimeError(f'build failed {BUILD_ATTEMPTS} times, see {folder}/build-*.log')
+    report['build_attempts'] = attempt + 1
     report['build_s'] = time.perf_counter() - build
     report['accuracy'] = accuracy(robot_source)
     report['size'] = size(robot_source, checkout / 'assets' / 'robots' / robot)

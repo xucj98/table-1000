@@ -43,14 +43,29 @@ def _freeze(joint, value):
             joint.remove(joint.find(tag))
 
 
+def _grow_primitive(geometry, padding):
+    """Grow a box, cylinder or sphere collision by ``padding`` on every side."""
+    if not padding:
+        return
+    box, cylinder, sphere = geometry.find('box'), geometry.find('cylinder'), geometry.find('sphere')
+    if box is not None:
+        box.set('size', ' '.join(f'{float(v) + 2 * padding:.6g}' for v in box.get('size').split()))
+    if cylinder is not None:
+        cylinder.set('radius', f'{float(cylinder.get("radius")) + padding:.6g}')
+        cylinder.set('length', f'{float(cylinder.get("length")) + 2 * padding:.6g}')
+    if sphere is not None:
+        sphere.set('radius', f'{float(sphere.get("radius")) + padding:.6g}')
+
+
 def write_planning_urdf(source, output, active, frozen, tcp, padding=0., unpadded=()):
     """Write ``output`` and return it.
 
     ``active`` joint names stay movable; every other movable joint is fixed at
     ``frozen.get(name, 0)``. ``tcp`` is ``(parent_link, name, xyz, rpy)``, or a
     list of them.
-    The convex hulls are grown by ``padding`` on every side, except those of
-    the ``unpadded`` links (meshes shared with padded links are not allowed).
+    The convex hulls, boxes, cylinders and spheres are grown by ``padding`` on
+    every side, except those of the ``unpadded`` links (meshes shared with
+    padded links are not allowed).
     """
     source, output = Path(source), Path(output)
     root = ET.parse(source).getroot()
@@ -64,6 +79,10 @@ def write_planning_urdf(source, output, active, frozen, tcp, padding=0., unpadde
             amount = 0. if link.get('name') in unpadded else padding
             if grown.setdefault(mesh.get('filename'), amount) != amount:
                 raise ValueError(f'{mesh.get("filename")} is shared by padded and unpadded links')
+    for link in root.findall('link'):
+        amount = 0. if link.get('name') in unpadded else padding
+        for geometry in link.findall('collision/geometry'):
+            _grow_primitive(geometry, amount)
     for mesh in root.iter('mesh'):
         name = Path(mesh.get('filename'))
         (output.parent / name).parent.mkdir(parents=True, exist_ok=True)

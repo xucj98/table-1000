@@ -57,10 +57,12 @@ def link_poses(urdf, joints):
     return root, poses
 
 
-def parts(urdf, joints):
-    """``{'visual': [(mesh path, 4x4, link)], 'collision': [...]}`` in the robot frame."""
+def parts(urdf, joints, scratch=None):
+    """``{'visual': [(mesh path, 4x4, link)], 'collision': [...]}`` in the robot frame.
+    Box, cylinder and sphere collisions are written as meshes to ``scratch``."""
     root, poses = link_poses(urdf, joints)
     result = {'visual': [], 'collision': []}
+    count = 0
     for link in root.findall('link'):
         for kind in result:
             for element in link.findall(kind):
@@ -69,6 +71,15 @@ def parts(urdf, joints):
                     path = (Path(urdf).parent / mesh.get('filename')).resolve()
                     result[kind].append((str(path), (poses[link.get('name')] @ origin(element)).tolist(),
                                          link.get('name')))
+                elif scratch is not None and element.find('geometry') is not None:
+                    from table_1000.robots.primitives import element_mesh
+                    primitive = element_mesh(element)
+                    if primitive is None:
+                        continue
+                    path = Path(scratch) / f'primitive_{count}.ply'
+                    count += 1
+                    primitive.export(path)
+                    result[kind].append((str(path), poses[link.get('name')].tolist(), link.get('name')))
     return result
 
 
@@ -158,15 +169,17 @@ def render(spec):
 def render_panels(urdf, joints, panels):
     """Render ``[{'kind': 'visual' | 'collision', 'path', 'focus': [links] | None, 'isolate': bool, 'view': xyz}]``
     with Blender."""
+    import tempfile
     output = Path(panels[0]['path']).with_suffix('')
-    spec = {'parts': parts(urdf, joints), 'output': str(output), 'panels': panels}
-    spec_path = output.with_suffix('.preview.json')
-    spec_path.write_text(json.dumps(spec))
-    try:
-        subprocess.run(['blender', '-b', '--python-exit-code', '1', '-P', __file__, '--', str(spec_path)], check=True,
-                       stdout=subprocess.DEVNULL)
-    finally:
-        spec_path.unlink(missing_ok=True)
+    with tempfile.TemporaryDirectory() as scratch:
+        spec = {'parts': parts(urdf, joints, scratch), 'output': str(output), 'panels': panels}
+        spec_path = output.with_suffix('.preview.json')
+        spec_path.write_text(json.dumps(spec))
+        try:
+            subprocess.run(['blender', '-b', '--python-exit-code', '1', '-P', __file__, '--', str(spec_path)],
+                           check=True, stdout=subprocess.DEVNULL)
+        finally:
+            spec_path.unlink(missing_ok=True)
 
 
 def main(argv=None):

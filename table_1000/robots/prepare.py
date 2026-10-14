@@ -37,6 +37,7 @@ OUTSIDE_TOLERANCE = 5e-4  # m, visual vertices allowed outside their collision p
 SIZE_BUDGET = 10e6        # bytes for the whole robot source directory
 MAX_VERTICES = 64         # per convex piece; PhysX cooks convex hulls with at most 64 by default
 PIECE_COUNTS = (1, 2, 4, 8, 16)
+MERGE_DISTANCE = 1e-5    # m, hull corners closer than this are merged
 ENCLOSED_TOLERANCE = .001 # m, a link whose pieces are inside others' by this much gets no collision
 PLACEHOLDER = '0.001 0.001 0.001'
 
@@ -126,8 +127,12 @@ def enclose(hull, max_vertices=MAX_VERTICES):
     faces = np.hstack([hull.face_normals, -np.einsum('ij,ij->i', hull.face_normals, hull.triangles[:, 0])[:, None]])
 
     def polytope(normals):
-        support = (hull.vertices @ normals.T).max(axis=0) * (1 + 1e-9) + 1e-9
-        return trimesh.Trimesh(HalfspaceIntersection(np.hstack([normals, -support[:, None]]), center).intersections).convex_hull
+        # Planes sit MERGE_DISTANCE outside ``hull`` so that merging near-coincident
+        # corners (degenerate triangles crash Isaac's mesh converter) keeps it enclosed.
+        support = (hull.vertices @ normals.T).max(axis=0) + MERGE_DISTANCE
+        corners = HalfspaceIntersection(np.hstack([normals, -support[:, None]]), center).intersections
+        merged, _ = trimesh.grouping.group_distance(corners, MERGE_DISTANCE)
+        return trimesh.Trimesh(merged).convex_hull
 
     target = max_vertices
     while True:
