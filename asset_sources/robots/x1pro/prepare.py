@@ -22,10 +22,10 @@ def excess(link):
     return min(matches) if matches else DEFAULT_EXCESS
 
 
-# Parts of a visual mesh left out of its collision, as boxes ((min xyz), (max
-# xyz)) in the mesh frame: the bracket on the back of the torso runs inside
-# the lift column and never meets anything else.
-COLLISION_EXCLUDE = {'lift_link': [((-1., -1., -1.), (.075, 1., 1.))]}
+# Planes cutting parts of a visual mesh out of its collision, as (normal,
+# offset) in the mesh frame, keeping normal . x >= offset: the bracket on the
+# back of the torso runs inside the lift column and never meets anything else.
+COLLISION_CLIP = {'lift_link': [((1., 0., 0.), .075)]}
 
 # Links inside the gripper base; they get no collision.
 NO_COLLISION = ('arm_link6', 'motor_link')

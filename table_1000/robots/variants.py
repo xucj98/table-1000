@@ -121,6 +121,83 @@ def accuracy(source):
     return result
 
 
+def parts(source):
+    """``{part: [(link, visual element)]}``: each visual mesh (named by its file stem) and the links using it.
+    Left and right arms share mesh files, so one part can be used by several links."""
+    result = {}
+    for link in ET.parse(Path(source) / 'robot.urdf').getroot().findall('link'):
+        for visual in link.findall('visual'):
+            result.setdefault(Path(visual.find('geometry/mesh').get('filename')).stem, []).append(link.get('name'))
+    return result
+
+
+def part_gaps(source):
+    """``{part: {'group', 'pieces', 'p99_mm', 'mean_mm'}}`` with each part's own collision pieces."""
+    import trimesh
+    from table_1000.robots import prepare
+    source = Path(source)
+    result = {}
+    for part, links in parts(source).items():
+        files = sorted((source / 'meshes' / 'collision').glob(f'{part}_*.ply'),
+                       key=lambda f: int(f.stem.rsplit('_', 1)[1]))
+        files = [f for f in files if f.stem.rsplit('_', 1)[0] == part]
+        if not files:
+            continue
+        hulls = [trimesh.load(f, force='mesh', process=False) for f in files]
+        visual = prepare.load_mesh(source / 'meshes' / 'visual' / f'{part}.ply')
+        area = sum(h.area for h in hulls)
+        gaps = surface_gaps(hulls, visual, max(MIN_SAMPLES, int(area * SAMPLES_PER_M2)))
+        result[part] = {'group': group(links[0]), 'links': links, 'pieces': len(hulls),
+                        'p99_mm': 1e3 * float(np.percentile(gaps, 99)), 'mean_mm': 1e3 * float(gaps.mean())}
+    return result
+
+
+def edit_source(base, target, cap=False, pieces=None):
+    """Copy the robot source ``base`` to ``target``; with ``cap`` every collision piece is reduced to at
+    most MAX_VERTICES vertices (still enclosing it); ``pieces`` (``{part: count}``) re-decomposes those
+    parts with CoACD (the robot's ``COLLISION_CLIP`` applies)."""
+    import copy
+    import trimesh
+    from table_1000.robots import prepare
+    base, target = Path(base), Path(target)
+    if target.exists():
+        shutil.rmtree(target)
+    shutil.copytree(base, target, ignore=shutil.ignore_patterns('__pycache__'))
+    folder = target / 'meshes' / 'collision'
+    if cap:
+        for path in folder.glob('*.ply'):
+            hull = trimesh.load(path, force='mesh', process=False).convex_hull
+            if len(hull.vertices) > prepare.MAX_VERTICES:
+                prepare.enclose(hull).export(path)
+    clips = getattr(prepare.load_spec(base), 'COLLISION_CLIP', {})
+    tree = ET.parse(target / 'robot.urdf')
+    for part, count in (pieces or {}).items():
+        mesh = prepare.load_mesh(target / 'meshes' / 'visual' / f'{part}.ply')
+        hulls = prepare.convex_pieces(mesh, count, clips.get(part, []))
+        for path in folder.glob(f'{part}_*.ply'):
+            if path.stem.rsplit('_', 1)[0] == part:
+                path.unlink()
+        for index, hull in enumerate(hulls):
+            hull.export(folder / f'{part}_{index}.ply')
+        for link in tree.getroot().findall('link'):
+            visual = next((v for v in link.findall('visual')
+                           if Path(v.find('geometry/mesh').get('filename')).stem == part), None)
+            if visual is None:
+                continue
+            for collision in link.findall('collision'):
+                if Path(collision.find('geometry/mesh').get('filename')).stem.rsplit('_', 1)[0] == part:
+                    link.remove(collision)
+            for index in range(len(hulls)):
+                collision = ET.SubElement(link, 'collision')
+                if visual.find('origin') is not None:
+                    collision.append(copy.deepcopy(visual.find('origin')))
+                ET.SubElement(ET.SubElement(collision, 'geometry'), 'mesh',
+                              filename=f'meshes/collision/{part}_{index}.ply')
+    ET.indent(tree.getroot())
+    tree.write(target / 'robot.urdf', encoding='unicode')
+    return target
+
+
 def _bytes(path):
     path = Path(path)
     return sum(f.stat().st_size for f in path.rglob('*') if f.is_file()) if path.is_dir() else path.stat().st_size

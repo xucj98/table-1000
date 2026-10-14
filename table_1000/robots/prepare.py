@@ -80,85 +80,95 @@ def simplify(original, faces):
     return original, 0.
 
 
-def excluded(points, boxes):
-    """Mask of ``points`` inside any of ``boxes`` (``((min xyz), (max xyz))``)."""
+def clipped(points, planes):
+    """Mask of ``points`` cut away by ``planes`` (``(normal, offset)``, keeping normal . x >= offset)."""
     mask = np.zeros(len(points), dtype=bool)
-    for low, high in boxes:
-        mask |= np.all((points >= low) & (points <= high), axis=1)
+    for normal, offset in planes:
+        mask |= np.asarray(points) @ np.asarray(normal, dtype=float) < offset
     return mask
 
 
-def collision_part(mesh, boxes):
-    """``mesh`` without the faces whose centre lies in ``boxes``."""
-    if not boxes:
-        return mesh
-    keep = ~excluded(mesh.triangles_center, boxes)
-    part = mesh.submesh([np.flatnonzero(keep)], append=True)
-    part.merge_vertices()
-    return part
+def clip(hulls, planes):
+    """``hulls`` cut by ``planes``; a convex piece cut by a half-space stays convex. Empty pieces are dropped."""
+    import trimesh
+    result = []
+    for hull in hulls:
+        for normal, offset in planes:
+            normal = np.asarray(normal, dtype=float)
+            if hull is None or (hull.vertices @ normal >= offset).all():
+                continue
+            if (hull.vertices @ normal <= offset + 1e-6).all():
+                hull = None
+                continue
+            hull = trimesh.intersections.slice_mesh_plane(hull, normal, normal * offset / (normal @ normal), cap=True)
+            hull = hull.convex_hull if len(hull.vertices) >= 4 and hull.volume > 1e-9 else None
+        if hull is not None:
+            result.append(hull)
+    return result
 
 
 def enclose(hull, max_vertices=MAX_VERTICES):
     """A convex hull with at most ``max_vertices`` vertices that contains ``hull``.
 
-    The hull is decimated, then scaled about its centroid just enough to
-    contain every original vertex again (scaling keeps the vertex count).
+    Starts from the supporting planes of ``hull`` along the face normals of a
+    hull decimated to about half the vertices (an enclosing polytope with
+    protruding corners), then repeatedly cuts the corner farthest outside
+    ``hull`` with the face plane of ``hull`` it violates most, while the vertex
+    count stays within ``max_vertices``. Every plane supports ``hull``, so the
+    result always contains it.
     """
     import open3d as o3d
+    from scipy.spatial import HalfspaceIntersection
     import trimesh
     if len(hull.vertices) <= max_vertices:
         return hull
-    target = 2 * max_vertices - 4
+    center = hull.vertices.mean(0)
+    faces = np.hstack([hull.face_normals, -np.einsum('ij,ij->i', hull.face_normals, hull.triangles[:, 0])[:, None]])
+
+    def polytope(normals):
+        support = (hull.vertices @ normals.T).max(axis=0) * (1 + 1e-9) + 1e-9
+        return trimesh.Trimesh(HalfspaceIntersection(np.hstack([normals, -support[:, None]]), center).intersections).convex_hull
+
+    target = max_vertices
     while True:
         decimated = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(hull.vertices),
                                               o3d.utility.Vector3iVector(hull.faces))
         decimated = decimated.simplify_quadric_decimation(int(target))
-        reduced = trimesh.Trimesh(np.asarray(decimated.vertices)).convex_hull
-        if len(reduced.vertices) <= max_vertices:
+        normals = np.unique(np.round(trimesh.Trimesh(np.asarray(decimated.vertices)).convex_hull.face_normals, 9), axis=0)
+        normals /= np.linalg.norm(normals, axis=1, keepdims=True)
+        best = polytope(normals)
+        if len(best.vertices) <= max_vertices:
             break
         target = int(target * .8)
-    center = reduced.vertices.mean(0)
-    normals = reduced.face_normals
-    offsets = np.einsum('ij,ij->i', normals, reduced.triangles[:, 0]) - normals @ center
-    scale = max(1., float(((hull.vertices - center) @ normals.T / offsets).max()))
-    return trimesh.Trimesh(center + (reduced.vertices - center) * scale * (1 + 1e-6)).convex_hull
+    while True:
+        violation = best.vertices @ faces[:, :3].T + faces[:, 3]
+        worst = violation.max(axis=1).argmax()
+        if violation[worst].max() <= 1e-6:
+            return best
+        normals = np.vstack([normals, faces[violation[worst].argmax(), :3]])
+        cut = polytope(normals)
+        if len(cut.vertices) > max_vertices:
+            return best
+        best = cut
 
 
-def excess(hulls, visual, samples=20000):
-    """99th-percentile distance from the outer surface of ``hulls`` to ``visual``.
-
-    Points of a piece that lie inside another piece are not on the outer
-    surface and are skipped.
-    """
-    import trimesh
-    union = trimesh.util.concatenate(hulls)
-    points, faces = trimesh.sample.sample_surface(union, samples, seed=0)
-    owner = np.repeat(np.arange(len(hulls)), [len(h.faces) for h in hulls])[faces]
-    keep = np.ones(len(points), dtype=bool)
-    for index, hull in enumerate(hulls):
-        others = owner != index
-        offsets = np.einsum('ij,ij->i', hull.face_normals, hull.triangles[:, 0])
-        inside = ((points[others] @ hull.face_normals.T - offsets).max(axis=1) < -1e-4)
-        keep[np.flatnonzero(others)[inside]] = False
-    distances = trimesh.proximity.closest_point(visual, points[keep])[1]
-    return float(np.percentile(distances, 99))
-
-
-def decompose(mesh, tolerance):
+def decompose(mesh, tolerance, planes=()):
     """``(pieces, excess)``: the fewest convex pieces (from PIECE_COUNTS) within
     ``tolerance`` of ``mesh``, or the last attempt. Pieces are ordered by
     centroid so files do not depend on CoACD's thread scheduling."""
     for count in PIECE_COUNTS:
-        hulls = convex_pieces(mesh, count)
+        hulls = convex_pieces(mesh, count, planes)
         error = excess(hulls, mesh)
         if error <= tolerance:
             break
     return hulls, error
 
 
-def convex_pieces(mesh, count):
-    """At most ``count`` convex pieces of ``mesh`` (one hull, else CoACD), each
-    with at most MAX_VERTICES vertices, ordered by centroid."""
+def convex_pieces(mesh, count, planes=()):
+    """At most ``count`` convex pieces of ``mesh`` (one hull, else CoACD), cut
+    by ``planes`` (see :func:`clip`), each with at most MAX_VERTICES vertices,
+    ordered by centroid. The whole (closed) mesh is decomposed before cutting:
+    CoACD remeshes an open mesh, with much worse pieces."""
     import coacd
     import trimesh
     if count == 1:
@@ -168,7 +178,7 @@ def convex_pieces(mesh, count):
         parts = coacd.run_coacd(coacd.Mesh(mesh.vertices, mesh.faces), threshold=.05, max_convex_hull=count,
                                 preprocess_mode='auto', resolution=2000, seed=0)
         hulls = [trimesh.Trimesh(v, f).convex_hull for v, f in parts]
-    return sorted((enclose(hull) for hull in hulls), key=lambda hull: tuple(np.round(hull.vertices.mean(0), 6)))
+    return sorted((enclose(hull) for hull in clip(hulls, planes)), key=lambda hull: tuple(np.round(hull.vertices.mean(0), 6)))
 
 
 def link_poses(root):
@@ -362,8 +372,8 @@ def prepare(source, raw):
             stem = Path(mesh_name).stem
             if stem not in written:
                 tolerance = spec.excess(link.get('name'))
-                boxes = getattr(spec, 'COLLISION_EXCLUDE', {}).get(link.get('name'), [])
-                hulls, error = decompose(collision_part(load_mesh(source / mesh_name), boxes), tolerance)
+                planes = getattr(spec, 'COLLISION_CLIP', {}).get(stem, [])
+                hulls, error = decompose(load_mesh(source / mesh_name), tolerance, planes)
                 written[stem] = []
                 for index, hull in enumerate(hulls):
                     output = f'meshes/collision/{stem}_{index}.ply'
@@ -409,9 +419,9 @@ def outside_distance(points, hulls):
 
 def check(source):
     """Coverage of every visual mesh by its collision pieces (outside the
-    ``COLLISION_EXCLUDE`` boxes), and source size."""
+    ``COLLISION_CLIP`` planes), and source size."""
     source = Path(source)
-    exclude = getattr(load_spec(source), 'COLLISION_EXCLUDE', {})
+    clips = getattr(load_spec(source), 'COLLISION_CLIP', {})
     root = ET.parse(source / 'robot.urdf').getroot()
     pieces = {}
     for collision in root.iter('collision'):
@@ -420,7 +430,7 @@ def check(source):
     coverage = {}
     for stem, names in sorted(pieces.items()):
         vertices = load_mesh(source / 'meshes' / 'visual' / f'{stem}.ply').vertices
-        vertices = vertices[~excluded(vertices, exclude.get(stem, []))]
+        vertices = vertices[~clipped(vertices, clips.get(stem, []))]
         outside = outside_distance(vertices, [load_mesh(source / name) for name in sorted(names)])
         coverage[stem] = {'pieces': len(names), 'max_outside_m': float(outside.max())}
     size = sum(path.stat().st_size for path in source.rglob('*') if path.is_file())

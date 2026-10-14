@@ -2,7 +2,7 @@
 
 ``scripts/robots/collision_pareto.py x1pro lift_link --counts 1 2 3 4 8 16 32 --output outputs/robots/pareto``
 writes, per count, a robot source variant in which only that link's collision
-is replaced (``COLLISION_EXCLUDE`` applies), builds it, and runs the check
+is replaced (``COLLISION_CLIP`` applies), builds it, and runs the check
 suite's benchmark on it. ``pareto.json`` and ``pareto.png`` plot the gap
 between collision and visual surface against physics and planning cost.
 Physics cost depends on the machine's load; the variants run one after
@@ -44,8 +44,8 @@ def make_variant(robot, link, count, folder):
     visual = next(v for v in element.findall('visual')
                   if Path(v.find('geometry/mesh').get('filename')).stem == link)
     mesh = prepare.load_mesh(target / visual.find('geometry/mesh').get('filename'))
-    part = prepare.collision_part(mesh, getattr(spec, 'COLLISION_EXCLUDE', {}).get(link, []))
-    hulls = prepare.convex_pieces(part, count)
+    hulls = prepare.convex_pieces(mesh, count, getattr(spec, 'COLLISION_CLIP', {}).get(link, []))
+    part = mesh
     for collision in element.findall('collision'):
         name = collision.find('geometry/mesh').get('filename')
         if Path(name).stem.rsplit('_', 1)[0] == link:
