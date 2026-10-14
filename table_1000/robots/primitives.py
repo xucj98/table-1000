@@ -8,6 +8,7 @@ mesh (named by its file stem), the primitives that replace its convex pieces::
             {'type': 'box', 'region': {'z': (None, .246)}},           # axis-aligned box
             {'type': 'box', 'region': {'z': (.246, .43)}, 'fit': 'obb'},  # any orientation
             {'type': 'cylinder', 'axis': 'z', 'region': {'y': (.2, None)}},
+            {'type': 'cylinder', 'axis': 'y', 'center': (0, 0, 0), 'region': {'x': (-.03, None)}},
         ],
     }
     KEEP = ('gripper_left_link',)   # parts that keep their convex pieces
@@ -17,7 +18,8 @@ mesh is cut to it by planes, so every point of its surface inside the region
 is covered, also where a long triangle crosses the region's border. The
 primitive is the smallest of its kind around those points: an axis-aligned or
 minimum-volume box, a cylinder along ``axis`` (smallest circle around the
-projected points), or the smallest sphere. Parts in neither ``SHAPES`` nor
+projected points; or, with ``center``, centred on that point's axis line,
+for a joint housing), or the smallest sphere. Parts in neither ``SHAPES`` nor
 ``KEEP`` get one minimum-volume box. The regions of a part should cover its
 whole visual; :func:`uncovered` measures what is left out.
 """
@@ -79,7 +81,12 @@ def fit(points, shape):
         axis = AXES[shape['axis']]
         rotation = _rotation_to(np.eye(3)[axis])
         local = points @ rotation              # coordinates in a frame whose z is the axis
-        center, radius = trimesh.nsphere.minimum_nsphere(local[:, :2])
+        if 'center' in shape:
+            # A joint housing: the cylinder is centred on the joint axis.
+            center = (np.asarray(shape['center'], dtype=float) @ rotation)[:2]
+            radius = float(np.linalg.norm(local[:, :2] - center, axis=1).max())
+        else:
+            center, radius = trimesh.nsphere.minimum_nsphere(local[:, :2])
         low, high = local[:, 2].min(), local[:, 2].max()
         pose[:3, :3] = rotation
         pose[:3, 3] = rotation @ np.array([center[0], center[1], (low + high) / 2])
@@ -271,3 +278,77 @@ def design(mesh, count, region=None, candidates=40, samples=20000):
                 shapes.append(shape)
             best = (volume, shapes)
     return best
+
+
+def _outer_gaps(mesh, fitted, samples_per_m2=4e5, minimum=500):
+    """Per primitive, distances to ``mesh`` of points on its surface not inside another primitive."""
+    import trimesh
+    from table_1000.robots.variants import distance
+    shapes = [to_mesh(*f) for f in fitted]
+    result = []
+    for index, shape in enumerate(shapes):
+        points, _ = trimesh.sample.sample_surface(shape, max(minimum, int(shape.area * samples_per_m2)), seed=index)
+        keep = np.ones(len(points), dtype=bool)
+        for other, (kind, dimensions, pose) in enumerate(fitted):
+            if other != index:
+                keep &= _outside(points, kind, dimensions, pose) > 1e-4
+        result.append(distance(mesh, points[keep]) if keep.any() else np.zeros(1))
+    return result
+
+
+def _outside(points, kind, dimensions, pose):
+    local = (points - pose[:3, 3]) @ pose[:3, :3]
+    if kind == 'box':
+        return np.linalg.norm(np.maximum(np.abs(local) - np.asarray(dimensions) / 2, 0), axis=1)
+    if kind == 'cylinder':
+        radial = np.maximum(np.linalg.norm(local[:, :2], axis=1) - dimensions[0], 0)
+        return np.hypot(radial, np.maximum(np.abs(local[:, 2]) - dimensions[1] / 2, 0))
+    return np.maximum(np.linalg.norm(local, axis=1) - dimensions[0], 0)
+
+
+def _split(mesh, shape, min_thickness=.003):
+    """The two halves of ``shape``'s region with the least primitive volume. Candidate cuts on each axis
+    are the median of the region's surface points and the middle of their widest empty band (the gap
+    between the plates of a clevis); halves thinner than ``min_thickness`` are not allowed."""
+    import trimesh
+    part = cut(mesh, shape.get('region', {}))
+    points = np.vstack([trimesh.sample.sample_surface(part, 20000, seed=0)[0], part.vertices])
+    best = None
+    for name, axis in AXES.items():
+        values = np.sort(points[:, axis])
+        widest = int(np.argmax(np.diff(values)))
+        for middle in {float(np.median(values)), float(values[widest] + values[widest + 1]) / 2}:
+            below, above = points[points[:, axis] <= middle], points[points[:, axis] >= middle]
+            if (len(below) < 8 or len(above) < 8 or np.ptp(below[:, axis]) < min_thickness
+                    or np.ptp(above[:, axis]) < min_thickness):
+                continue
+            halves = []
+            for inside, (low, high) in ((below, (None, middle)), (above, (middle, None))):
+                region = dict(shape.get('region', {}))
+                old = region.get(name, (None, None))
+                region[name] = (old[0] if low is None else (low if old[0] is None else max(old[0], low)),
+                                old[1] if high is None else (high if old[1] is None else min(old[1], high)))
+                volume, kind = _slab_cost(inside)
+                halves.append((volume, {**kind, 'region': region}))
+            total = halves[0][0] + halves[1][0]
+            if best is None or total < best[0]:
+                best = (total, [halves[0][1], halves[1][1]])
+    return best[1] if best else None
+
+
+def refine(mesh, shapes, target, limit):
+    """Split the worst-fitting primitive of ``shapes`` until every one's outer surface is within ``target``
+    (99th percentile) of ``mesh`` or there are ``limit`` of them. Returns the shapes."""
+    shapes = list(shapes)
+    while True:
+        fitted = fit_part(mesh, shapes)
+        # Joint-housing cylinders (with a ``center``) are kept whole.
+        gaps = [-np.inf if 'center' in shape else float(np.percentile(g, 99))
+                for shape, g in zip(shapes, _outer_gaps(mesh, fitted))]
+        worst = int(np.argmax(gaps))
+        if gaps[worst] <= target or len(shapes) >= limit:
+            return shapes
+        halves = _split(mesh, shapes[worst])
+        if halves is None:
+            return shapes
+        shapes[worst:worst + 1] = halves
