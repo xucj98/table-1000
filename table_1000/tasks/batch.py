@@ -27,13 +27,26 @@ START_GAP_S = 20.
 
 
 def cases(kind, first=0, count=0, half_range=.05):
-    """``[{'name', 'seed', 'offsets'}]`` for the corner grid or a range of seeds."""
+    """``[{'name', 'seed', 'offsets'}]`` of a case set.
+
+    ``standard`` (19): each object over its 3 x 3 region points with the other
+    at its centre, plus the two opposite-corner pairs (objects closest together
+    and farthest apart). ``corners`` (81): every pair of region points.
+    ``seeds``: a range of seeds.
+    """
     if kind == 'seeds':
         return [{'name': f'seed-{seed:04d}', 'seed': seed, 'offsets': None} for seed in range(first, first + count)]
     values = (-half_range, 0., half_range)
     grid = list(itertools.product(values, values))
+    if kind == 'corners':
+        pairs = list(itertools.product(grid, grid))
+    else:
+        h = half_range
+        pairs = [(point, (0., 0.)) for point in grid] + [((0., 0.), point) for point in grid if point != (0., 0.)]
+        # The cabinet sits at +x +y of the pen: (-,-) and (+,+) bring them closest together.
+        pairs += [((-h, -h), (h, h)), ((h, h), (-h, -h))]
     result = []
-    for (cx, cy), (px, py) in itertools.product(grid, grid):
+    for (cx, cy), (px, py) in pairs:
         name = 'cab{:+.0f}{:+.0f}_pen{:+.0f}{:+.0f}'.format(*(100 * v for v in (cx, cy, px, py)))
         result.append({'name': name, 'seed': None, 'offsets': [cx, cy, px, py]})
     return result
@@ -87,8 +100,10 @@ def main(args, script):
                 if directory.exists():
                     directory.rename(output / f'{case["name"]}.no-result-{len(list(output.glob(case["name"] + ".no-result-*"))) + 1}')
                 attempts[case['name']] += 1
-            worker = output / '_workers' / f'{index:03d}-{attempt}'
-            worker.mkdir(parents=True, exist_ok=True)
+            # A new directory per process, also when a batch is run again over the same output.
+            runs = len(list((output / '_workers').glob(f'{index:03d}-*'))) if (output / '_workers').exists() else 0
+            worker = output / '_workers' / f'{index:03d}-{runs}'
+            worker.mkdir(parents=True)
             (worker / 'cases.json').write_text(json.dumps([{**case, 'directory': str(output / case['name'])}
                                                            for case in pending]))
             start_slot(gpu)

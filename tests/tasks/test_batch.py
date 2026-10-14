@@ -42,3 +42,24 @@ def test_cases_without_result_are_retried_once_and_results_are_kept(tmp_path, mo
     assert not summary['processes_ok']
     batch.main(args, script)                                                             # existing results are kept
     assert (out / 'calls-0').read_text() == '1'
+
+
+def test_a_second_batch_run_retries_in_new_worker_directories(tmp_path, monkeypatch):
+    monkeypatch.setattr(batch, 'START_GAP_S', 0.)
+    monkeypatch.setattr(batch, 'ATTEMPTS', 1)
+    script = tmp_path / 'fake.py'
+    script.write_text(FAKE)
+    out = tmp_path / 'out'
+    args = argparse.Namespace(set='seeds', first=1, count=1, output=out, gpus=[0], jobs=1, per_process=1)
+    batch.main(args, script)                       # seed 1 dies on its first call
+    batch.main(args, script)
+    rows = json.loads((out / 'summary.json').read_text())['rows']
+    assert rows[0]['status'] == 'PASS'
+    assert sorted(p.name for p in (out / '_workers').iterdir()) == ['000-0', '000-1']
+
+
+def test_standard_set():
+    cases = batch.cases('standard')
+    assert len(cases) == 19 == len({case['name'] for case in cases})
+    assert {'name': 'cab-5-5_pen+5+5', 'seed': None, 'offsets': [-.05, -.05, .05, .05]} in cases
+    assert len(batch.cases('corners')) == 81
