@@ -78,6 +78,7 @@ def supervise(command, *, cwd, output, env=None, interval_s=1., shutdown_timeout
             record.update(status='running', child_pid=process.pid)
             write_json(output / LIFECYCLE, record)
             shutdown_seen = stalled = None
+            beat = record['start_epoch']
             while process.poll() is None:
                 now = time.monotonic()
                 if shutdown_seen is None:
@@ -87,7 +88,8 @@ def supervise(command, *, cwd, output, env=None, interval_s=1., shutdown_timeout
                         record['shutdown_marker'] = marker
                         write_json(output / LIFECYCLE, record)
                 if shutdown_seen is None and stalled is None:
-                    beat = (read_json(output / 'heartbeat.json') or {}).get('epoch', record['start_epoch'])
+                    # A heartbeat written in place may be read half-written; keep the last one read.
+                    beat = (read_json(output / 'heartbeat.json') or {}).get('epoch', beat)
                     if time.time() - beat > stall_timeout_s:
                         stalled = now
                 sent = [row['signal'] for row in record['interventions']]
