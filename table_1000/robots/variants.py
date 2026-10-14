@@ -12,6 +12,8 @@ robot there, and writes ``<output>/<name>/report.json`` with:
 - ``size``: collision files, pieces and vertices; source and built USD bytes.
 - ``task``: the drawer-and-pen ``standard`` batch (19 cases, no rendering) run
   from the copy, summed over cases: total, physics stepping and planning time.
+- ``pose_collisions``: self-collisions at the scene's start and the keyframes;
+  a variant with any is not ``valid`` and its task run is skipped.
 - ``renders``: collision of the whole robot, one arm and one hand in the
   ``ready`` pose (``collision_full.jpg``; ``collision_arm.jpg`` and ``collision_hand.jpg`` show only
   those links).
@@ -296,6 +298,20 @@ def renders(robot, checkout, output):
     return paths
 
 
+def pose_collisions(robot, checkout, folder, scene='scene-000000'):
+    """Self-collisions (planning model) at the scene's starting pose and the robot's keyframes. A variant
+    colliding there cannot plan at all, so its task run is skipped."""
+    import importlib.util
+    from table_1000.robots.kinematics import RobotModel
+    spec = load_spec(robot)
+    model = RobotModel(spec, folder / 'planning', root=checkout)
+    module = importlib.util.spec_from_file_location('scene', checkout / 'asset_sources' / 'scenes' / scene / 'scene.py')
+    scene_module = importlib.util.module_from_spec(module)
+    module.loader.exec_module(scene_module)
+    poses = {'scene start': scene_module.ROBOT['joints'], **{name: spec.keyframe(name) for name in spec.keyframes}}
+    return {name: [list(pair) for pair in model.self_collisions(model.vector(q))] for name, q in poses.items()}
+
+
 def run(robot, name, source, output, gpus, jobs=4, per_process=5, skip_task=False):
     folder = Path(output) / name
     folder.mkdir(parents=True, exist_ok=True)
@@ -319,8 +335,10 @@ def run(robot, name, source, output, gpus, jobs=4, per_process=5, skip_task=Fals
     report['accuracy'] = accuracy(robot_source)
     report['size'] = size(robot_source, checkout / 'assets' / 'robots' / robot)
     report['renders'] = renders(robot, checkout, folder)
+    report['pose_collisions'] = pose_collisions(robot, checkout, folder)
+    report['valid'] = not any(report['pose_collisions'].values())
     write(folder, report)
-    if not skip_task:
+    if not skip_task and report['valid']:
         batch = folder / 'standard'
         if batch.exists():
             shutil.rmtree(batch)
@@ -346,8 +364,9 @@ def table(reports):
         a, s, t = r['accuracy'], r['size'], r.get('task') or {}
         cell = lambda g: f"{a[g]['p99_mm']:.1f} / {a[g]['mean_mm']:.1f} mm"
         sec = lambda k: f"{t[k]:.0f} s" if k in t else '-'
+        passed = '自碰撞，未运行' if r.get('valid') is False else f"{t.get('passed', '-')}/{t.get('cases', '-')}"
         lines.append(f"| {r['name']} | {cell('hand')} | {cell('arm')} | {cell('body')} | {sec('total_s')} | "
                      f"{sec('physics_s')} | {sec('planning_s')} | {sec('other_s')} | "
-                     f"{t.get('passed', '-')}/{t.get('cases', '-')} | {s['collision_elements']} | "
+                     f"{passed} | {s['collision_elements']} | "
                      f"{s['collision_vertices']} | {s['collision_bytes'] / 1e6:.2f} MB |")
     return '\n'.join(lines)
