@@ -1,11 +1,14 @@
 """Batch of supervised drawer-and-pen runs (see scripts/tasks/drawer_pen_batch.py).
 
-A run that ends without ``result.json`` failed before or outside the task --
-with eight runs at once, Isaac sometimes failed to build its ray-tracing
-pipelines at startup and hung until the supervisor stopped it. Such a run is
-moved aside to ``<case>.no-result-<n>`` and started again, up to ATTEMPTS times;
-a run with a result, PASS or FAIL, is never repeated. Starts on one GPU are
-spaced by START_GAP_S.
+Cases are split into chunks of ``--per-process``; each chunk runs in one
+supervised process that builds the stage once and resets it between cases
+(``<output>/_workers/<chunk>/`` keeps the process logs). A case that ends
+without ``result.json`` failed before or outside the task -- with eight
+processes at once, Isaac sometimes failed to build its ray-tracing pipelines at
+startup and hung until the supervisor stopped it. Such a case is moved aside to
+``<case>.no-result-<n>`` and run again in a new process, up to ATTEMPTS times in
+all; a case with a result, PASS or FAIL, is never repeated. Starts on one GPU
+are spaced by START_GAP_S.
 """
 
 from concurrent.futures import ThreadPoolExecutor
@@ -24,23 +27,21 @@ START_GAP_S = 20.
 
 
 def cases(kind, first=0, count=0, half_range=.05):
-    """``[(name, arguments)]`` for the corner grid or a range of seeds."""
+    """``[{'name', 'seed', 'offsets'}]`` for the corner grid or a range of seeds."""
     if kind == 'seeds':
-        return [(f'seed-{seed:04d}', ['--seed', str(seed)]) for seed in range(first, first + count)]
+        return [{'name': f'seed-{seed:04d}', 'seed': seed, 'offsets': None} for seed in range(first, first + count)]
     values = (-half_range, 0., half_range)
     grid = list(itertools.product(values, values))
     result = []
     for (cx, cy), (px, py) in itertools.product(grid, grid):
         name = 'cab{:+.0f}{:+.0f}_pen{:+.0f}{:+.0f}'.format(*(100 * v for v in (cx, cy, px, py)))
-        result.append((name, ['--offsets', *map(str, (cx, cy, px, py))]))
+        result.append({'name': name, 'seed': None, 'offsets': [cx, cy, px, py]})
     return result
 
 
 def summarize(directory):
     path = directory / 'result.json'
-    lifecycle = directory / 'parent-lifecycle.json'
     result = json.loads(path.read_text()) if path.exists() else {}
-    record = json.loads(lifecycle.read_text()) if lifecycle.exists() else {}
     failure = result.get('failure') or {}
     evaluation = result.get('evaluation') or {}
     offsets = (result.get('layout') or {}).get('offsets') or {}
@@ -51,8 +52,9 @@ def summarize(directory):
             'regrasps': result.get('regrasps'), 'unexpected_contacts': evaluation.get('unexpected_contacts'),
             'drawer_closed': evaluation.get('drawer_closed'), 'pen_in_drawer': evaluation.get('pen_in_drawer'),
             'simulated_s': result.get('simulated_s'),
-            'wall_s': (result.get('timings') or {}).get('total_before_close_s'),
-            'returncode': record.get('returncode'), 'signal': record.get('signal')}
+            'case_s': (result.get('timings') or {}).get('case_s'),
+            'planning_s': (result.get('timings') or {}).get('planning_s'),
+            'step_s': (result.get('timings') or {}).get('step_s')}
 
 
 def main(args, script):
@@ -63,6 +65,7 @@ def main(args, script):
 
     locks = {gpu: threading.Lock() for gpu in args.gpus}
     last_start = {gpu: 0. for gpu in args.gpus}
+    workers = []
 
     def start_slot(gpu):
         with locks[gpu]:
@@ -71,30 +74,49 @@ def main(args, script):
                 time.sleep(wait)
             last_start[gpu] = time.monotonic()
 
-    def run(index_case):
-        index, (name, arguments) = index_case
-        directory = output / name
+    def run(index_chunk):
+        index, chunk = index_chunk
         gpu = args.gpus[index % len(args.gpus)]
-        attempts = 0
-        while not (directory / 'result.json').exists() and attempts < ATTEMPTS:
-            if directory.exists():
-                directory.rename(output / f'{name}.no-result-{len(list(output.glob(name + ".no-result-*"))) + 1}')
+        attempts = {case['name']: 0 for case in chunk}
+        for attempt in range(ATTEMPTS):
+            pending = [case for case in chunk if not (output / case['name'] / 'result.json').exists()]
+            if not pending:
+                break
+            for case in pending:
+                directory = output / case['name']
+                if directory.exists():
+                    directory.rename(output / f'{case["name"]}.no-result-{len(list(output.glob(case["name"] + ".no-result-*"))) + 1}')
+                attempts[case['name']] += 1
+            worker = output / '_workers' / f'{index:03d}-{attempt}'
+            worker.mkdir(parents=True, exist_ok=True)
+            (worker / 'cases.json').write_text(json.dumps([{**case, 'directory': str(output / case['name'])}
+                                                           for case in pending]))
             start_slot(gpu)
-            attempts += 1
-            subprocess.run([sys.executable, str(script), *arguments, '--output', str(directory), '--gpu', str(gpu)],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return {**summarize(directory), 'attempts': attempts,
-                'no_result_attempts': len(list(output.glob(name + '.no-result-*')))}
+            started_worker = time.time()
+            completed = subprocess.run([sys.executable, str(script), '--cases', str(worker / 'cases.json'),
+                                        '--output', str(worker / 'process'), '--gpu', str(gpu)],
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            process = worker / 'process' / 'process.json'
+            process = json.loads(process.read_text()) if process.exists() else {}
+            workers.append({'worker': worker.name, 'gpu': gpu, 'cases': len(pending), 'returncode': completed.returncode,
+                            'wall_s': time.time() - started_worker, 'startup_s': process.get('startup_s'),
+                            'load_s': process.get('load_s')})
+        return [{**summarize(output / case['name']), 'attempts': attempts[case['name']],
+                 'no_result_attempts': len(list(output.glob(case['name'] + '.no-result-*')))} for case in chunk]
 
+    size = max(1, args.per_process)
+    chunks = [todo[i:i + size] for i in range(0, len(todo), size)]
     with ThreadPoolExecutor(args.jobs) as pool:
-        rows = list(pool.map(run, enumerate(todo)))
+        rows = [row for rows in pool.map(run, enumerate(chunks)) for row in rows]
     passed = sum(row['status'] == 'PASS' for row in rows)
     summary = {'set': args.set, 'cases': len(rows), 'passed': passed, 'failed': len(rows) - passed,
-               'wall_s': time.time() - started, 'rows': rows}
+               'per_process': size, 'jobs': args.jobs, 'wall_s': time.time() - started,
+               'processes': sorted(workers, key=lambda w: w['worker']),
+               'processes_ok': all(w['returncode'] == 0 for w in workers), 'rows': rows}
     write_json(output / 'summary.json', summary)
     with (output / 'summary.csv').open('w', newline='') as stream:
         writer = csv.DictWriter(stream, list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
-    print(json.dumps({key: value for key, value in summary.items() if key != 'rows'}, indent=2))
-    return 0 if passed == len(rows) else 1
+    print(json.dumps({key: value for key, value in summary.items() if key not in ('rows', 'processes')}, indent=2))
+    return 0 if passed == len(rows) and summary['processes_ok'] else 1

@@ -52,6 +52,10 @@ class MotionPlanner:
         self.log = []
         self.max_tracking_error = 0.
 
+    def close(self):
+        """Remove this expert's objects from the shared planning world."""
+        self.world.clear()
+
     def add_box(self, name, size, transform):
         self.world.add(*box_object(name, size, transform))
 

@@ -3,8 +3,9 @@
 ``"$ISAAC_PYTHON" scripts/tasks/drawer_pen_batch.py corners --output outputs/drawer-pen/corners --gpus 1 4``
 runs every combination of the cabinet and pen region centre, edge midpoints
 and corners (9 x 9 = 81 cases); ``seeds --first 0 --count 50`` runs random
-seeds. Each case is a separate supervised run (see drawer_pen.py); ``--jobs``
-cases run at once, assigned round-robin to ``--gpus``. Every case is kept in
+seeds. ``--per-process`` cases share one supervised process, which builds the
+stage once and resets it between cases (see drawer_pen.py); ``--jobs``
+processes run at once, assigned round-robin to ``--gpus``. Every case is kept in
 ``summary.json`` and ``summary.csv``, failures included.
 """
 
@@ -23,6 +24,7 @@ def main(argv=None):
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--gpus', type=int, nargs='+', default=[0])
     parser.add_argument('--jobs', type=int, default=4)
+    parser.add_argument('--per-process', type=int, default=10)
     args = parser.parse_args(argv)
     from table_1000.tasks import batch
     return batch.main(args, Path(__file__).resolve().parent / 'drawer_pen.py')

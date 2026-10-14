@@ -161,6 +161,16 @@ class PlanningScene:
         if others:
             world.get_allowed_collision_matrix().set_entry(name, others, True)
 
+    def clear(self):
+        """Detach and remove every object this scene added."""
+        world = self.planner.planning_world
+        for name in self.objects:
+            if world.is_object_attached(name):
+                world.detach_object(name, False)
+            if world.has_object(name):
+                world.remove_object(name)
+        self.objects, self.poses, self.permissions = {}, {}, set()
+
     def update(self, body_poses):
         """``body_poses`` maps a body key (``prefix + body``) to its world 4x4."""
         for name, obj in self.objects.items():
