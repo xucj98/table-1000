@@ -72,13 +72,19 @@ def add_reference(stage, path, entry, transform):
     return prim
 
 
-def populate(stage, scene, layout, assets):
-    """Add the table, robot and placed objects to ``stage`` (no ground or physics scene)."""
+def populate(stage, scene, layout, assets, robot_transform=None):
+    """Add the table, robot and placed objects to ``stage`` (no ground or physics scene).
+
+    The robot prim is posed at ``robot_transform`` (default: the scene's base
+    pose); a robot with a virtual mobile base stays at the origin and is moved
+    by its base joints instead.
+    """
     from pxr import UsdGeom
     UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
     UsdGeom.SetStageMetersPerUnit(stage, 1.)
     add_table(stage, scene.TABLE)
-    add_reference(stage, ROBOT_PATH, asset_entry(assets, scene.ROBOT['asset']), robot_base(scene))
+    add_reference(stage, ROBOT_PATH, asset_entry(assets, scene.ROBOT['asset']),
+                  robot_base(scene) if robot_transform is None else robot_transform)
     for name, path in OBJECT_PATHS.items():
         add_reference(stage, path, asset_entry(assets, getattr(scene, name.upper())['asset']), layout[name])
     render.add_lights(stage)

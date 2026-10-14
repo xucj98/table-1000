@@ -40,7 +40,7 @@ def _arm(side):
         tcp_link=f'{side}_tcp', tcp=(f'{side}_arm_link6', TCP_OFFSET),
         fingers=(f'{side}_arm_gripper_left_joint', f'{side}_arm_gripper_right_joint'),
         finger_links=(f'{side}_arm_gripper_left_link', f'{side}_arm_gripper_right_link'),
-        max_gap=MAX_GAP, velocity_limit=VELOCITY_LIMIT, acceleration_limit=ACCELERATION_LIMIT)
+        max_gap=MAX_GAP, mount='lift_link', velocity_limit=VELOCITY_LIMIT, acceleration_limit=ACCELERATION_LIMIT)
 
 
 # Arms raised in front of the torso, head looking at the work surface. (At all

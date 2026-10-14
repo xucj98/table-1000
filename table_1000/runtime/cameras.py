@@ -63,7 +63,9 @@ class Cameras:
         return Gf.Matrix4d().SetLookAt(Gf.Vec3d(*view['position']), Gf.Vec3d(*view['target']),
                                        Gf.Vec3d(0, 0, 1)).GetInverse()
 
-    def capture(self, env):
+    def capture(self, caption='', save=True):
+        """Render every view; returns ``{view: HxWx3 uint8}``. Frames are saved
+        (with ``caption`` drawn on top) unless ``save`` is False."""
         from PIL import Image, ImageDraw
         from omni.physx import get_physx_interface
         get_physx_interface().update_transformations(True, True, True, False)
@@ -71,13 +73,18 @@ class Cameras:
             if 'parent' in view:
                 self.transforms[name].Set(self.world_transform(view))
         self.rep.orchestrator.step(rt_subframes=self.subframes, delta_time=0., pause_timeline=False)
+        images = {}
         for name in self.views:
-            image = Image.fromarray(self.annotators[name].get_data()[:, :, :3])
+            images[name] = np.asarray(self.annotators[name].get_data()[:, :, :3])
+            if not save:
+                continue
+            image = Image.fromarray(images[name])
             draw = ImageDraw.Draw(image)
             draw.rectangle((0, 0, image.width, 18), fill='white')
-            draw.text((6, 3), f't={env.time:5.2f}s  {env.contacts.phase}', fill='black')
+            draw.text((6, 3), caption, fill='black')
             image.save(self.output / name / f'{self.counts[name]:05d}.jpg', quality=90)
             self.counts[name] += 1
+        return images
 
     def encode(self, destination):
         """Write ``<destination>/<view>.mp4`` for every view with frames."""

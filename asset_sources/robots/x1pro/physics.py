@@ -18,6 +18,11 @@ DRIVES = {
     '_arm_joint': (1000., 60.),
     '_arm_gripper_': (1500., 20.),
     '_wheel_joint': (0., 1.),
+    # Virtual planar base joints (see table_1000.robots.build): stiff and close
+    # to critically damped for the 73.5 kg robot.
+    'base_x_joint': (1e5, 6000.),
+    'base_y_joint': (1e5, 6000.),
+    'base_yaw_joint': (8000., 500.),
 }
 SOLVER_ITERATIONS = (16, 4)
 # Body pairs that never collide on the real robot but whose convex hulls

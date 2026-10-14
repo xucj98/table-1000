@@ -20,7 +20,9 @@ class ArmSpec:
     """One arm and its parallel gripper.
 
     ``tcp`` is ``(parent_link, xyz)``: a frame fixed to ``parent_link`` with the
-    parent's orientation. Fingers are driven in metres; ``finger_signs`` maps a
+    parent's orientation. ``mount`` is the link the arm is mounted on; TCP
+    targets of the pose controller are kept in its frame, so they move with
+    the torso and base. Fingers are driven in metres; ``finger_signs`` maps a
     pad gap ``g`` to finger targets ``sign * g / 2``.
     """
     name: str
@@ -31,6 +33,7 @@ class ArmSpec:
     finger_links: tuple
     finger_signs: tuple = (1., -1.)
     max_gap: float = .1
+    mount: str = 'base_link'
     # Joint-space limits for time parameterization (rad/s, rad/s^2).
     velocity_limit: float = .8
     acceleration_limit: float = 1.5

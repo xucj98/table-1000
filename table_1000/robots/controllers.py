@@ -19,8 +19,9 @@ group                     action row                                       modes
 ========================  ===============================================  ==========
 
 ``ee_delta`` rows are ``(dx, dy, dz, rx, ry, rz)``: a translation and a rotation
-vector in the base frame, applied to the previous TCP target; the joint target
-comes from IK on the environment's :class:`RobotModel`.
+vector in the frame of the arm's mount link, applied to the previous TCP target
+(kept in that frame, so it moves with the torso lift and the base); the joint
+target comes from IK on the environment's :class:`RobotModel`.
 """
 
 import numpy as np
@@ -127,7 +128,7 @@ class BaseVelocity:
 
 
 class EndEffectorDelta(JointPosition):
-    """TCP pose deltas in the base frame -> arm joint targets by IK.
+    """TCP pose deltas in the arm's mount frame -> arm joint targets by IK.
 
     A delta whose IK fails keeps the previous target; :attr:`failed` marks the
     environments where that happened in the last control step.
@@ -145,8 +146,10 @@ class EndEffectorDelta(JointPosition):
 
     def reset(self, q):
         super().reset(q)
-        self.poses = [model.tcp(self.arm.name, model.vector(dict(zip(self.joints, row))))
-                      for model, row in zip(self.models, self.target)]
+        self.poses = []
+        for model, row in zip(self.models, self.target):
+            full = model.vector(dict(zip(self.joints, row)))
+            self.poses.append(np.linalg.inv(model.fk(self.arm.mount, full)) @ model.tcp(self.arm.name, full))
         self.failed = np.zeros(len(self.target), dtype=bool)
 
     def set_action(self, action):
@@ -158,7 +161,8 @@ class EndEffectorDelta(JointPosition):
             goal[:3, 3] += row[:3]
             goal[:3, :3] = Rotation.from_rotvec(row[3:]).as_matrix() @ goal[:3, :3]
             q = model.vector(dict(zip(self.joints, self.target[i])))
-            status, solution = model.ik(self.arm.name, goal, q, attempts=1, check_collision=True)
+            status, solution = model.ik(self.arm.name, model.fk(self.arm.mount, q) @ goal, q, attempts=1,
+                                        check_collision=True)
             self.failed[i] = status != 'Success'
             if not self.failed[i]:
                 target[i] = solution[model.arm_indices(self.arm.name)]

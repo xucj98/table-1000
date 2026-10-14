@@ -5,6 +5,11 @@ relative path, and ``physics.py`` whose ``author(import_path, output_path)``
 writes a USD layer over the imported robot. The build writes, under
 ``assets/robots/<name>/``: ``import/`` (the Isaac URDF importer output),
 ``robot.usda`` (the entry to reference) and snapshots of both source files.
+
+A robot whose spec (``table_1000.robots.<name>.SPEC``) has a mobile base is
+imported from ``mobile.urdf``: the source with three virtual joints (world x,
+world y, yaw) between a fixed root and ``base_link``. The simulator moves the
+base through them; the robot prim itself stays at the world origin.
 """
 
 import argparse
@@ -13,6 +18,7 @@ import json
 from pathlib import Path
 import shutil
 import time
+import xml.etree.ElementTree as ET
 
 IMPORT_SETTINGS = {
     'distance_scale': 1., 'make_default_prim': True, 'create_physics_scene': False,
@@ -41,6 +47,42 @@ def import_urdf(urdf, destination):
         raise RuntimeError(f'URDF import wrote no USD: {destination}')
 
 
+# Virtual base links: small, so they barely change the robot's inertia.
+VIRTUAL_MASS, VIRTUAL_INERTIA = .5, 1e-3
+
+
+def mobile_urdf(source, output, joints, base='base_link'):
+    """Write ``output``: ``source`` with ``mobile_root -x-> -y-> -yaw-> base``.
+
+    Mesh paths become absolute, so the file can live outside the source.
+    """
+    root = ET.parse(source).getroot()
+    for mesh in root.iter('mesh'):
+        mesh.set('filename', str((Path(source).parent / mesh.get('filename')).resolve()))
+    names = ['mobile_root', 'base_x_link', 'base_y_link']
+    for name in names:
+        link = ET.Element('link', name=name)
+        inertial = ET.SubElement(link, 'inertial')
+        ET.SubElement(inertial, 'mass', value=str(VIRTUAL_MASS))
+        ET.SubElement(inertial, 'inertia', ixx=str(VIRTUAL_INERTIA), iyy=str(VIRTUAL_INERTIA),
+                      izz=str(VIRTUAL_INERTIA), ixy='0', ixz='0', iyz='0')
+        root.insert(0, link)
+    children = names[1:] + [base]
+    for (name, kind, axis), parent, child in zip(
+            zip(joints, ('prismatic', 'prismatic', 'continuous'), ('1 0 0', '0 1 0', '0 0 1')), names, children):
+        joint = ET.SubElement(root, 'joint', name=name, type=kind)
+        ET.SubElement(joint, 'parent', link=parent)
+        ET.SubElement(joint, 'child', link=child)
+        ET.SubElement(joint, 'origin', xyz='0 0 0', rpy='0 0 0')
+        ET.SubElement(joint, 'axis', xyz=axis)
+        limit = {'effort': '1e6', 'velocity': '10'}
+        if kind == 'prismatic':
+            limit.update(lower='-100', upper='100')
+        ET.SubElement(joint, 'limit', **limit)
+    ET.ElementTree(root).write(output, encoding='unicode')
+    return output
+
+
 def author_physics(source, output):
     spec = importlib.util.spec_from_file_location('robot_physics', source / 'physics.py')
     physics = importlib.util.module_from_spec(spec)
@@ -52,12 +94,17 @@ def build(source, output):
     started = time.perf_counter()
     shutil.rmtree(output / 'import', ignore_errors=True)
     output.mkdir(parents=True, exist_ok=True)
-    import_urdf(source / 'robot.urdf', output / 'import' / 'robot.usd')
+    from table_1000.robots import load_spec
+    spec = load_spec(source.name)
+    urdf = source / 'robot.urdf'
+    if spec is not None and spec.base.virtual_joints:
+        urdf = mobile_urdf(urdf, output / 'mobile.urdf', spec.base.virtual_joints)
+    import_urdf(urdf, output / 'import' / 'robot.usd')
     imported = time.perf_counter()
     author_physics(source, output)
     for name in ('robot.urdf', 'physics.py'):
         shutil.copyfile(source / name, output / name)
-    report = {'source': str(source), 'import_settings': IMPORT_SETTINGS,
+    report = {'source': str(source), 'urdf': str(urdf), 'import_settings': IMPORT_SETTINGS,
               'import_seconds': imported - started, 'total_seconds': time.perf_counter() - started}
     (output / 'build.json').write_text(json.dumps(report, indent=2) + '\n')
     return report
