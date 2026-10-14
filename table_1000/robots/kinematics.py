@@ -177,6 +177,38 @@ class RobotModel:
             result['reason'] = result['status']
         return self._arm_path(arm, result)
 
+    def check_path(self, arm, positions, step=.01):
+        """First collision along a path of ``arm`` joint rows, checked every ``step`` rad.
+
+        Returns ``(checks, pairs)``; ``pairs`` is empty when the path is free.
+        Contacts present at the start (a hand just released next to an object)
+        are tolerated until the path first leaves them.
+        """
+        world = self.planners[arm].planning_world
+        lift = self.q[[self.index[name] for name in self.spec.lift]]
+        positions = np.asarray(positions)
+
+        def colliding(row):
+            world.set_qpos_all(np.r_[lift, row])
+            return {(c.link_name1, c.object_name2, c.link_name2) for c in world.check_collision()}
+
+        checks, last = 0, None
+        leaving = colliding(positions[0])
+        try:
+            for index, row in enumerate(positions):
+                if last is not None and np.abs(row - last).max() < step and index < len(positions) - 1:
+                    continue
+                last = row
+                checks += 1
+                pairs = colliding(row)
+                if not pairs:
+                    leaving = set()
+                elif not (leaving and pairs <= leaving):
+                    return checks, sorted(pairs)
+            return checks, []
+        finally:
+            self.planners[arm].robot.set_qpos(self.q, True)
+
     def plan_screw(self, arm, target, q=None, *, world=False, time_step=.04):
         """Straight screw motion of the TCP from its pose at ``q`` to ``target``."""
         planner = self.planners[arm]

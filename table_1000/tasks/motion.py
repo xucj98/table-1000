@@ -1,21 +1,23 @@
-"""Thin X1Pro right-arm motion layer between MPlib and the Isaac environment.
+"""Right-arm motion layer of the X1Pro experts, on the robot model and the 25 Hz Env.
 
 Modelled on ManiSkill3's ``TwoFingerGripperMotionPlanningSolver``: free-space
 moves use RRTConnect to an IK goal, contact moves use a straight screw path,
-and every trajectory is executed as per-step joint position and velocity
-targets. The planning world is refreshed from live body poses before each plan;
-planning failures raise :class:`PlanningFailed` with the stage and reason.
+and every trajectory is executed as one joint-position action per control step.
+Motions are generators that yield actions; the caller sends each to
+``env.step`` (see :func:`run_expert`), so one expert per environment can run in
+lockstep. The planning world (only the robot, plus the objects a task adds) is
+refreshed from live body poses before each plan; planning failures raise
+:class:`PlanningFailed` with the stage and reason.
 """
 
 import time
 
 import numpy as np
 
-from table_1000.planning.screw import plan_screw
 from table_1000.planning.world import PlanningScene, asset_objects, box_object, pose
-from table_1000.robots import x1pro
-from table_1000.tasks.environment import DT
+from table_1000.robots.controllers import CONTROL_HZ
 
+CONTROL_DT = 1 / CONTROL_HZ
 # Free-space (RRTConnect) plans keep this clearance from the table and cabinet;
 # contact moves (screw paths next to the handle or pen) use the bare geometry.
 # The handle and pen, which the fingers touch on purpose, are never grown.
@@ -34,54 +36,47 @@ class PlanningFailed(RuntimeError):
         self.stage, self.reason, self.details = stage, reason, details or {}
 
 
+def steps(seconds):
+    return max(1, round(seconds / CONTROL_DT))
+
+
 class MotionPlanner:
-    def __init__(self, env, robot_source, output, assets):
-        self.env = env
-        frozen = {name: value for name, value in env.scene.ROBOT['joints'].items() if name not in x1pro.ARM}
-        from table_1000.scenes.stage import robot_base
-        # Planning happens in the robot base frame (see x1pro.build_planner);
-        # this class takes and returns world-frame poses.
-        self.base = robot_base(env.scene)
-        self.planner = x1pro.build_planner(robot_source, output, frozen)
-        self.world = PlanningScene(self.planner, np.linalg.inv(self.base))
-        table = env.scene.TABLE
-        top = np.eye(4)
-        top[:3, 3] = [*table['center'], table['height'] - table['top_thickness'] / 2]
-        self.world.add(*box_object('table', (*table['size'], table['top_thickness']), top))
-        # Cabinet: one object per body, handles split out for contact permission.
-        # Pen: its bodies stay assembled, so one object in the pen body frame.
-        self.objects = (
-            asset_objects(f'{assets}/{env.scene.CABINET["asset"]}/model.json', 'cabinet:',
-                          lambda body, part: (part if part.endswith('.handle') else body, body),
-                          lambda name: not name.endswith('.handle'))
-            + asset_objects(f'{assets}/{env.scene.PEN["asset"]}/model.json', 'pen:',
-                            lambda body, part: ('pen', 'body'), lambda name: False, lambda name: True))
-        poses = env.body_poses()
-        for obj in self.objects:
-            self.world.add(obj, poses[obj.body])
+    """Motions of one arm of the robot in ``view`` (a :class:`~table_1000.sim.env.EnvView`)."""
+
+    def __init__(self, view, arm='right'):
+        self.view, self.model, self.arm = view, view.model, view.model.spec.arms[arm]
+        self.planner = self.model.planners[arm]
+        # The planner works in the base frame (see table_1000.robots.kinematics).
+        self.world = PlanningScene(self.planner, np.linalg.inv(self.model.base))
         self.timings = {'planning_s': 0., 'executing_s': 0.}
         self.log = []
         self.max_tracking_error = 0.
 
+    def add_box(self, name, size, transform):
+        self.world.add(*box_object(name, size, transform))
+
+    def add_asset(self, model, prefix, group, padded=lambda name: True, merged=lambda name: False):
+        """Planning objects of an asset instance (see ``asset_objects``), at their live poses."""
+        objects = asset_objects(model, prefix, group, padded, merged)
+        poses = self.view.body_poses()
+        for obj in objects:
+            self.world.add(obj, poses[obj.body])
+        return objects
+
     # -- state ---------------------------------------------------------------
     def qpos(self):
-        return self.env.joint_positions(x1pro.ARM + x1pro.FINGERS)
+        return self.view.qpos(self.arm.joints)
 
     def sync(self):
-        """Move planning objects to their live poses and the robot to its live q."""
-        self.world.update(self.env.body_poses())
-        self.planner.robot.set_qpos(self.qpos(), True)
+        """Move planning objects to their live poses (the robot follows every observation)."""
+        self.world.update(self.view.body_poses())
 
-    def tcp(self, q=None):
-        q = self.qpos() if q is None else q
-        model = self.planner.pinocchio_model
-        model.compute_forward_kinematics(q)
-        local = model.get_link_pose(self.planner.link_name_2_idx[x1pro.TCP_LINK]).to_transformation_matrix()
-        return self.base @ local
+    def tcp(self):
+        return self.model.tcp(self.arm.name, world=True)
 
     def allow(self, names, allowed=True):
         """Permit (or revoke) planned contact between the fingers and objects."""
-        self.world.allow(names, x1pro.FINGER_LINKS, allowed)
+        self.world.allow(names, self.arm.finger_links, allowed)
 
     # -- planning ------------------------------------------------------------
     def _plan(self, stage, kind, function):
@@ -92,9 +87,10 @@ class MotionPlanner:
         elapsed = time.perf_counter() - started
         self.timings['planning_s'] += elapsed
         entry = {'stage': stage, 'kind': kind, 'status': result['status'], 'planning_s': elapsed,
-                 'time': self.env.time}
+                 'time': self.view.time}
         if result['status'] != 'Success':
-            entry.update({key: value for key, value in result.items() if key not in ('position', 'velocity', 'acceleration', 'time')})
+            entry.update({key: value for key, value in result.items()
+                          if key not in ('position', 'velocity', 'acceleration', 'time')})
             self.log.append(entry)
             raise PlanningFailed(stage, result.get('reason', result['status']), entry)
         entry['duration_s'] = float(result['duration'])
@@ -103,106 +99,79 @@ class MotionPlanner:
         self.log.append(entry)
         return result
 
-    def move_to_pose_with_RRTConnect(self, stage, target, planning_time=3., attempts=3):
-        """Plan with RRTConnect to an IK goal; an approximate solution is retried."""
-        q = self.qpos()
-        goal = pose(np.linalg.inv(self.base) @ target)
-        for attempt in range(attempts):
-            try:
-                result = self._plan(stage, 'rrt', lambda: self.validated(self.planner.plan_pose(
-                    goal, q, mask=[False] * 6 + [True] * 2, time_step=DT, planning_time=planning_time)))
-                break
-            except PlanningFailed as error:
-                if not error.reason.startswith(('RRTConnect', 'path collision')) or attempt == attempts - 1:
-                    raise
-        return self.follow(stage, result)
-
     def validated(self, result):
-        """Fail ``result`` if its path collides anywhere at VALIDATION_STEP.
-
-        Contacts already present at the start (a hand just released next to an
-        object, inside the free-space padding) are tolerated until the path
-        first leaves them; any later contact fails the path.
-        """
+        """Fail ``result`` if its path collides anywhere at VALIDATION_STEP."""
         if result['status'] != 'Success':
             return result
-        world = self.planner.planning_world
-        positions = np.asarray(result['position'])
-        checks, last = 0, None
-        world.set_qpos_all(positions[0])
-        leaving = {(c.link_name1, c.object_name2, c.link_name2) for c in world.check_collision()}
-        for index, q in enumerate(positions):
-            if last is not None and np.abs(q - last).max() < VALIDATION_STEP and index < len(positions) - 1:
-                continue
-            last = q
-            world.set_qpos_all(q)
-            checks += 1
-            pairs = {(c.link_name1, c.object_name2, c.link_name2) for c in world.check_collision()}
-            if not pairs:
-                leaving = set()
-                continue
-            if leaving and pairs <= leaving:
-                continue
-            return {'status': 'path collision', 'reason': 'path collision', 'collisions': sorted(pairs),
+        checks, pairs = self.model.check_path(self.arm.name, result['position'], VALIDATION_STEP)
+        if pairs:
+            return {'status': 'path collision', 'reason': 'path collision', 'collisions': pairs,
                     'validation_checks': checks}
         result['validation_checks'] = checks
         return result
 
+    def move_to_pose_with_RRTConnect(self, stage, target, planning_time=3., attempts=3):
+        """Plan with RRTConnect to an IK goal (an approximate or colliding path is retried), then follow it."""
+        for attempt in range(attempts):
+            try:
+                result = self._plan(stage, 'rrt', lambda: self.validated(self.model.plan_rrt(
+                    self.arm.name, target, world=True, time_step=CONTROL_DT, planning_time=planning_time)))
+                break
+            except PlanningFailed as error:
+                if not error.reason.startswith(('RRTConnect', 'path collision')) or attempt == attempts - 1:
+                    raise
+        yield from self.follow(stage, result)
+
     def move_to_pose_with_screw(self, stage, target):
-        q = self.qpos()
-        goal = pose(np.linalg.inv(self.base) @ target)
-        result = self._plan(stage, 'screw', lambda: plan_screw(self.planner, goal, q, time_step=DT))
-        return self.follow(stage, result)
+        result = self._plan(stage, 'screw', lambda: self.model.plan_screw(
+            self.arm.name, target, world=True, time_step=CONTROL_DT))
+        yield from self.follow(stage, result)
 
     # -- execution -----------------------------------------------------------
     def follow(self, stage, result):
-        """Execute a time-parameterized arm path, then hold its end until arrival."""
+        """Send the path one waypoint per control step, then hold its end until arrival."""
         started = time.perf_counter()
-        positions, velocities = np.asarray(result['position']), np.asarray(result['velocity'])
+        positions = np.asarray(result['position'])
         worst = 0.
-        for target, velocity in zip(positions, velocities):
-            self.env.set_targets(dict(zip(x1pro.ARM, target)), dict(zip(x1pro.ARM, velocity)))
-            self.env.step()
-            worst = max(worst, float(np.abs(self.env.joint_positions(x1pro.ARM) - target).max()))
+        for target in positions:
+            yield {self.arm.name: target[None]}
+            worst = max(worst, float(np.abs(self.qpos() - target).max()))
         final = positions[-1]
-        self.env.set_targets(dict(zip(x1pro.ARM, final)), {})
         held = 0
-        while np.abs(self.env.joint_positions(x1pro.ARM) - final).max() > ARRIVAL_TOLERANCE:
-            if held * DT >= SETTLE_LIMIT:
-                raise PlanningFailed(stage, 'tracking', {'final_error_rad': float(np.abs(self.env.joint_positions(x1pro.ARM) - final).max())})
-            self.env.step()
+        while np.abs(self.qpos() - final).max() > ARRIVAL_TOLERANCE:
+            if held * CONTROL_DT >= SETTLE_LIMIT:
+                raise PlanningFailed(stage, 'tracking', {'final_error_rad': float(np.abs(self.qpos() - final).max())})
+            yield {}
             held += 1
         self.max_tracking_error = max(self.max_tracking_error, worst)
         self.log[-1].update(max_tracking_error_rad=worst, settle_steps=held)
         self.timings['executing_s'] += time.perf_counter() - started
-        return worst
 
     def gripper(self, gap, seconds=GRIPPER_TIME):
-        self.env.set_targets(x1pro.finger_targets(gap))
-        self.env.step(round(seconds / DT))
-        return self.finger_gap()
+        for _ in range(steps(seconds)):
+            yield {f'{self.arm.name}_gripper': [[gap]]}
 
     def open_gripper(self, gap=.08):
-        return self.gripper(gap)
+        yield from self.gripper(gap)
 
     def close_gripper(self):
-        return self.gripper(0.)
+        yield from self.gripper(0.)
 
     def finger_gap(self):
-        left, right = self.env.joint_positions(x1pro.FINGERS)
+        left, right = self.view.qpos(self.arm.fingers)
         return float(left - right)
 
     def hold(self, seconds):
-        self.env.step(round(seconds / DT))
+        for _ in range(steps(seconds)):
+            yield {}
 
     # -- held objects ----------------------------------------------------------
     def attach(self, name, object_world):
         """Carry planning object ``name`` with the TCP at its measured relative pose."""
-        tcp = self.tcp()
-        relative = np.linalg.inv(tcp) @ object_world
+        relative = np.linalg.inv(self.tcp()) @ object_world
         world = self.planner.planning_world
-        world.attach_object(name, self.planner.robot.get_name(), self.planner.link_name_2_idx[x1pro.TCP_LINK],
-                            pose(relative), x1pro.FINGER_LINKS)
+        world.attach_object(name, self.planner.robot.get_name(), self.planner.link_name_2_idx[self.arm.tcp_link],
+                            pose(relative), list(self.arm.finger_links))
         return relative
 
     def detach(self, name):
@@ -211,7 +180,7 @@ class MotionPlanner:
     def carry(self, names, contacts):
         """Attach planning objects held through a joint (a drawer pulled by its
         handle) so they move with the TCP; each may touch ``contacts``."""
-        poses = self.env.body_poses()
+        poses = self.view.body_poses()
         for name in names:
             self.attach(name, poses[self.world.objects[name].body])
         self.world.allow(names, contacts)
@@ -221,3 +190,31 @@ class MotionPlanner:
             self.detach(name)
         self.world.allow(names, contacts, False)
         self.sync()
+
+
+def run_expert(env, experts):
+    """Step ``env`` with one expert generator per environment until all finish.
+
+    An expert that finishes (or raises) holds its robot still while the others
+    go on; returns one ``None`` or exception per environment.
+    """
+    outcomes = [None] * len(experts)
+    active = list(range(len(experts)))
+    while active:
+        actions = {}
+        for i in list(active):
+            try:
+                action = next(experts[i])
+            except StopIteration:
+                active.remove(i)
+                continue
+            except Exception as error:   # the expert's failure, reported per environment
+                outcomes[i] = error
+                active.remove(i)
+                continue
+            if len(experts) != 1:
+                raise NotImplementedError('batched actions are merged once a backend has several environments')
+            actions = action
+        if active:
+            env.step(actions)
+    return outcomes

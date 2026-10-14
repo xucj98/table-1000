@@ -94,3 +94,37 @@ class Env:
         """``[N, len(joints)]`` current position targets of the named robot joints."""
         index = {name: i for i, name in enumerate(self.backend.robot_joints)}
         return self.backend.targets[:, [index[name] for name in joints]]
+
+
+class EnvView:
+    """One environment of a batched :class:`Env`, with unbatched accessors (for experts)."""
+
+    def __init__(self, env, index=0):
+        self.env, self.index = env, index
+        self.scene, self.backend, self.model = env.scene, env.backend, env.models[index]
+
+    @property
+    def time(self):
+        return self.env.time
+
+    @property
+    def contacts(self):
+        return self.backend.contacts
+
+    def qpos(self, joints):
+        return np.array([self.env.obs['qpos'][name][self.index] for name in joints])
+
+    def targets(self, joints):
+        return self.env.targets(joints)[self.index]
+
+    def body_poses(self):
+        return {key: value[self.index] for key, value in self.backend.body_poses().items()}
+
+    def center_of_mass(self, prefix):
+        return self.backend.center_of_mass(prefix)[self.index]
+
+    def object_joint(self, name, joint):
+        return float(self.backend.object_joints(name)[joint][self.index])
+
+    def link_pose(self, link):
+        return self.backend.link_pose(link)[self.index]

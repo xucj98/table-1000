@@ -75,12 +75,16 @@ def child(args):
                     extra_args=RT2_ARGS if args.video else ())
     timings = {'startup_s': time.perf_counter() - run_started}
     result = {'status': 'FAIL', 'seed': args.seed, 'offsets_argument': args.offsets}
-    env = None
+    backend = None
     try:
         from table_1000.scenes import load
         from table_1000.runtime.cameras import Cameras
-        from table_1000.tasks.environment import Environment, RENDER_EVERY, DT
-        from table_1000.tasks.motion import MotionPlanner, PlanningFailed
+        from table_1000.robots.controllers import CONTROL_HZ
+        from table_1000.robots.kinematics import RobotModel
+        from table_1000.robots.x1pro import ARM, SPEC
+        from table_1000.sim.env import Env, EnvView
+        from table_1000.sim.isaac import IsaacBackend
+        from table_1000.tasks.motion import PlanningFailed, run_expert
         from table_1000.tasks.drawer_pen import Solver, TaskFailed, evaluate, DRAWER_JOINT
         from table_1000.tasks import drawer_pen_geometry as g
         scene = load(SCENE)
@@ -89,25 +93,31 @@ def child(args):
             offsets = {'cabinet': tuple(args.offsets[:2]), 'pen': tuple(args.offsets[2:])}
         layout = scene.placement(seed=args.seed, offsets=offsets)
         result['layout'] = {'offsets': layout['offsets'], 'problems': scene.check(layout)}
-        cameras = (lambda stage: Cameras(stage, views(), output / 'frames', fps=round(1 / (DT * RENDER_EVERY)),
+        cameras = (lambda stage: Cameras(stage, views(), output / 'frames', fps=CONTROL_HZ,
                                          subframes=args.subframes)) if args.video else None
-        env = Environment(scene, layout, ASSETS, cameras=cameras)
-        initial = env.body_poses()
+        # Reports come from the robot and the cabinet; reporting on the pen
+        # itself would also deliver its cap detent's contacts on every step.
+        backend = IsaacBackend(scene, layout, ASSETS, cameras=cameras, contact_objects=('cabinet',),
+                               contact_watch=('robot', 'pen:'))
+        model = RobotModel(SPEC, output / 'planning')
+        env = Env(scene, backend, SPEC, [model])
+        env.reset(layout)
+        view = EnvView(env)
+        initial = view.body_poses()
         result['initial_poses'] = {key: initial[key].tolist() for key in ('cabinet:cabinet.housing', 'pen:body')}
-        motion = MotionPlanner(env, ROBOT_SOURCE, output / 'planning', ASSETS)
-        solver = Solver(env, motion, ASSETS / scene.CABINET['asset'] / 'model.json')
-        from table_1000.robots.x1pro import ARM
+        solver = Solver(view, ASSETS)
+        motion = solver.motion
+        env.caption = lambda env: f't={env.time:5.2f}s  {backend.contacts.phase}'
         rows = []
         heartbeat = [time.monotonic()]
 
         def record(env):
-            poses = env.body_poses()
-            pen = poses['pen:body']
-            q = env.joint_positions(ARM)
+            pen = view.body_poses()['pen:body']
+            q = view.qpos(ARM)
             row = {'time': round(env.time, 4), 'stage': solver.stage,
                    **{f'q{i + 1}': float(v) for i, v in enumerate(q)},
-                   **{f'q{i + 1}_target': float(env.targets[env.dof[name]]) for i, name in enumerate(ARM)},
-                   'finger_gap': motion.finger_gap(), 'drawer_opening': env.drawer_opening(DRAWER_JOINT),
+                   **{f'q{i + 1}_target': float(v) for i, v in enumerate(view.targets(ARM))},
+                   'finger_gap': motion.finger_gap(), 'drawer_opening': view.object_joint('cabinet', DRAWER_JOINT),
                    'pen_x': pen[0, 3], 'pen_y': pen[1, 3], 'pen_z': pen[2, 3],
                    'pen_axis_z': pen[2, 0]}
             rows.append(row)
@@ -116,21 +126,23 @@ def child(args):
                 write_json(output / 'heartbeat.json', {'time': env.time, 'stage': solver.stage, 'epoch': time.time()})
 
         env.observers.append(record)
-        timings['load_s'] = env.timings['load_s']
-        try:
-            solver.solve()
+        timings['load_s'] = backend.timings['load_s']
+        [outcome] = run_expert(env, [solver.solve()])
+        if isinstance(outcome, (TaskFailed, PlanningFailed)):
+            result['failure'] = {'stage': outcome.stage, 'reason': outcome.reason,
+                                 'details': json.loads(json.dumps(outcome.details, default=float))}
+        elif outcome is not None:
+            raise outcome
+        else:
             result['failure'] = None
-        except (TaskFailed, PlanningFailed) as error:
-            result['failure'] = {'stage': error.stage, 'reason': error.reason,
-                                 'details': json.loads(json.dumps(error.details, default=float))}
-        env.step(round(.5 / DT))
-        evaluation = evaluate(env, solver)
+        run_expert(env, [motion.hold(.5)])
+        evaluation = evaluate(solver)
         starts = {event['stage']: event['time'] for event in solver.events}
         held = None
         if 'pick: lift pen' in starts:
             # The pen leaves the table within the first fraction of a second of the lift.
             held = (starts['pick: lift pen'] + HELD_AFTER_LIFT, starts.get('place: release pen', env.time))
-        expected, unexpected = classify(env.contacts.intervals(), 'cabinet:' + g.HANDLE, 'pen:', held)
+        expected, unexpected = classify(backend.contacts.intervals(), 'cabinet:' + g.HANDLE, 'pen:', held)
         evaluation['unexpected_contacts'] = len(unexpected)
         success = (result['failure'] is None and evaluation['drawer_closed'] and evaluation['pen_in_drawer']
                    and evaluation['hand_withdrawn'] and not unexpected)
@@ -143,10 +155,10 @@ def child(args):
                 writer = csv.DictWriter(stream, list(rows[0]))
                 writer.writeheader()
                 writer.writerows(rows)
-        timings.update(env.timings, **motion.timings)
-        if env.cameras:
+        timings.update(backend.timings, **motion.timings)
+        if backend.cameras:
             started = time.perf_counter()
-            result['videos'] = env.cameras.encode(output)
+            result['videos'] = backend.cameras.encode(output)
             timings['encode_s'] = time.perf_counter() - started
     except Exception:
         result['error'] = traceback.format_exc()
@@ -154,8 +166,8 @@ def child(args):
     result['timings'] = timings
     write_json(output / 'result.json', json.loads(json.dumps(result, default=float)))
     mark_shutdown(output, result['status'])
-    if env is not None:
-        env.close()
+    if backend is not None:
+        backend.close()
     app.close()
 
 

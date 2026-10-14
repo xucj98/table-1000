@@ -1,10 +1,11 @@
 """Open the cabinet's bottom drawer, put the pen in it and close it.
 
-``solve(env, motion)`` is the fixed script; every pose it targets is computed
-from the live body poses at that moment and the assets' collision geometry (see
-``drawer_pen_geometry``). Contact permission in the planning world is granted
-only between the fingers and the drawer handle or the pen, and only for the
-phases that need it.
+``Solver.solve()`` is the fixed script, a generator of 25 Hz actions for one
+environment (see ``table_1000.tasks.motion.run_expert``); every pose it targets
+is computed from the live body poses at that moment and the assets' collision
+geometry (see ``drawer_pen_geometry``). Contact permission in the planning
+world is granted only between the fingers and the drawer handle or the pen, and
+only for the phases that need it.
 """
 
 import numpy as np
@@ -12,7 +13,7 @@ import numpy as np
 from table_1000.planning.world import model_shapes
 from table_1000.tasks import drawer_pen_geometry as g
 from table_1000.robots.x1pro import FINGER_LINKS
-from table_1000.tasks.motion import PlanningFailed
+from table_1000.tasks.motion import MotionPlanner, PlanningFailed
 
 DRAWER_JOINT = 'cabinet_drawer3_slide'
 PULL_SEGMENTS = 3          # the opening is pulled in this many checked segments
@@ -76,10 +77,25 @@ class CabinetGeometry:
 
 
 class Solver:
-    def __init__(self, env, motion, cabinet_model):
-        self.env, self.motion = env, motion
-        self.cabinet = CabinetGeometry(cabinet_model)
-        self.table_height = env.scene.TABLE['height']
+    """Expert for one environment; ``view`` is its :class:`~table_1000.sim.env.EnvView`."""
+
+    def __init__(self, view, assets):
+        scene = view.scene
+        self.env = view
+        self.motion = motion = MotionPlanner(view, 'right')
+        table = scene.TABLE
+        top = np.eye(4)
+        top[:3, 3] = [*table['center'], table['height'] - table['top_thickness'] / 2]
+        motion.add_box('table', (*table['size'], table['top_thickness']), top)
+        # Cabinet: one object per body, handles split out for contact permission.
+        # Pen: its bodies stay assembled, so one object in the pen body frame.
+        motion.add_asset(f'{assets}/{scene.CABINET["asset"]}/model.json', 'cabinet:',
+                         lambda body, part: (part if part.endswith('.handle') else body, body),
+                         lambda name: not name.endswith('.handle'))
+        motion.add_asset(f'{assets}/{scene.PEN["asset"]}/model.json', 'pen:',
+                         lambda body, part: ('pen', 'body'), lambda name: False, lambda name: True)
+        self.cabinet = CabinetGeometry(f'{assets}/{scene.CABINET["asset"]}/model.json')
+        self.table_height = table['height']
         self.regrasps = 0
         self.stage = 'start'
         self.events = []
@@ -99,13 +115,13 @@ class Solver:
         for one of ``reasons`` tries the next, anything else propagates."""
         for index, option in enumerate(options):
             try:
-                return move(option)
+                return (yield from move(option))
             except PlanningFailed as error:
                 if not error.reason.startswith(reasons) or index == len(options) - 1:
                     raise
 
     def opening(self):
-        return self.env.drawer_opening(DRAWER_JOINT)
+        return self.env.object_joint('cabinet', DRAWER_JOINT)
 
     def handle_grasp(self):
         drawer, _, _ = self.poses()
@@ -115,15 +131,16 @@ class Solver:
         """Approach and close on the handle; returns the TCP grasp pose."""
         m = self.motion
         m.allow(['cabinet:' + g.HANDLE])
-        m.open_gripper()
+        yield from m.open_gripper()
         grasp = self.handle_grasp()
         self.enter(f'{label}: reach handle')
-        self.first_reachable(STANDOFFS, lambda d: m.move_to_pose_with_RRTConnect(self.stage, g.standoff(grasp, d)),
-                             ('IK Failed',))
+        yield from self.first_reachable(
+            STANDOFFS, lambda d: m.move_to_pose_with_RRTConnect(self.stage, g.standoff(grasp, d)), ('IK Failed',))
         self.enter(f'{label}: approach handle')
-        m.move_to_pose_with_screw(self.stage, self.handle_grasp())
+        yield from m.move_to_pose_with_screw(self.stage, self.handle_grasp())
         self.enter(f'{label}: close on handle')
-        gap = m.close_gripper()
+        yield from m.close_gripper()
+        gap = m.finger_gap()
         if not HANDLE_HELD_GAP[0] <= gap <= HANDLE_HELD_GAP[1]:
             drawer, _, _ = self.poses()
             handle = drawer[:3, :3] @ self.cabinet.handle_center + drawer[:3, 3]
@@ -136,10 +153,10 @@ class Solver:
     def release_handle(self, label):
         m = self.motion
         self.enter(f'{label}: release handle')
-        m.open_gripper()
+        yield from m.open_gripper()
         held = m.tcp()
-        self.first_reachable(STANDOFFS, lambda d: m.move_to_pose_with_screw(self.stage, g.standoff(held, d)),
-                             ('joint_limit', 'collision'))
+        yield from self.first_reachable(
+            STANDOFFS, lambda d: m.move_to_pose_with_screw(self.stage, g.standoff(held, d)), ('joint_limit', 'collision'))
         m.allow(['cabinet:' + g.HANDLE], False)
 
     def slide(self, label, target_opening):
@@ -166,7 +183,7 @@ class Solver:
             m.carry(carried, ['cabinet:cabinet.housing', 'pen:pen'])
             try:
                 # Drawer +Y points into the cabinet; opening grows along -Y.
-                m.move_to_pose_with_screw(self.stage, g.translated(tcp, -drawer[:3, 1] * step))
+                yield from m.move_to_pose_with_screw(self.stage, g.translated(tcp, -drawer[:3, 1] * step))
             finally:
                 m.release(carried, ['cabinet:cabinet.housing', 'pen:pen'])
             moved = self.opening() - start
@@ -175,26 +192,27 @@ class Solver:
                 if self.regrasps >= MAX_REGRASPS:
                     raise TaskFailed(self.stage, 'drawer did not follow the hand', moved=moved, commanded=step)
                 self.regrasps += 1
-                self.release_handle(f'{label} regrasp {self.regrasps}')
-                self.grasp_handle(f'{label} regrasp {self.regrasps}')
+                yield from self.release_handle(f'{label} regrasp {self.regrasps}')
+                yield from self.grasp_handle(f'{label} regrasp {self.regrasps}')
 
     # -- task --------------------------------------------------------------------
     def solve(self):
         m = self.motion
         self.enter('settle')
-        m.hold(.5)
+        yield from m.hold(.5)
 
         # 1. Open the drawer.
-        self.grasp_handle('open')
-        self.slide('open', g.OPENING)
-        self.release_handle('open')
+        yield from self.grasp_handle('open')
+        yield from self.slide('open', g.OPENING)
+        yield from self.release_handle('open')
 
         # Rise clear of the opened drawer's walls before the free-space move, so
         # the path to the pen does not skim them.
         self.enter('pick: rise')
         released = m.tcp()
-        self.first_reachable(RISES, lambda h: m.move_to_pose_with_screw(self.stage, g.translated(released, [0., 0., h])),
-                             ('joint_limit', 'collision'))
+        yield from self.first_reachable(
+            RISES, lambda h: m.move_to_pose_with_screw(self.stage, g.translated(released, [0., 0., h])),
+            ('joint_limit', 'collision'))
 
         # 2. Pick the pen at its centre of mass.
         _, _, pen = self.poses()
@@ -202,21 +220,24 @@ class Solver:
         grasp_x = float(com[0])
         m.allow(['pen:pen'])
         self.enter('pick: reach pen')
-        m.move_to_pose_with_RRTConnect(self.stage, g.standoff(g.pen_tcp(pen, self.table_height, grasp_x), g.PEN_APPROACH))
+        yield from m.move_to_pose_with_RRTConnect(
+            self.stage, g.standoff(g.pen_tcp(pen, self.table_height, grasp_x), g.PEN_APPROACH))
         self.enter('pick: approach pen')
         _, _, pen = self.poses()
-        m.move_to_pose_with_screw(self.stage, g.pen_tcp(pen, self.table_height, grasp_x))
+        yield from m.move_to_pose_with_screw(self.stage, g.pen_tcp(pen, self.table_height, grasp_x))
         self.enter('pick: close on pen')
-        gap = m.close_gripper()
+        yield from m.close_gripper()
+        gap = m.finger_gap()
         if not PEN_HELD_GAP[0] <= gap <= PEN_HELD_GAP[1]:
             raise TaskFailed(self.stage, 'pen not held', finger_gap=gap)
         _, _, pen = self.poses()
         m.attach('pen:pen', pen)
         self.enter('pick: lift pen')
         grasped = m.tcp()
-        self.first_reachable(PEN_LIFTS, lambda h: m.move_to_pose_with_screw(self.stage, g.translated(grasped, [0., 0., h])),
-                             ('joint_limit',))
-        m.hold(.2)
+        yield from self.first_reachable(
+            PEN_LIFTS, lambda h: m.move_to_pose_with_screw(self.stage, g.translated(grasped, [0., 0., h])),
+            ('joint_limit',))
+        yield from m.hold(.2)
         _, _, pen = self.poses()
         if pen[2, 3] < self.table_height + .03:
             raise TaskFailed(self.stage, 'pen not lifted', pen_height=float(pen[2, 3]))
@@ -239,22 +260,22 @@ class Solver:
         self.enter('place: carry pen')
         above = g.translated(release_target(), [0., 0., g.PLACE_ABOVE])
         try:
-            m.move_to_pose_with_screw(self.stage, above)
+            yield from m.move_to_pose_with_screw(self.stage, above)
         except PlanningFailed:
             self.enter('place: carry pen (RRTConnect)')
-            m.move_to_pose_with_RRTConnect(self.stage, above)
+            yield from m.move_to_pose_with_RRTConnect(self.stage, above)
         self.enter('place: lower pen')
-        m.move_to_pose_with_screw(self.stage, release_target())
+        yield from m.move_to_pose_with_screw(self.stage, release_target())
         self.enter('place: release pen')
-        m.open_gripper(.05)
+        yield from m.open_gripper(.05)
         m.detach('pen:pen')
-        m.hold(.5)
+        yield from m.hold(.5)
         self.enter('place: withdraw')
         released = m.tcp()
         # Back along the approach, or straight up when the wrist is at a limit.
         exits = [g.standoff(released, d) for d in STANDOFFS] + [g.translated(released, [0., 0., h]) for h in STANDOFFS]
-        self.first_reachable(exits, lambda target: m.move_to_pose_with_screw(self.stage, target),
-                             ('joint_limit', 'collision'))
+        yield from self.first_reachable(exits, lambda target: m.move_to_pose_with_screw(self.stage, target),
+                                        ('joint_limit', 'collision'))
         m.allow(['pen:pen'], False)
         drawer, _, pen = self.poses()
         inside, local = self.cabinet.pen_inside(drawer, pen)
@@ -262,14 +283,14 @@ class Solver:
             raise TaskFailed(self.stage, 'pen not in the drawer', pen_in_drawer=local.tolist())
 
         # 4. Close the drawer.
-        self.grasp_handle('close')
-        self.slide('close', 0.)
-        self.release_handle('close')
+        yield from self.grasp_handle('close')
+        yield from self.slide('close', 0.)
+        yield from self.release_handle('close')
         if self.opening() > CLOSED_TOLERANCE:
             raise TaskFailed('close', 'drawer not closed', opening=self.opening())
 
 
-def evaluate(env, solver):
+def evaluate(solver):
     """Final task state from the physics state alone."""
     drawer, _, pen = solver.poses()
     inside, local = solver.cabinet.pen_inside(drawer, pen)
