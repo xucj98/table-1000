@@ -1,6 +1,6 @@
 """Batched task environment: ``reset(layout)`` and ``step(action)`` at 25 Hz.
 
-Simulator-independent: it drives a backend (``table_1000.sim.isaac``) through
+Simulator-independent: it drives a backend (``table_1000.sim.isaac.backend``) through
 the robot's :class:`~table_1000.robots.controllers.RobotController`. One
 ``step`` applies an action dict (see the controllers module) and advances
 ``SUBSTEPS`` physics steps; every array has a leading environment axis.

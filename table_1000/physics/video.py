@@ -2,33 +2,24 @@
 import numpy as np
 
 class Camera:
+    """One fixed view of :class:`~table_1000.sim.isaac.cameras.Cameras` with the test's caption."""
     def __init__(self, stage, config):
-        import omni.replicator.core as rep
-        from pxr import Gf, UsdGeom
-        from table_1000.runtime import render
-        render.configure()
-        self.rep, self.size = rep, config['resolution']
-        camera = UsdGeom.Camera.Define(stage, '/World/Camera')
-        camera.CreateFocalLengthAttr(config['focal_length_mm'])
-        camera.CreateClippingRangeAttr(Gf.Vec2f(.001, 100))
-        transform = Gf.Matrix4d().SetLookAt(Gf.Vec3d(*config['position']), Gf.Vec3d(*config['target']), Gf.Vec3d(*config['up'])).GetInverse()
-        UsdGeom.Xformable(camera).AddTransformOp().Set(transform)
+        from table_1000.sim.isaac import render
+        from table_1000.sim.isaac.cameras import Cameras
         render.add_lights(stage)
-        self.product = rep.create.render_product(camera.GetPath(), tuple(self.size))
-        self.rgb = rep.AnnotatorRegistry.get_annotator('rgb')
-        self.rgb.attach([self.product])
+        self.size = config['resolution']
+        # The timeline is playing: settling app updates would step physics.
+        self.cameras = Cameras(stage, {'main': config}, None, config['fps'], settle=False)
 
     def capture(self, ctx):
         runtime = ctx.session
         from PIL import Image, ImageDraw
-        from omni.physx import get_physx_interface
-        get_physx_interface().update_transformations(True, True, True, False)
         before = {key: value['position'].copy() for key, value in runtime.states.items()}
-        self.rep.orchestrator.step(rt_subframes=1, delta_time=0., pause_timeline=False)
+        rgb = self.cameras.capture(save=False)['main']
         runtime.refresh()
         if any(not np.array_equal(value, runtime.states[key]['position']) for key, value in before.items()):
             raise RuntimeError('Rendering advanced physical state')
-        image = Image.fromarray(self.rgb.get_data()[:, :, :3])
+        image = Image.fromarray(rgb)
         draw = ImageDraw.Draw(image)
         draw.rectangle((0, 0, self.size[0], 35), fill='white')
         active = ', '.join(key for key, value in ctx.action_values.items()
@@ -41,5 +32,4 @@ class Camera:
         return image
 
     def close(self):
-        self.rgb.detach()
-        self.product.destroy()
+        self.cameras.close()

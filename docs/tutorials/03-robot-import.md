@@ -100,7 +100,7 @@
 
 - [kinematics.py](../../table_1000/robots/kinematics.py) 的 `RobotModel`：一个 MPlib 模型包含全部身体关节，每只手臂一个规划器。提供正运动学、IK、头部 look-at、RRTConnect 与直线规划，只做自碰撞检查。
 - [controllers.py](../../table_1000/robots/controllers.py)：25 Hz 一个动作，每个动作覆盖 10 个物理步。动作组有底盘速度、升降与头部位置、手臂关节位置或 TCP 增量、夹爪间距，见[机器人规范](../designs/asset-pipeline/robots.md#机器人层运动学规划与控制)。
-- [table_1000/sim/env.py](../../table_1000/sim/env.py) 的 `Env.reset(layout)` / `Env.step(action)` 把控制器接到仿真后端，类似 gym 环境；检查、遥控和后续章节的专家脚本都通过它运行。Isaac 的调用都在后端 [table_1000/sim/isaac.py](../../table_1000/sim/isaac.py) 里，数组带环境维 N。目前只有 CPU 后端（N = 1），GPU 并行后端（Isaac Lab）待实现。
+- [table_1000/sim/env.py](../../table_1000/sim/env.py) 的 `Env.reset(layout)` / `Env.step(action)` 把控制器接到仿真后端，类似 gym 环境；检查、遥控和后续章节的专家脚本都通过它运行。Isaac 的调用都在后端 [table_1000/sim/isaac/backend.py](../../table_1000/sim/isaac/backend.py) 里，数组带环境维 N。目前只有 CPU 后端（N = 1），GPU 并行后端（Isaac Lab）待实现。
 
 ## 6. 验收
 

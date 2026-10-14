@@ -1,7 +1,8 @@
 """Synchronous multi-camera capture to JPEG frames and MP4 videos.
 
-Capturing renders without advancing physics (as in ``table_1000.physics.video``).
-A view is either fixed (``position`` and ``target``) or follows a prim
+Capturing renders without advancing physics; the asset physics tests use one
+fixed view (``table_1000.physics.video``).
+A view is either fixed (``position``, ``target`` and optionally ``up``) or follows a prim
 (``parent`` and a ``local`` 4x4 in the USD camera convention: -Z forward, +Y up).
 """
 
@@ -20,29 +21,33 @@ class Cameras:
     change of a fixed camera on a static scene). Fixed cameras are placed once;
     cameras that follow a prim are moved before each capture.
 
-    ``subframes`` renders per capture, all of the same physical state. One
-    leaves a trail behind fast motion (a released pen) from the renderer's
-    temporal denoising; with the indirect-light caches off (see
-    ``table_1000.runtime.render``), two to eight brought it to the level of the
-    render noise, so four leaves a margin.
+    ``subframes`` renders per capture, all of the same physical state. With
+    one (the default, and the asset physics tests' standard), a fast-moving
+    object (a released pen) leaves a short trail from the renderer's temporal
+    denoising; more subframes reduce it at a proportional render cost.
     """
 
-    SUBFRAMES = 4
+    SUBFRAMES = 1
 
-    def __init__(self, stage, views, output, fps, subframes=SUBFRAMES):
+    def __init__(self, stage, views, output, fps, subframes=SUBFRAMES, settle=True):
+        """``output``: directory for the saved frames (None: frames are only returned).
+        ``settle`` runs three app updates so Replicator's orchestrator exists before
+        the first capture; with a playing timeline each update also steps physics."""
         import omni.replicator.core as rep
         from pxr import Gf, UsdGeom
-        from table_1000.runtime import render
+        from table_1000.sim.isaac import render
         render.configure()
-        self.rep, self.stage, self.output, self.fps = rep, stage, Path(output), fps
+        self.rep, self.stage, self.fps = rep, stage, fps
+        self.output = None if output is None else Path(output)
         self.subframes = int(subframes)
         self.views = views
         self.counts = {name: 0 for name in views}
         self.transforms, self.products, self.annotators = {}, {}, {}
         for name, view in views.items():
-            (self.output / name).mkdir(parents=True, exist_ok=True)
+            if self.output:
+                (self.output / name).mkdir(parents=True, exist_ok=True)
             camera = UsdGeom.Camera.Define(stage, f'/World/Cameras/{name}')
-            camera.CreateClippingRangeAttr(Gf.Vec2f(.01, 100))
+            camera.CreateClippingRangeAttr(Gf.Vec2f(.001, 100))
             camera.CreateFocalLengthAttr(float(view['focal_length_mm']))
             self.transforms[name] = UsdGeom.Xformable(camera).AddTransformOp()
             self.transforms[name].Set(self.world_transform(view))
@@ -52,7 +57,7 @@ class Cameras:
         # Replicator's orchestrator is created on an app update; without one a
         # first capture can find it missing.
         import omni.kit.app
-        for _ in range(3):
+        for _ in range(3 if settle else 0):
             omni.kit.app.get_app().update()
 
     def world_transform(self, view):
@@ -61,7 +66,7 @@ class Cameras:
             parent = UsdGeom.XformCache().GetLocalToWorldTransform(self.stage.GetPrimAtPath(view['parent']))
             return Gf.Matrix4d(np.asarray(view['local'], dtype=float).T.tolist()) * parent
         return Gf.Matrix4d().SetLookAt(Gf.Vec3d(*view['position']), Gf.Vec3d(*view['target']),
-                                       Gf.Vec3d(0, 0, 1)).GetInverse()
+                                       Gf.Vec3d(*view.get('up', (0, 0, 1)))).GetInverse()
 
     def capture(self, caption='', save=True):
         """Render every view; returns ``{view: HxWx3 uint8}``. Frames are saved
@@ -76,7 +81,7 @@ class Cameras:
         images = {}
         for name in self.views:
             images[name] = np.asarray(self.annotators[name].get_data()[:, :, :3])
-            if not save:
+            if not save or not self.output:
                 continue
             image = Image.fromarray(images[name])
             draw = ImageDraw.Draw(image)

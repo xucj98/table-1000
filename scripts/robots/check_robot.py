@@ -35,10 +35,10 @@ def main(argv=None):
     args = parser.parse_args(argv)
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    from table_1000.runtime.app import start_app
-    from table_1000.runtime.render import RT2_ARGS
+    from table_1000.sim.isaac.app import start_app
+    from table_1000.sim.isaac.render import RT2_ARGS
     started = time.perf_counter()
-    app = start_app(output, gpu=args.gpu, workers=4, renderer='RaytracedLighting', disable_viewport_updates=True,
+    app = start_app(gpu=args.gpu, workers=4, renderer='RaytracedLighting', disable_viewport_updates=True,
                     extra_args=RT2_ARGS if args.video else ())
     report = {'robot': args.robot, 'startup_s': time.perf_counter() - started, 'cases': {}}
     checker = None
@@ -46,7 +46,7 @@ def main(argv=None):
         from table_1000.robots import load_robot_test, load_spec
         from table_1000.robots.checks import Checker
         from table_1000.robots.controllers import CONTROL_HZ
-        from table_1000.runtime.cameras import Cameras
+        from table_1000.sim.isaac.cameras import Cameras
         cameras = (lambda stage: Cameras(stage, VIEW, output / 'frames', fps=CONTROL_HZ)) if args.video else None
         root = args.root.resolve()
         checker = Checker(load_spec(args.robot, root), load_robot_test(args.robot, root), output, args.assets.resolve(),

@@ -3,7 +3,6 @@
 import argparse
 import importlib.util
 import json
-import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -211,10 +210,8 @@ def main(argv=None):
     source, output = args.source.resolve(), args.output.resolve()
     references = args.assets if args.assets is not None else sorted(
         path.parent.relative_to(source) for path in source.rglob('physics.py'))
-    from isaacsim import SimulationApp
-    app = SimulationApp({'headless': True, 'active_gpu': args.gpu, 'physics_gpu': 0 if os.getenv('CUDA_VISIBLE_DEVICES') == str(args.gpu) else args.gpu,
-                         'multi_gpu': False, 'create_new_stage': False,
-                         'disable_viewport_updates': True, 'limit_cpu_threads': 4})
+    from table_1000.sim.isaac.app import start_app
+    app = start_app(gpu=args.gpu, workers=4, create_new_stage=False, disable_viewport_updates=True, limit_cpu_threads=4)
     try:
         for reference in references:
             build(output / reference, source / reference, output / reference)

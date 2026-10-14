@@ -81,7 +81,7 @@ robot.py (SPEC) ──> 运动学与规划模型、控制器 ──robot_test.py
 | `<arm>` | 6 个关节位置，或 TCP 位姿增量（安装连杆坐标系，内部 IK） | `pos`、`delta`、`ee_delta` |
 | `<arm>_gripper` | 两指间距 | 绝对 |
 
-**环境**（`table_1000/sim/env.py` 的 `Env`）把控制器接到仿真后端：`reset(layout)` 写入物体摆放与机器人关节（不重建舞台），`step(action)` 执行一个控制周期，返回全部关节位置与速度、底盘位姿、各手臂 TCP 位姿和时间。仿真器相关的调用只在后端里，所有数组带环境维 N。目前只有 Isaac Sim CPU 后端（`table_1000/sim/isaac.py`，N = 1）；GPU 并行后端（Isaac Lab）待实现，多环境下的批量行为尚未验证。
+**环境**（`table_1000/sim/env.py` 的 `Env`）把控制器接到仿真后端：`reset(layout)` 写入物体摆放与机器人关节（不重建舞台），`step(action)` 执行一个控制周期，返回全部关节位置与速度、底盘位姿、各手臂 TCP 位姿和时间。仿真器相关的调用只在后端里，所有数组带环境维 N。目前只有 Isaac Sim CPU 后端（`table_1000/sim/isaac/backend.py`，N = 1）。`table_1000/sim/isaac/` 也放 Isaac 的公共工具：启动（Kit 设置只在本次运行生效）、物理世界、舞台写入、相机与渲染设置，物体资产的物理测试同样使用它们；以后增加的后端并列放在 `table_1000/sim/<后端>/`。GPU 并行后端（Isaac Lab）待实现，多环境下的批量行为尚未验证。
 
 ## 验收
 

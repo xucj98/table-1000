@@ -13,7 +13,8 @@ from pathlib import Path
 
 import numpy as np
 
-from table_1000.runtime import render
+from table_1000.assets import usd_entry
+from table_1000.sim.isaac import render
 
 ROBOT_PATH, TABLE_PATH, PRIMITIVES_PATH = '/World/Robot', '/World/Table', '/World/Primitives'
 
@@ -26,11 +27,7 @@ def object_paths(scene):
 
 
 def asset_entry(assets, relative):
-    directory = Path(assets) / relative
-    for name in ('object.usda', 'object.usdz', 'robot.usda'):
-        if (directory / name).is_file():
-            return directory / name
-    raise FileNotFoundError(f'no built USD entry in {directory}')
+    return usd_entry(Path(assets) / relative)
 
 
 def set_transform(prim, transform):
@@ -101,19 +98,6 @@ def populate(stage, scene, layout, assets, robot_transform=None):
     for name, spec in getattr(scene, 'PRIMITIVES', {}).items():
         add_primitive(stage, f'{PRIMITIVES_PATH}/{name}', spec, layout[name])
     render.add_lights(stage)
-
-
-def primitive_surface(spec, pose, count=400):
-    """Points on the surface of a primitive (``{'shape', 'size'}``, as for :func:`add_primitive`) posed in the world."""
-    import trimesh
-    if spec['shape'] == 'sphere':
-        mesh = trimesh.creation.icosphere(subdivisions=3, radius=spec['size'])
-    elif spec['shape'] == 'box':
-        mesh = trimesh.creation.box(spec['size'])
-    else:
-        mesh = trimesh.creation.cylinder(radius=spec['size'][0], height=spec['size'][1])
-    points, _ = trimesh.sample.sample_surface_even(mesh, count, seed=0)
-    return points @ pose[:3, :3].T + pose[:3, 3]
 
 
 def add_primitive(stage, path, spec, transform):

@@ -43,14 +43,10 @@ class TestContext:
     """One isolated experiment. Importing test definitions starts no simulator."""
     def __init__(self, asset_path, *, name, render=False, app=None, warmup=False):
         import omni.usd
-        from isaacsim.core.api import World
-        World.clear_instance()
-        omni.usd.get_context().new_stage()
+        from table_1000.sim.isaac.app import new_world
         self.app, self.name, self.render, self.warmup = app, name, render, warmup
         self.asset_path = Path(asset_path).resolve()
-        self.world = World(physics_dt=.004, rendering_dt=.04, stage_units_in_meters=1, backend='numpy', device='cpu')
-        pc = self.world.get_physics_context()
-        pc.enable_gpu_dynamics(False);pc.set_solver_type('TGS');pc.set_broadphase_type('MBP');pc.enable_ccd(True)
+        self.world = new_world(rendering_dt=.04)
         self.session = session_for(omni.usd.get_context().get_stage())
         self.session.active = False
         self.asset = self.spawn(self.asset_path, name='asset')

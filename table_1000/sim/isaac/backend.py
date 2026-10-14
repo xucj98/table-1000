@@ -21,10 +21,10 @@ import time
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from table_1000.scenes import stage as scene_stage
-from table_1000.sim.contacts import Contacts
+from table_1000.sim.isaac.app import DT, new_world
+from table_1000.sim.isaac import stage as scene_stage
+from table_1000.sim.isaac.contacts import Contacts
 
-DT = .004
 GROUND_PATH = '/World/defaultGroundPlane'
 
 
@@ -54,20 +54,11 @@ class IsaacBackend:
         at the scene's robot pose.
         """
         import omni.usd
-        from isaacsim.core.api import World
         from isaacsim.core.prims import RigidPrim, SingleArticulation
         self.timings = {'load_s': 0., 'step_s': 0., 'render_s': 0.}
         started = time.perf_counter()
-        World.clear_instance()
-        omni.usd.get_context().new_stage()
         self.scene = scene
-        self.world = World(physics_dt=DT, rendering_dt=DT * 10, stage_units_in_meters=1,
-                           backend='numpy', device='cpu')
-        context = self.world.get_physics_context()
-        context.enable_gpu_dynamics(False)
-        context.set_solver_type('TGS')
-        context.set_broadphase_type('MBP')
-        context.enable_ccd(True)
+        self.world = new_world()
         self.stage = omni.usd.get_context().get_stage()
         self.world.scene.add_default_ground_plane()
         mobile = spec is None or spec.base is not None

@@ -11,7 +11,8 @@ import subprocess
 import time
 import traceback
 
-from table_1000.runtime.render import RT2_ARGS
+from table_1000.assets import usd_entry
+from table_1000.sim.isaac.render import RT2_ARGS
 
 
 def load_tests(path):
@@ -205,7 +206,7 @@ def main(argv=None):
     parser.add_argument('--plots-only',action='store_true')
     args=parser.parse_args(argv)
     asset=args.asset.resolve()
-    if asset.is_dir():asset=asset/('object.usda' if (asset/'object.usda').exists() else 'object.usdz')
+    if asset.is_dir():asset=usd_entry(asset)
     tests=load_tests(args.script or asset.parent/'physics_test.py')
     if args.tests:tests={name:tests[name] for name in args.tests}
     output=(args.output or asset.parent/'physics_test').resolve();output.mkdir(parents=True,exist_ok=True)
@@ -219,17 +220,15 @@ def main(argv=None):
     gpu={'physical_index':args.gpu,'before_process_start':subprocess.run(
         ['nvidia-smi','--query-gpu=index,name,driver_version,memory.used,utilization.gpu','--format=csv'],
         check=True,capture_output=True,text=True).stdout.strip()}
-    from isaacsim import SimulationApp
-    app=SimulationApp({'headless':True,'create_new_stage':False,'active_gpu':args.gpu,'physics_gpu':0 if os.getenv('CUDA_VISIBLE_DEVICES') == str(args.gpu) else args.gpu,'multi_gpu':False,
-         'disable_viewport_updates':True,'limit_cpu_threads':4,'renderer':'RaytracedLighting','width':960,'height':480,
-         'extra_args':['--/persistent/physics/numThreads=4','--/rtx/post/motionblur/enabled=False',*RT2_ARGS]})
+    from table_1000.sim.isaac.app import start_app
+    app=start_app(gpu=args.gpu,workers=4,create_new_stage=False,disable_viewport_updates=True,limit_cpu_threads=4,
+         renderer='RaytracedLighting',width=960,height=480,extra_args=['--/rtx/post/motionblur/enabled=False',*RT2_ARGS])
     startup=time.perf_counter()-started
     try:
         import carb
         from threadpoolctl import threadpool_limits
         from table_1000.physics.simulation import enable_scripting
         enable_scripting()
-        carb.settings.get_settings().set('/persistent/physics/numThreads',4)
         carb.settings.get_settings().set('/rtx/post/motionblur/enabled',False)
         with threadpool_limits(limits=1):
             for name,test in tests.items():

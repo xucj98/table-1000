@@ -106,7 +106,7 @@ physics_test/
 | 物理步长 | `0.004 s`（250 Hz），每次推进一个物理步，无隐藏子步 |
 | 求解器 | CPU PhysX、TGS，位置/速度迭代 16/4；CCD 开启 |
 | 环境及实例 | 1 个环境、默认 1 个资产实例；多实例另列实际数量，不与单实例直接比较 |
-| CPU | 参考 AMD EPYC 7542；Kit/PhysX 工作线程目标 4，OMP/BLAS 目标 1；记录生效线程数与 CPU 型号 |
+| CPU | 参考 AMD EPYC 7542；Kit/PhysX 工作线程目标 4，OMP/BLAS 目标 1；记录生效线程数与 CPU 型号。线程数在启动时传入并回读核对，Kit 设置只在本次运行生效，不写共享配置 |
 | GPU | 单张 RTX 4090，仅用于渲染；记录设备、驱动、其他负载，不使用 GPU 刚体求解 |
 | 视频 | RTX Real-Time 2.0（`RealTimePathTracing`），960 × 480、25 FPS，即每 10 个物理步一帧；关闭运动模糊，1 spp、1 render subframe，总反弹与镜面/透射反弹上限均为 12 |
 | 灯光 | 统一使用 `DomeLight` 强度 900 和 `DistantLight` 强度 2500；太阳光 `RotateXYZ = (-40, 20, 0)` 度 |

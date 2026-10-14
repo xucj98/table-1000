@@ -34,7 +34,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from table_1000.robots.controllers import CONTROL_HZ
-from table_1000.scenes.stage import primitive_surface
+from table_1000.scenes import primitive_surface
 
 PENETRATION_LIMIT = .002     # m, slow or resting contacts
 # Objects dropped onto the robot hit it at about 2 m/s, 9 mm per 4 ms step; a
@@ -100,7 +100,7 @@ def select_cases(spec, settings):
 
 
 def check_scene(spec, settings):
-    """Scene module for :class:`~table_1000.sim.isaac.IsaacBackend` from a robot's ``robot_test`` settings."""
+    """Scene module for :class:`~table_1000.sim.isaac.backend.IsaacBackend` from a robot's ``robot_test`` settings."""
     robot = settings.ROBOT
     scene = types.SimpleNamespace(
         TABLE=settings.TABLE, OBJECTS=(), PRIMITIVES=PRIMITIVES,
@@ -166,7 +166,7 @@ class Checker:
     def __init__(self, spec, settings, output, assets, root, cameras=None):
         from table_1000.robots.kinematics import RobotModel
         from table_1000.sim.env import Env
-        from table_1000.sim.isaac import IsaacBackend
+        from table_1000.sim.isaac.backend import IsaacBackend
         self.spec, self.settings, self.output = spec, settings, Path(output)
         self.arm = spec.primary_arm
         self.gripper = f'{self.arm}_gripper'

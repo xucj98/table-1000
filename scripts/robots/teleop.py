@@ -29,17 +29,17 @@ def main(argv=None):
     args = parser.parse_args(argv)
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    from table_1000.runtime.app import start_app
-    app = start_app(output, gpu=args.gpu, workers=4, renderer='RaytracedLighting', disable_viewport_updates=True)
+    from table_1000.sim.isaac.app import start_app
+    app = start_app(gpu=args.gpu, workers=4, renderer='RaytracedLighting', disable_viewport_updates=True)
     try:
         import numpy as np
         from table_1000.robots import load_robot_test, load_spec, teleop
         from table_1000.robots.checks import Checker, check_scene
         from table_1000.robots.kinematics import RobotModel
-        from table_1000.runtime.cameras import Cameras, camera_mount
-        from table_1000.scenes.stage import ROBOT_PATH
+        from table_1000.sim.isaac.cameras import Cameras, camera_mount
+        from table_1000.sim.isaac.stage import ROBOT_PATH
         from table_1000.sim.env import Env
-        from table_1000.sim.isaac import IsaacBackend
+        from table_1000.sim.isaac.backend import IsaacBackend
         spec, settings = load_spec(args.robot), load_robot_test(args.robot)
         views = dict(VIEWS)
         for name, frame in spec.cameras.items():
@@ -52,7 +52,7 @@ def main(argv=None):
         layout = scene.placement(box=on_table(0., 0., .04), can=on_table(.05, .20, .05),
                                  stick=on_table(-.05, -.15, .007, np.array([[0, 0, 1], [0, 1, 0], [-1, 0, 0.]])))
         backend = IsaacBackend(scene, layout, ROOT / 'assets', spec=spec,
-                               cameras=lambda stage: Cameras(stage, views, output / 'frames', fps=25, subframes=1))
+                               cameras=lambda stage: Cameras(stage, views, output / 'frames', fps=25))
         model = RobotModel(spec, output / 'planning')
         # Keys move parts by increments: TCP deltas for the arms, joint deltas for the lift and head.
         env = Env(scene, backend, spec, [model], modes={'lift': 'delta', 'head': 'delta', **{name: 'ee_delta' for name in spec.arms}})
