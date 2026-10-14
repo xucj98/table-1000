@@ -103,3 +103,18 @@ class Cameras:
         for name in self.views:
             self.annotators[name].detach()
             self.products[name].destroy()
+
+
+def camera_mount(urdf, frame):
+    """``(parent_link, T_parent_camera)`` of an optical frame fixed to a robot body in ``urdf``, with the
+    optical convention (+Z forward, +Y down) turned into USD's (-Z forward, +Y up)."""
+    import xml.etree.ElementTree as ET
+    import numpy as np
+    from scipy.spatial.transform import Rotation
+    joint = next(joint for joint in ET.parse(urdf).getroot().findall('joint')
+                 if joint.find('child').get('link') == frame)
+    origin = joint.find('origin')
+    transform = np.eye(4)
+    transform[:3, :3] = Rotation.from_euler('xyz', np.fromstring(origin.get('rpy', '0 0 0'), sep=' ')).as_matrix()
+    transform[:3, 3] = np.fromstring(origin.get('xyz', '0 0 0'), sep=' ')
+    return joint.find('parent').get('link'), transform @ np.diag([1., -1., -1., 1.])

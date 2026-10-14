@@ -2,8 +2,9 @@
 
 ``"$ISAAC_PYTHON" scripts/robots/check_robot.py x1pro --output outputs/robots/x1pro-check --gpu 1 [--video]``
 writes ``report.json`` (every case with its checks, then the metrics) and, with
-``--video``, ``video.mp4`` of all cases. ``--cases a b`` runs only those cases;
-``--no-metrics`` skips the metrics. See ``table_1000/robots/checks.py``.
+``--video``, ``video.mp4`` of all cases. The robot's settings and cases come from
+``asset_sources/robots/<name>/robot_test.py``; ``--cases a b`` runs only those
+cases, ``--no-metrics`` skips the metrics. See ``table_1000/robots/checks.py``.
 """
 
 import argparse
@@ -42,18 +43,20 @@ def main(argv=None):
     report = {'robot': args.robot, 'startup_s': time.perf_counter() - started, 'cases': {}}
     checker = None
     try:
-        from table_1000.robots import load_spec
+        from table_1000.robots import load_robot_test, load_spec
         from table_1000.robots.checks import Checker
         from table_1000.robots.controllers import CONTROL_HZ
         from table_1000.runtime.cameras import Cameras
         cameras = (lambda stage: Cameras(stage, VIEW, output / 'frames', fps=CONTROL_HZ)) if args.video else None
-        checker = Checker(load_spec(args.robot), output, args.assets.resolve(), args.root.resolve(), cameras)
+        root = args.root.resolve()
+        checker = Checker(load_spec(args.robot, root), load_robot_test(args.robot, root), output, args.assets.resolve(),
+                          root, cameras)
         report['load_s'] = checker.load_s
         if args.benchmark:
             from table_1000.robots.checks import benchmark
             report['benchmark'] = benchmark(checker)
             args.cases, args.no_metrics = [], True
-        for name in (Checker.CASES if args.cases is None else args.cases):
+        for name in (checker.cases() if args.cases is None else args.cases):
             checker.case = name
             case_started = time.perf_counter()
             try:

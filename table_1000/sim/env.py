@@ -8,7 +8,8 @@ the robot's :class:`~table_1000.robots.controllers.RobotController`. One
 Observation ``obs``:
 
 - ``qpos``, ``qvel``: ``{joint: [N]}`` for every robot joint, base joints included
-- ``base_pose``: ``[N, 3]`` world (x, y, yaw) of base_link
+- ``base_pose``: ``[N, 3]`` world (x, y, yaw) of the robot's root link (fixed
+  at the scene's placement for a robot without a mobile base)
 - ``tcp``: ``{arm: [N, 4, 4]}`` world TCP poses
 - ``time``: simulated seconds since the reset
 """
@@ -18,13 +19,19 @@ import numpy as np
 from table_1000.robots.controllers import SUBSTEPS, RobotController
 
 
-def base_transform(pose):
+def base_transform(pose, z=0.):
     x, y, yaw = pose
     transform = np.eye(4)
     c, s = np.cos(yaw), np.sin(yaw)
     transform[:3, :3] = [[c, -s, 0.], [s, c, 0.], [0., 0., 1.]]
-    transform[:3, 3] = [x, y, 0.]
+    transform[:3, 3] = [x, y, z]
     return transform
+
+
+def scene_pose(scene):
+    """``(x, y, yaw)`` and height of the robot in ``scene``."""
+    position = scene.ROBOT['position']
+    return np.array([position[0], position[1], scene.ROBOT['yaw']]), float(position[2])
 
 
 class Env:
@@ -43,9 +50,9 @@ class Env:
         return self.backend.time
 
     def initial_robot_q(self):
-        """Scene base pose and joints (others at zero)."""
+        """Scene joints (others at zero) and, for a mobile base, its pose as virtual joint values."""
         robot = self.scene.ROBOT
-        q = dict(zip(self.spec.base.virtual_joints, (*robot['position'][:2], robot['yaw'])))
+        q = dict(zip(self.spec.base.virtual_joints, scene_pose(self.scene)[0])) if self.spec.base else {}
         q.update(robot['joints'])
         return q
 
@@ -63,10 +70,15 @@ class Env:
         joints = self.backend.robot_joints
         qpos = {name: q[:, i] for i, name in enumerate(joints)}
         qvel = {name: dq[:, i] for i, name in enumerate(joints)}
-        base = np.stack([qpos[name] for name in self.spec.base.virtual_joints], axis=1)
+        if self.spec.base:
+            base = np.stack([qpos[name] for name in self.spec.base.virtual_joints], axis=1)
+            height = 0.
+        else:
+            pose, height = scene_pose(self.scene)
+            base = np.repeat(pose[None], self.num_envs, axis=0)
         tcp = {arm: [] for arm in self.spec.arms}
         for i, model in enumerate(self.models):
-            model.set_state({name: values[i] for name, values in qpos.items()}, base_transform(base[i]))
+            model.set_state({name: values[i] for name, values in qpos.items()}, base_transform(base[i], height))
             for arm in self.spec.arms:
                 tcp[arm].append(model.tcp(arm, world=True))
         self.obs = {'qpos': qpos, 'qvel': qvel, 'base_pose': base,

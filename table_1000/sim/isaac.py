@@ -43,12 +43,15 @@ class IsaacBackend:
     num_envs = 1
     physics_dt = DT
 
-    def __init__(self, scene, layout, assets, *, cameras=None, contact_watch=('robot',), contact_objects=()):
+    def __init__(self, scene, layout, assets, *, spec=None, cameras=None, contact_watch=('robot',), contact_objects=()):
         """``layout`` is the scene's placement used to build the stage.
 
         Contact reports come from the robot and the bodies of ``contact_objects``
         (object names); pairs are kept when a side starts with ``contact_watch``.
         Objects with internal contacts (a pen cap detent) should not report.
+        A robot with a mobile base (``spec.base``, or no ``spec``) is built at the
+        world origin and moved by its virtual base joints; a fixed robot is placed
+        at the scene's robot pose.
         """
         import omni.usd
         from isaacsim.core.api import World
@@ -67,8 +70,10 @@ class IsaacBackend:
         context.enable_ccd(True)
         self.stage = omni.usd.get_context().get_stage()
         self.world.scene.add_default_ground_plane()
-        scene_stage.populate(self.stage, scene, layout, assets, robot_transform=np.eye(4))
-        self._filter_robot_ground()
+        mobile = spec is None or spec.base is not None
+        scene_stage.populate(self.stage, scene, layout, assets, robot_transform=np.eye(4) if mobile else None)
+        if mobile:
+            self._filter_robot_ground()
         self.bodies = {}
         for name, path in scene_stage.object_paths(scene).items():
             for body, body_path in scene_stage.named_bodies(self.stage, path).items():

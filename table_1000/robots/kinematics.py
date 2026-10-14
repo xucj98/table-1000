@@ -3,11 +3,12 @@
 One planning model (MPlib, Pinocchio and FCL) holds every body joint, so a
 plan for one arm is checked against the torso, head and the other arm at their
 current positions. Each arm gets its own MPlib planner, whose move group is the
-chain from ``base_link`` to the arm's TCP; the torso lift on that chain is held
+chain from the root link to the arm's TCP; a torso lift on that chain is held
 fixed, so only the arm's own joints move.
 
-Poses here are in the frame of ``base_link``; :attr:`RobotModel.base` (world
-from base) converts world-frame targets. MPlib 0.2.1 places attached bodies
+Poses here are in the frame of the URDF's root link; :attr:`RobotModel.base`
+(world from root: a mobile base's planar pose, or a fixed robot's placement)
+converts world-frame targets. MPlib 0.2.1 places attached bodies
 from link poses without the articulation's base pose, so the planner itself
 always works in the base frame.
 
@@ -82,7 +83,7 @@ class RobotModel:
         return {name: float(q[self.index[name]]) for name in (joints or self.joints)}
 
     def set_state(self, values=None, base=None):
-        """Set measured joint values (any subset) and the world pose of base_link."""
+        """Set measured joint values (any subset) and the world pose of the root link."""
         if values is not None:
             self.q = self.vector(values)
         if base is not None:
@@ -134,6 +135,8 @@ class RobotModel:
 
     def look_at(self, point, camera, q=None, world=True):
         """Head joint values that point ``camera``'s optical +Z at ``point``."""
+        if not self.spec.head:
+            raise ValueError(f'{self.spec.name} has no head to point')
         from scipy.optimize import least_squares
         point = np.asarray(point, dtype=float)
         if world:

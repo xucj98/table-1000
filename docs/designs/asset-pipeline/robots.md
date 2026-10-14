@@ -2,6 +2,8 @@
 
 规定从厂商 URDF 包得到仿真用机器人的文件、几何、碰撞、物理、控制接口与验收要求。交付物包括可以导入仿真器的模型，规划器、控制接口（关节控制和末端位姿控制），并在仿真中验证行为和性能。以 [X1Pro](../../../asset_sources/robots/x1pro/) 为例；执行命令见[第三章](../../tutorials/03-robot-import.md)。
 
+**适用范围**：带平行两指夹爪手臂的机器人，从固定底座的单臂（如装在台座上的 Franka）到带升降、头部和移动底盘的双臂机器人（如 X1Pro）。升降、头部、移动底盘都是可选部件。腿式机器人（如机械狗）不在范围内：转换、构建、环境与后端接口可以复用，机器人描述、控制器和验收用例需另行设计。
+
 ## 流程与存储
 
 ```text
@@ -10,20 +12,23 @@
                                      └──检查──> check.json
 robot.urdf (+ 虚拟底盘关节) + physics.py ──导入与物理层──> import/robot.usd + robot.usda
 robot.urdf ──Blender──> three_quarter.jpg
-table_1000/robots/<name>.py (SPEC) ──> 运动学与规划模型、控制器 ──检查场景──> report.json
+robot.py (SPEC) ──> 运动学与规划模型、控制器 ──robot_test.py 的检查场景──> report.json
 ```
 
 | 位置 | 内容 | Git |
 | --- | --- | --- |
-| `asset_sources/robots/<name>/` | `robot.urdf`、`meshes/visual/`、`meshes/collision/`、`prepare.py`、`physics.py`、`README.md`、`three_quarter.jpg` | 是 |
-| `table_1000/robots/<name>.py` | 机器人描述 `SPEC`：关节分组、TCP、夹爪、底盘、关键姿态；相机挂载 | 是 |
-| `table_1000/robots/` 其余 | 与机器人无关的工具：转换、构建、运动学与规划（`kinematics.py`）、控制器（`controllers.py`）、检查（`checks.py`）、遥控（`teleop.py`） | 是 |
+| `asset_sources/robots/<name>/` | `robot.urdf`、`meshes/visual/`、`meshes/collision/`、`prepare.py`（转换选择）、`physics.py`（物理层）、`robot.py`（机器人描述 `SPEC`）、`robot_test.py`（验收设置）、`README.md`、`three_quarter.jpg` | 是 |
+| `table_1000/robots/` | 与具体机器人无关的工具：描述类型（`agent.py`）、转换、构建、预览、运动学与规划（`kinematics.py`）、控制器（`controllers.py`）、验收用例库（`checks.py`）、遥控（`teleop.py`） | 是 |
+| `scripts/robots/` | `prepare_robot.py`、`build_robot.py`、`check_robot.py`、`teleop.py` | 是 |
+| `tests/robots/` | 通用代码的单元测试（测试内生成的固定底座单臂）；`test_robot_sources.py` 对每台机器人检查描述、关键姿态、IK 与验收设置 | 是 |
 | `assets/robots/<name>/raw/` | 厂商原始包，原样保存 | 否；存档于数据集，版本记录在 `assets.lock.json` |
 | `assets/robots/<name>/` 其余 | `import/`、`robot.usda`、源码快照、`build.json`、`prepare.json`、`check.json` | 否；可由源码重建 |
 
 使用机器人只需 Git 中的源码：构建、源码检查（`--check`）、验收和遥控都不读取原始包，场景、任务和其他资产的开发者不需要数据集权限。只有重新生成源码（改 `prepare.py` 的选择或转换工具、厂商数据更新）才需要原始包。
 
 源码目录不超过 10 MB，不依赖上游 ROS 包即可构建：URDF 只用相对路径，不用 `package://`。README 写明原始包名称、所选 URDF 配置和对厂商数据的全部改动。
+
+**增加一台机器人**：在 `asset_sources/robots/<name>/` 下写 `prepare.py` 并生成 `robot.urdf` 与网格，写 `physics.py`、`robot.py`、`robot_test.py` 和 README；通用代码不需要改动。与物体资产把各自的 `physics_test.py` 放在资产目录下一样，每台机器人的验收设置放在它自己的 `robot_test.py` 里，用例和指标在 `table_1000/robots/checks.py` 中统一实现。
 
 ## 运动学与刚体
 
@@ -65,7 +70,7 @@ table_1000/robots/<name>.py (SPEC) ──> 运动学与规划模型、控制器 
 
 结构参照 ManiSkill3 的 agent 与 controller，与仿真器无关，同一套代码可接不同后端。
 
-- **描述**：`SPEC`（`RobotSpec`）列出升降、头部、各手臂（关节、TCP、手指、开合换算、安装连杆）、底盘（虚拟关节、轮子、速度、加速度、推力上限）和关键姿态：零位（全部关节为 0，真机最常用的起始姿态：躯干最低、两臂折叠、头平视）与 `ready`。底盘位姿即虚拟关节值，机器人 prim 留在原点。
+- **描述**：`robot.py` 的 `SPEC`（`RobotSpec`）列出各手臂（关节、TCP、手指、开合换算、安装连杆；第一只为主手臂），可选的升降、头部、移动底盘（虚拟关节、轮子、速度、加速度、推力上限），关键姿态与相机。零位（全部关节为 0）总是关键姿态之一，X1Pro 的零位也是真机最常用的起始姿态（躯干最低、两臂折叠、头平视）。有移动底盘时，底盘位姿即虚拟关节值，机器人 prim 留在原点；没有时，机器人 prim 放在场景给定的位姿（可带高度，如台座）。
 - **运动学与规划**（`RobotModel`）：一个 MPlib/Pinocchio 模型包含全部身体关节，每只手臂一个规划器，升降保持不动。手臂规划同时检查躯干、头和另一只手臂当前的位置。提供正运动学、IK、头部朝向（look-at）、RRTConnect 与直线（screw）规划、路径碰撞检查。规划世界默认只有机器人本身（自碰撞），任务按需加入物体。
 - **控制**（`RobotController`）：25 Hz 一个动作，每个动作覆盖 10 个 4 ms 物理步。位置目标在物理步间线性插值，并给出对应速度作前馈。
 
@@ -105,6 +110,8 @@ table_1000/robots/<name>.py (SPEC) ──> 运动学与规划模型、控制器 
 | 底盘撞墙 | 停下、不推动墙，能开走 |
 | 持物行驶 | 前进、急停、原地转，手中物体漂移不超过 5 mm |
 | 关节限位 | 超限指令停在限位，不越界、不抖动 |
+
+用例在 `table_1000/robots/checks.py`，由每台机器人的 `robot_test.py` 设置：检查场景的桌子（`TABLE`）、机器人摆放与起始关键姿态（`ROBOT`）、桌面上主手臂前方的工作点（`WORK`，各用例的目标位姿相对它和桌面高度给出）、物体下落的目标连杆（`DROP_LINKS`）和要运行的用例（`CASES`，默认是全部适用的用例）。需要某个部件的用例只适用于有该部件的机器人：躯干升入隔板需要升降，底盘撞墙与持物行驶需要移动底盘；没有升降和头部时，关节限位用例检查主手臂。
 
 每个用例都检查：机器人接触的穿透不超过 2 mm（物体下落撞击时不超过 10 mm：4 ms 步长下，高速运动中的轻微穿透可以接受）；关节速度不超过 URDF 上限的 1.5 倍；物体速度不超过 2 m/s。用例全部记录进 `report.json`，并可录视频复核。
 

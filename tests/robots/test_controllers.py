@@ -5,7 +5,13 @@ import pytest
 
 from table_1000.robots import controllers as c
 from table_1000.robots.agent import BaseSpec
-from table_1000.robots.x1pro import SPEC
+
+from conftest import arm_spec
+
+ARM = arm_spec()
+# A differential base like X1Pro's.
+BASE = BaseSpec(wheels=('left_wheel_joint', 'right_wheel_joint'), wheel_radius=.086, track=.48,
+                max_speed=(.5, 1.), max_acceleration=(1., 2.), max_force=(116., 28.))
 
 
 def run(group, steps):
@@ -38,7 +44,7 @@ def test_delta_mode_adds_to_the_target():
 
 
 def test_gripper_gap():
-    arm = SPEC.arms['right']
+    arm = ARM.arms['arm']
     group = c.Gripper(arm)
     group.reset([[0., 0.]])
     group.set_action([[.06]])
@@ -55,7 +61,7 @@ def drive(base, command, seconds):
 
 
 def test_base_drives_straight_and_ramps():
-    base = c.BaseVelocity(SPEC.base)
+    base = c.BaseVelocity(BASE)
     base.reset([[1., 2., np.pi / 2]])
     base.set_action([[.5, 0.]])
     _, velocity = run(base, False)
@@ -67,7 +73,7 @@ def test_base_drives_straight_and_ramps():
     # 2.04 s in all: the 0.5 s ramp covers 0.125 m, then 1.54 s at 0.5 m/s
     assert position[0, 1] == pytest.approx(2. + .125 + .77, abs=2e-3)
     wheels = velocity[0, 3:]
-    np.testing.assert_allclose(wheels, [.5 / SPEC.base.wheel_radius] * 2)
+    np.testing.assert_allclose(wheels, [.5 / BASE.wheel_radius] * 2)
 
 
 def test_base_turns_in_place_and_clips():
@@ -82,7 +88,7 @@ def test_base_turns_in_place_and_clips():
 
 
 def test_base_stands_still_without_drift():
-    base = c.BaseVelocity(SPEC.base)
+    base = c.BaseVelocity(BASE)
     base.reset([[0., 0., 0.]])
     drive(base, [[.3, .2]], 1.)
     position, _ = drive(base, [[0., 0.]], 2.)
@@ -91,53 +97,41 @@ def test_base_stands_still_without_drift():
     np.testing.assert_allclose(velocity, 0.)
 
 
-mplib = pytest.importorskip('mplib')
-
-
-@pytest.fixture(scope='module')
-def model(tmp_path_factory):
-    from table_1000.robots.kinematics import RobotModel
-    model = RobotModel(SPEC, tmp_path_factory.mktemp('planning'))
-    model.set_state(SPEC.keyframe('ready'))
-    return model
-
-
-def test_robot_controller_layout(model):
-    controller = c.RobotController(SPEC, [model])
-    assert controller.action_space() == {'base': 2, 'lift': 1, 'head': 2, 'right': 6, 'right_gripper': 1,
-                                         'left': 6, 'left_gripper': 1}
-    assert len(controller.joints) == len(set(controller.joints)) == 3 + 2 + len(SPEC.body_joints)
-    q = {name: np.array([value]) for name, value in SPEC.keyframe('ready').items()}
+def test_fixed_robot_controller_layout(arm_model):
+    """Without a mobile base, lift or head there are only the arm and its gripper."""
+    controller = c.RobotController(ARM, [arm_model])
+    assert controller.action_space() == {'arm': 6, 'arm_gripper': 1}
+    assert controller.joints == list(ARM.body_joints)
+    q = {name: np.array([value]) for name, value in ARM.keyframe('ready').items()}
     controller.reset(q, [[0., 0., 0.]])
-    controller.set_action({'lift': [[.5]], 'right_gripper': [[.04]]})
+    controller.measure([[0., 0., 0.]])
+    controller.set_action({'arm_gripper': [[.04]]})
     positions, _ = controller.substep(c.SUBSTEPS)
     row = dict(zip(controller.joints, positions[0]))
-    assert row['lift_joint'] == pytest.approx(.5)
-    assert row['right_arm_gripper_left_joint'] == pytest.approx(.02)
-    assert row['left_arm_joint2'] == pytest.approx(.4)
+    assert row['finger_left_joint'] == pytest.approx(.02) and row['joint2'] == pytest.approx(.5)
     with pytest.raises(KeyError):
-        controller.set_action({'wings': [[0.]]})
+        controller.set_action({'base': [[.1, 0.]]})
 
 
-def test_end_effector_delta_moves_the_tcp(model):
-    controller = c.RobotController(SPEC, [model], modes={'right': 'ee_delta'})
-    q = {name: np.array([value]) for name, value in SPEC.keyframe('ready').items()}
+def test_end_effector_delta_moves_the_tcp(arm_model):
+    controller = c.RobotController(ARM, [arm_model], modes={'arm': 'ee_delta'})
+    q = {name: np.array([value]) for name, value in ARM.keyframe('ready').items()}
     controller.reset(q, [[0., 0., 0.]])
-    start = model.tcp('right')
-    for _ in range(5):
-        controller.set_action({'right': [[.01, 0., -.01, 0., 0., .02]]})
-    assert not controller.groups['right'].failed.any()
+    start = arm_model.tcp('arm')
+    for _ in range(4):
+        controller.set_action({'arm': [[.01, 0., -.01, 0., 0., .02]]})
+    assert not controller.groups['arm'].failed.any()
     positions, _ = controller.substep(c.SUBSTEPS)
-    reached = model.tcp('right', model.vector(dict(zip(controller.joints, positions[0]))))
-    np.testing.assert_allclose(reached[:3, 3] - start[:3, 3], [.05, 0., -.05], atol=1e-3)
+    reached = arm_model.tcp('arm', arm_model.vector(dict(zip(controller.joints, positions[0]))))
+    np.testing.assert_allclose(reached[:3, 3] - start[:3, 3], [.04, 0., -.04], atol=1e-3)
 
 
 def test_blocked_base_target_stays_near_the_measured_pose():
-    base = c.BaseVelocity(SPEC.base)
+    base = c.BaseVelocity(BASE)
     base.reset([[0., 0., 0.]])
     for _ in range(50):                       # 2 s at 0.5 m/s against a wall at x = 0
         base.measure([[0., 0., 0.]])
         base.set_action([[.5, 0.]])
         run(base, False)
     base.measure([[0., 0., 0.]])
-    assert base.pose[0, 0] == pytest.approx(SPEC.base.max_lag[0])
+    assert base.pose[0, 0] == pytest.approx(BASE.max_lag[0])

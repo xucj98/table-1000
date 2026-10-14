@@ -18,7 +18,7 @@
 使用机器人只需三条命令（环境同第二章）：
 
 ```bash
-"$ISAAC_PYTHON" scripts/assets/build_robot.py x1pro --gpu 0
+"$ISAAC_PYTHON" scripts/robots/build_robot.py x1pro --gpu 0
 "$ISAAC_PYTHON" scripts/robots/check_robot.py x1pro --output outputs/robots/x1pro-check --gpu 0
 "$ISAAC_PYTHON" scripts/robots/teleop.py x1pro --output outputs/robots/x1pro-teleop --gpu 0 --port 8765
 ```
@@ -54,7 +54,7 @@
 ## 3. 生成机器人源码（开发机器人）
 
 ```bash
-"$ISAAC_PYTHON" scripts/assets/prepare_robot.py x1pro
+"$ISAAC_PYTHON" scripts/robots/prepare_robot.py x1pro
 ```
 
 约 10 分钟，重写 `robot.urdf` 和 `meshes/`，README、`prepare.py`、`physics.py` 与缩略图保持不变：
@@ -67,7 +67,7 @@
 转换结束后自动检查，也可单独运行（约 10 s，只读源码，不需要原始包）：
 
 ```bash
-"$ISAAC_PYTHON" scripts/assets/prepare_robot.py x1pro --check
+"$ISAAC_PYTHON" scripts/robots/prepare_robot.py x1pro --check
 ```
 
 `assets/robots/x1pro/prepare.json` 记录每个网格的原面数、简化后面数与误差；`check.json` 记录每个外观网格越出其碰撞凸块的最大距离和目录大小。本例：44 个外观网格共约 37 万面，最大误差 0.91 mm（轮子）；64 个凸块文件，越出最多 0.19 mm（夹爪座）；目录 8.5 MB。
@@ -89,14 +89,14 @@
 构建 USD：
 
 ```bash
-"$ISAAC_PYTHON" scripts/assets/build_robot.py x1pro --gpu 0
+"$ISAAC_PYTHON" scripts/robots/build_robot.py x1pro --gpu 0
 ```
 
 约 40 s（含 Isaac 启动）。移动机器人先写 `mobile.urdf`：在 `base_link` 前加世界 x、y、偏航三个虚拟关节，仿真通过它们移动底盘，机器人 prim 留在原点。构建在 `assets/robots/x1pro/` 写入 `mobile.urdf`、`import/`（URDF 导入器输出）、`robot.usda`（加载入口）、`robot.urdf` 与 `physics.py` 快照和 `build.json`。构建只删除并重建 `import/`，不触及 `raw/`。
 
 ## 5. 机器人描述与控制接口
 
-[table_1000/robots/x1pro.py](../../table_1000/robots/x1pro.py) 的 `SPEC` 写这台机器人的关节分组：升降、头部（偏航、俯仰）、两只手臂（关节、TCP、手指、安装连杆）、差速底盘（轮距、轮半径、速度、加速度、推力上限）和关键姿态：零位（全部关节为 0，真机最常用的起始姿态）与 `ready`（躯干升起、两臂举在胸前）。其余都是通用代码，结构参照 ManiSkill3：
+机器人目录中的 [robot.py](../../asset_sources/robots/x1pro/robot.py) 的 `SPEC` 写这台机器人的关节分组：两只手臂（关节、TCP、手指、安装连杆；第一只右臂为主手臂）、升降、头部（偏航、俯仰）、差速底盘（轮距、轮半径、速度、加速度、推力上限）、关键姿态与头部相机。零位（全部关节为 0，真机最常用的起始姿态）总是关键姿态，另有 `ready`（躯干升起、两臂举在胸前）。升降、头部、底盘都是可选的：固定底座的单臂（如 Franka）只写手臂，机器人放在场景给定的位姿上。其余都是通用代码，结构参照 ManiSkill3：
 
 - [kinematics.py](../../table_1000/robots/kinematics.py) 的 `RobotModel`：一个 MPlib 模型包含全部身体关节，每只手臂一个规划器。提供正运动学、IK、头部 look-at、RRTConnect 与直线规划，只做自碰撞检查。
 - [controllers.py](../../table_1000/robots/controllers.py)：25 Hz 一个动作，每个动作覆盖 10 个物理步。动作组有底盘速度、升降与头部位置、手臂关节位置或 TCP 增量、夹爪间距，见[机器人规范](../designs/asset-pipeline/robots.md#机器人层运动学规划与控制)。
@@ -105,7 +105,7 @@
 ## 6. 验收
 
 ```bash
-"$ISAAC_PYTHON" scripts/assets/prepare_robot.py x1pro --check
+"$ISAAC_PYTHON" scripts/robots/prepare_robot.py x1pro --check
 "$ISAAC_PYTHON" scripts/robots/check_robot.py x1pro --output outputs/robots/x1pro-check --gpu 0 --video
 "$ISAAC_PYTHON" -m table_1000.robots.preview asset_sources/robots/x1pro --joints '{"lift_joint": 0.4, "head_pitch_joint": 0.3, "right_arm_joint2": 0.4, "right_arm_joint3": -1.0, "left_arm_joint2": 0.4, "left_arm_joint3": -1.0, "right_arm_gripper_left_joint": 0.03, "right_arm_gripper_right_joint": -0.03, "left_arm_gripper_left_joint": 0.03, "left_arm_gripper_right_joint": -0.03}'
 ```
@@ -118,7 +118,7 @@
 | `prepare.json` | 最大误差 0.91 mm，22 个刚体 | 每个网格误差不超过 1 mm，刚体数与 README 一致 |
 | 缩略图 | 见本章开头 | 外观无破面、塌陷；碰撞覆盖完整，刚体划分合理 |
 
-**物理常识用例**：[check_robot.py](../../scripts/robots/check_robot.py) 在检查场景（机器人前方一张桌子，几个盒、球、圆柱）里依次运行下列用例，每个用例从 `reset` 开始，结果写入 `report.json`，`--video` 时把全部用例录成一个视频。用例与判据见[机器人规范](../designs/asset-pipeline/robots.md#验收)。本例 10 个用例全部通过：
+**物理常识用例**：[check_robot.py](../../scripts/robots/check_robot.py) 在检查场景（机器人前方一张桌子，几个盒、球、圆柱）里依次运行下列用例。用例本身是通用的（[checks.py](../../table_1000/robots/checks.py)），这台机器人的设置写在 [robot_test.py](../../asset_sources/robots/x1pro/robot_test.py)：桌子、机器人摆放与起始姿态、桌面上主手臂前方的工作点（各用例的目标位姿相对它给出）、物体下落的目标连杆和要运行的用例，与物体资产各自的 `physics_test.py` 同理。需要升降或移动底盘的用例只用于有这些部件的机器人。每个用例从 `reset` 开始，结果写入 `report.json`，`--video` 时把全部用例录成一个视频。用例与判据见[机器人规范](../designs/asset-pipeline/robots.md#验收)。本例 10 个用例全部通过：
 
 | 用例 | 结果 | 要点 |
 | --- | --- | --- |
@@ -142,11 +142,11 @@
 | 指标 | 本例 |
 | --- | --- |
 | 模型与仿真 TCP 一致性（30 个随机姿态） | 位置差 < 0.001 mm，角度差 < 2 µrad |
-| IK（100 个随机可达位姿/臂） | 成功率 100%（右）、99%（左），中位耗时约 0.05 s，精度 < 0.01 mm |
-| 自碰撞规划（20 组随机起止/臂） | 成功率 95%；耗时中位 5.8 s（右）、5.1 s（左），95 分位 8.8 s、11.2 s |
+| IK（100 个随机可达位姿/臂） | 成功率 100%，中位耗时约 0.05 s，精度 < 0.01 mm |
+| 自碰撞规划（20 组随机起止/臂） | 成功率 95%；耗时中位 6.5 s（右）、5.2 s（左），95 分位 11.2 s、14.1 s |
 | 关节轨迹跟踪 | 最大误差 0.5 mrad |
 | 底盘 | 0.4 m/s 指令实测 0.400 m/s；原地转向平移漂移可忽略；停车误差 < 0.01 mm |
-| 每物理步耗时 | 静止 2.5 ms，手臂运动 4.7 ms（检查场景） |
+| 每物理步耗时 | 静止 2.6 ms，手臂运动 4.8 ms（检查场景） |
 
 随机起止的规划耗时偏长。[碰撞方案研究](https://github.com/xucj98/table-1000/blob/7660d8c0c0763cee752152c25ddbbc255aef495a/docs/research/robot-collision.md)（ref `refs/research/robot-collision`，只含源码）比较了凸块块数、顶点上限和盒子与圆柱几种碰撞：碰撞形状几乎不影响仿真耗时；规划的大头是自碰撞检查，耗时取决于要检查的连杆对数而不是形状，提速应减少检查的对数。用例和指标一次约 12 分钟（含录像）。
 
@@ -164,8 +164,8 @@
 
 | 位置 | 内容 | 留存方式 |
 | --- | --- | --- |
-| `asset_sources/robots/x1pro/` | `robot.urdf`、`meshes/`、`prepare.py`、`physics.py`、`README.md`、`three_quarter.jpg` | Git |
-| `table_1000/robots/`、`table_1000/sim/`、`scripts/assets/`、`scripts/robots/` | 转换、构建、预览；`x1pro.py` 描述；运动学、控制器、环境与后端；检查与遥控 | Git |
+| `asset_sources/robots/x1pro/` | `robot.urdf`、`meshes/`、`prepare.py`、`physics.py`、`robot.py`、`robot_test.py`、`README.md`、`three_quarter.jpg` | Git |
+| `table_1000/robots/`、`table_1000/sim/`、`scripts/robots/`、`tests/robots/` | 与机器人无关的转换、构建、预览、运动学、控制器、环境与后端、验收用例与遥控；单元测试（固定底座单臂）与每台机器人的源码测试 | Git |
 | `assets.lock.json` | 原始包的数据集版本 | Git |
 | `assets/robots/x1pro/raw/` | 厂商原始包 | Hugging Face 数据集 |
 | `assets/robots/x1pro/` 其余 | `import/`、`robot.usda`、快照、`build.json`、`prepare.json`、`check.json` | 本地，可由源码重建 |

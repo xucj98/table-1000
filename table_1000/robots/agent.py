@@ -1,12 +1,15 @@
-"""Simulator-independent description of a mobile manipulator.
+"""Simulator-independent description of a robot with arms and parallel grippers.
 
-A robot module (for example :mod:`table_1000.robots.x1pro`) fills a
-:class:`RobotSpec`: its joint groups, end effectors, mobile base and named
-keyframes. Kinematics, planning and controllers are built from the spec, so
-they work the same for every simulator backend.
+A robot's ``asset_sources/robots/<name>/robot.py`` fills a :class:`RobotSpec`:
+its arms (joints, TCP, two-finger gripper), and optionally a torso lift, a
+head and a mobile base, plus named keyframes and cameras. Kinematics, planning
+and controllers are built from the spec, so they work the same for every
+simulator backend and every such robot: a fixed single arm (a Franka on a
+stand) as well as a mobile dual-arm robot. Legged robots are not covered.
 
-Frames: the robot's ``base_link`` sits on the floor at the planar base pose
-``(x, y, yaw)`` in the world. Arm targets are given in the world frame and
+Frames: the root link of the URDF is the robot's base frame. A mobile base
+moves it on the floor at the planar pose ``(x, y, yaw)``; a fixed robot stays
+where its scene places it. Arm targets are given in the world frame and
 converted with that pose.
 """
 
@@ -33,7 +36,7 @@ class ArmSpec:
     finger_links: tuple
     finger_signs: tuple = (1., -1.)
     max_gap: float = .1
-    mount: str = 'base_link'
+    mount: str = 'base_link'       # set it to the arm's mount link (the root link for a fixed arm)
     # Joint-space limits for time parameterization (rad/s, rad/s^2).
     velocity_limit: float = .8
     acceleration_limit: float = 1.5
@@ -68,11 +71,12 @@ class BaseSpec:
 class RobotSpec:
     name: str
     urdf: str                      # robot source URDF, relative to the repository root
-    arms: dict                     # name -> ArmSpec
-    base: BaseSpec
+    arms: dict                     # name -> ArmSpec; the first is the primary arm
+    base: BaseSpec = None          # mobile base, or None for a fixed robot
     lift: tuple = ()               # prismatic torso joints
     head: tuple = ()               # head joints (yaw, pitch)
-    keyframes: dict = field(default_factory=dict)   # name -> {joint: value}
+    keyframes: dict = field(default_factory=dict)   # name -> {joint: value}; 'zero' is implied
+    cameras: dict = field(default_factory=dict)     # name -> optical frame fixed to a robot body
     # Body pairs whose collision hulls overlap at every configuration; never checked.
     seated: tuple = ()
     # Links whose planning hulls are not grown (they touch objects on purpose).
@@ -87,7 +91,16 @@ class RobotSpec:
             joints += [*arm.joints, *arm.fingers]
         return joints
 
+    @property
+    def primary_arm(self):
+        return next(iter(self.arms))
+
     def keyframe(self, name):
+        """Every body joint at keyframe ``name`` (unlisted joints at zero; ``'zero'`` is all zeros)."""
         q = {joint: 0. for joint in self.body_joints}
-        q.update(self.keyframes[name])
+        q.update({} if name == 'zero' else self.keyframes[name])
         return q
+
+    @property
+    def keyframe_names(self):
+        return ['zero', *[name for name in self.keyframes if name != 'zero']]

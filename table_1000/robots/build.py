@@ -98,16 +98,18 @@ def build(source, output):
     started = time.perf_counter()
     shutil.rmtree(output / 'import', ignore_errors=True)
     output.mkdir(parents=True, exist_ok=True)
-    from table_1000.robots import load_spec
-    spec = load_spec(source.name)
+    from table_1000.robots import source_module
+    module = source_module(source, 'robot')
+    spec = getattr(module, 'SPEC', None)
     urdf = source / 'robot.urdf'
-    if spec is not None and spec.base.virtual_joints:
+    if spec is not None and spec.base is not None:
         urdf = mobile_urdf(urdf, output / 'mobile.urdf', spec.base.virtual_joints, spec.base.max_force)
     import_urdf(urdf, output / 'import' / 'robot.usd')
     imported = time.perf_counter()
     author_physics(source, output)
-    for name in ('robot.urdf', 'physics.py'):
-        shutil.copyfile(source / name, output / name)
+    for name in ('robot.urdf', 'physics.py', 'robot.py'):
+        if (source / name).exists():
+            shutil.copyfile(source / name, output / name)
     report = {'source': str(source), 'urdf': str(urdf), 'import_settings': IMPORT_SETTINGS,
               'import_seconds': imported - started, 'total_seconds': time.perf_counter() - started}
     (output / 'build.json').write_text(json.dumps(report, indent=2) + '\n')

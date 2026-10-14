@@ -1,6 +1,6 @@
 """Choices for turning the vendor URDF package into this robot source.
 
-Read by ``scripts/assets/prepare_robot.py x1pro``. The raw package
+Read by ``scripts/robots/prepare_robot.py x1pro``. The raw package
 (``ex001_render``, see README) is pulled into ``assets/`` with
 ``scripts/assets/remote.py pull robots/x1pro/raw/ex001_render``.
 """

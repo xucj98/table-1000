@@ -1,4 +1,4 @@
-"""Keyboard teleoperation of a robot in the check scene, in a browser.
+"""Keyboard teleoperation of a robot in its check scene (``robot_test.py``), in a browser.
 
 ``"$ISAAC_PYTHON" scripts/robots/teleop.py x1pro --output outputs/robots/x1pro-teleop --gpu 1 --port 8765``
 then open ``http://<server>:8765/`` (for example through ``ssh -L 8765:localhost:8765 <server>``).
@@ -33,24 +33,29 @@ def main(argv=None):
     app = start_app(output, gpu=args.gpu, workers=4, renderer='RaytracedLighting', disable_viewport_updates=True)
     try:
         import numpy as np
-        from table_1000.robots import load_spec, teleop
-        from table_1000.robots.checks import check_scene, translation, TOP
+        from table_1000.robots import load_robot_test, load_spec, teleop
+        from table_1000.robots.checks import Checker, check_scene
         from table_1000.robots.kinematics import RobotModel
-        from table_1000.robots.x1pro import HEAD_CAMERA, camera_mount
-        from table_1000.runtime.cameras import Cameras
+        from table_1000.runtime.cameras import Cameras, camera_mount
         from table_1000.scenes.stage import ROBOT_PATH
         from table_1000.sim.env import Env
         from table_1000.sim.isaac import IsaacBackend
-        spec = load_spec(args.robot)
-        link, local = camera_mount(ROOT / spec.urdf, HEAD_CAMERA)
-        views = {**VIEWS, 'head': {'parent': f'{ROBOT_PATH}/{link}', 'local': local, 'focal_length_mm': 15,
-                                   'resolution': (640, 360)}}
-        scene = check_scene(spec)
-        layout = scene.placement(box=translation(.45, -.15, TOP + .04), can=translation(.5, .05, TOP + .05),
-                                 stick=translation(.4, -.3, TOP + .007, np.array([[0, 0, 1], [0, 1, 0], [-1, 0, 0.]])))
-        backend = IsaacBackend(scene, layout, ROOT / 'assets', cameras=lambda stage: Cameras(stage, views, output / 'frames', fps=25, subframes=1))
+        spec, settings = load_spec(args.robot), load_robot_test(args.robot)
+        views = dict(VIEWS)
+        for name, frame in spec.cameras.items():
+            link, local = camera_mount(ROOT / spec.urdf, frame)
+            views[name] = {'parent': f'{ROBOT_PATH}/{link}', 'local': local, 'focal_length_mm': 15,
+                           'resolution': (640, 360)}
+        scene = check_scene(spec, settings)
+        # A box, a can and a stick on the table around the work point.
+        on_table = lambda dx, dy, z, rotation=None: Checker.work_point_in(settings, dx, dy, z, rotation)
+        layout = scene.placement(box=on_table(0., 0., .04), can=on_table(.05, .20, .05),
+                                 stick=on_table(-.05, -.15, .007, np.array([[0, 0, 1], [0, 1, 0], [-1, 0, 0.]])))
+        backend = IsaacBackend(scene, layout, ROOT / 'assets', spec=spec,
+                               cameras=lambda stage: Cameras(stage, views, output / 'frames', fps=25, subframes=1))
         model = RobotModel(spec, output / 'planning')
-        env = Env(scene, backend, spec, [model], modes={name: 'ee_delta' for name in spec.arms})
+        # Keys move parts by increments: TCP deltas for the arms, joint deltas for the lift and head.
+        env = Env(scene, backend, spec, [model], modes={'lift': 'delta', 'head': 'delta', **{name: 'ee_delta' for name in spec.arms}})
         teleop.run(env, layout, output, args.port, views, args.render_every)
     finally:
         app.close()

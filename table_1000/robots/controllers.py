@@ -198,7 +198,7 @@ class RobotController:
         def joint(names, mode):
             return JointPosition(names, limits[[index[n] for n in names]], delta=mode == 'delta')
 
-        self.groups = {'base': BaseVelocity(spec.base)}
+        self.groups = {'base': BaseVelocity(spec.base)} if spec.base else {}
         if spec.lift:
             self.groups['lift'] = joint(spec.lift, modes['lift'])
         if spec.head:
@@ -223,8 +223,9 @@ class RobotController:
                 group.reset(np.stack([np.asarray(q[j], dtype=float).reshape(-1) for j in group.joints], axis=1))
 
     def measure(self, base_pose):
-        """Measured ``[N, 3]`` base pose, before each :meth:`set_action`."""
-        self.groups['base'].measure(base_pose)
+        """Measured ``[N, 3]`` base pose, before each :meth:`set_action` (no-op without a mobile base)."""
+        if 'base' in self.groups:
+            self.groups['base'].measure(base_pose)
 
     def set_action(self, action):
         unknown = set(action) - set(self.groups)

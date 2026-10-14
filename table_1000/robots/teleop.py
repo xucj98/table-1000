@@ -86,7 +86,7 @@ def action_from_keys(keys, arm, gap, dt):
     lift = LIFT_SPEED * k * keys.axis('KeyR', 'KeyF') * dt
     if lift:
         action['lift'] = [[lift]]
-    head = [ANGULAR * k * keys.axis('ArrowLeft', 'ArrowRight') * dt, ANGULAR * k * keys.axis('ArrowDown', 'ArrowUp') * dt]
+    head = [ANGULAR * k * keys.axis('ArrowLeft', 'ArrowRight') * dt, ANGULAR * k * keys.axis('ArrowDown', 'ArrowUp') * dt]  # yaw, pitch
     if any(head):
         action['head'] = [head]
     move = np.array([keys.axis('KeyI', 'KeyK'), keys.axis('KeyJ', 'KeyL'), keys.axis('KeyU', 'KeyO')]) * LINEAR * k * dt
@@ -190,7 +190,9 @@ def run(env, layout, output, port, views, render_every=5):
                 env.reset(layout)
                 wall = time.perf_counter()
                 log.write(json.dumps({'reset': True}) + '\n')
-        action = action_from_keys(keys, arm, gaps[arm], dt)
+        # Keys for parts the robot lacks (a mobile base, a lift, a head) are ignored.
+        action = {group: value for group, value in action_from_keys(keys, arm, gaps[arm], dt).items()
+                  if group in env.controller.groups}
         obs, info = env.step(action)
         log.write(json.dumps(action) + '\n')
         step += 1
@@ -199,7 +201,8 @@ def run(env, layout, output, port, views, render_every=5):
         tcp = obs['tcp'][arm][0][:3, 3]
         server.status = (f'arm {arm}  gap {gaps[arm]:.3f}  t {env.time:7.2f}s  '
                          f'base ({base[0]:+.3f}, {base[1]:+.3f}, {np.degrees(base[2]):+.1f} deg)  '
-                         f'tcp ({tcp[0]:+.3f}, {tcp[1]:+.3f}, {tcp[2]:+.3f})  lift {obs["qpos"]["lift_joint"][0]:.3f}'
+                         f'tcp ({tcp[0]:+.3f}, {tcp[1]:+.3f}, {tcp[2]:+.3f})'
+                         + ''.join(f'  {j} {obs["qpos"][j][0]:.3f}' for j in env.spec.lift)
                          + f'  realtime x{env.time / max(time.perf_counter() - wall, 1e-9):.2f}'
                          + '  ms/step physics {:.0f} render {:.0f} total {:.0f}'.format(
                              *(1e3 * costs[k] / max(step, 1) for k in ('physics', 'render', 'total')))
