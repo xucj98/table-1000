@@ -34,6 +34,7 @@ ROBOT = {
 # Region centres (world XY) and fixed orientations. ``z`` is the asset origin
 # height: the cabinet origin is the bottom of its feet, the pen origin is on
 # its axis and the cap (radius 0.010 m) is its widest part.
+OBJECTS = ('cabinet', 'pen')   # module-level dicts below, placed by placement()
 CABINET = {'asset': 'objects/cabinet/000000', 'center': (.30, .06), 'z': TABLE['height'], 'yaw': 0.}
 PEN = {'asset': 'objects/pen/000002', 'center': (-.04, -.36), 'z': TABLE['height'] + .010, 'yaw': 0.}
 HALF_RANGE = .05

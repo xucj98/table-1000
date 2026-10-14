@@ -51,8 +51,10 @@ def import_urdf(urdf, destination):
 VIRTUAL_MASS, VIRTUAL_INERTIA = .5, 1e-3
 
 
-def mobile_urdf(source, output, joints, base='base_link'):
+def mobile_urdf(source, output, joints, max_force=(1e6, 1e6), base='base_link'):
     """Write ``output``: ``source`` with ``mobile_root -x-> -y-> -yaw-> base``.
+
+    ``max_force`` limits the x and y drives (N) and the yaw drive (N m).
 
     Mesh paths become absolute, so the file can live outside the source.
     """
@@ -68,14 +70,16 @@ def mobile_urdf(source, output, joints, base='base_link'):
                       izz=str(VIRTUAL_INERTIA), ixy='0', ixz='0', iyz='0')
         root.insert(0, link)
     children = names[1:] + [base]
-    for (name, kind, axis), parent, child in zip(
-            zip(joints, ('prismatic', 'prismatic', 'continuous'), ('1 0 0', '0 1 0', '0 0 1')), names, children):
+    efforts = (max_force[0], max_force[0], max_force[1])
+    for (name, kind, axis), parent, child, effort in zip(
+            zip(joints, ('prismatic', 'prismatic', 'continuous'), ('1 0 0', '0 1 0', '0 0 1')), names, children,
+            efforts):
         joint = ET.SubElement(root, 'joint', name=name, type=kind)
         ET.SubElement(joint, 'parent', link=parent)
         ET.SubElement(joint, 'child', link=child)
         ET.SubElement(joint, 'origin', xyz='0 0 0', rpy='0 0 0')
         ET.SubElement(joint, 'axis', xyz=axis)
-        limit = {'effort': '1e6', 'velocity': '10'}
+        limit = {'effort': str(effort), 'velocity': '10'}
         if kind == 'prismatic':
             limit.update(lower='-100', upper='100')
         ET.SubElement(joint, 'limit', **limit)
@@ -98,7 +102,7 @@ def build(source, output):
     spec = load_spec(source.name)
     urdf = source / 'robot.urdf'
     if spec is not None and spec.base.virtual_joints:
-        urdf = mobile_urdf(urdf, output / 'mobile.urdf', spec.base.virtual_joints)
+        urdf = mobile_urdf(urdf, output / 'mobile.urdf', spec.base.virtual_joints, spec.base.max_force)
     import_urdf(urdf, output / 'import' / 'robot.usd')
     imported = time.perf_counter()
     author_physics(source, output)

@@ -70,7 +70,7 @@ class IsaacBackend:
         scene_stage.populate(self.stage, scene, layout, assets, robot_transform=np.eye(4))
         self._filter_robot_ground()
         self.bodies = {}
-        for name, path in scene_stage.OBJECT_PATHS.items():
+        for name, path in scene_stage.object_paths(scene).items():
             for body, body_path in scene_stage.named_bodies(self.stage, path).items():
                 self.bodies[f'{name}:{body}'] = body_path
         labels = {scene_stage.ROBOT_PATH: 'robot', scene_stage.TABLE_PATH: 'table', GROUND_PATH: 'ground'}
@@ -80,7 +80,7 @@ class IsaacBackend:
         self.robot = self.world.scene.add(SingleArticulation(scene_stage.ROBOT_PATH, name='robot'))
         # Object articulations (a cabinet with drawers), by object name.
         self.articulations = {}
-        for name, path in scene_stage.OBJECT_PATHS.items():
+        for name, path in scene_stage.object_paths(scene).items():
             root = self._articulation_root(path)
             if root is not None:
                 self.articulations[name] = self.world.scene.add(SingleArticulation(root, name=f'{name}_articulation'))
@@ -195,6 +195,19 @@ class IsaacBackend:
         masses = np.asarray(self.views.get_masses()).reshape(-1)
         points = [matrix(positions[i], orientations[i])[:3, :3] @ coms[i] + positions[i] for i in indices]
         return np.average(points, axis=0, weights=masses[indices])[None]
+
+    def body_velocities(self):
+        """``{key: [N, 6]}`` linear and angular world velocities."""
+        velocities = self.views.get_velocities()
+        return {key: np.asarray(v)[None] for key, v in zip(self.keys, velocities)}
+
+    def set_object_pose(self, name, transform):
+        """Teleport a free (non-articulated) object to ``transform`` and stop it."""
+        indices = [i for i, key in enumerate(self.keys) if key.split(':')[0] == name]
+        poses = [transform @ self.rest[self.keys[i]] for i in indices]
+        positions, orientations = zip(*(position_quaternion(pose) for pose in poses))
+        self.views.set_world_poses(np.array(positions), np.array(orientations), indices=np.array(indices))
+        self.views.set_velocities(np.zeros((len(indices), 6)), indices=np.array(indices))
 
     def object_joints(self, name):
         """``{joint: [N]}`` of an object articulation."""

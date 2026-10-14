@@ -86,7 +86,9 @@ class BaseVelocity:
 
     The commanded speeds are clipped to ``max_speed`` and approached at no more
     than ``max_acceleration``; the virtual joints follow the integrated pose,
-    so the base does not drift while it stands still.
+    so the base does not drift while it stands still. :meth:`measure` keeps the
+    integrated pose within ``max_lag`` of the measured one, so a base blocked
+    by an obstacle does not wind up a target far beyond it.
     """
 
     def __init__(self, base):
@@ -107,6 +109,16 @@ class BaseVelocity:
 
     def set_action(self, action):
         self.command = np.clip(np.asarray(action, dtype=float).reshape(-1, 2), -self.max_speed, self.max_speed)
+
+    def measure(self, pose):
+        """Clamp the target to ``max_lag`` around the measured ``[N, 3]`` pose."""
+        pose = np.asarray(pose, dtype=float).reshape(-1, 3)
+        lag = np.asarray(self.base.max_lag)
+        offset = self.pose[:, :2] - pose[:, :2]
+        distance = np.linalg.norm(offset, axis=1, keepdims=True)
+        scale = np.minimum(1., lag[0] / np.maximum(distance, 1e-12))
+        self.pose[:, :2] = pose[:, :2] + offset * scale
+        self.pose[:, 2] = pose[:, 2] + np.clip(self.pose[:, 2] - pose[:, 2], -lag[1], lag[1])
 
     def hold(self):
         pass
@@ -209,6 +221,10 @@ class RobotController:
                 group.reset(base_pose)
             else:
                 group.reset(np.stack([np.asarray(q[j], dtype=float).reshape(-1) for j in group.joints], axis=1))
+
+    def measure(self, base_pose):
+        """Measured ``[N, 3]`` base pose, before each :meth:`set_action`."""
+        self.groups['base'].measure(base_pose)
 
     def set_action(self, action):
         unknown = set(action) - set(self.groups)

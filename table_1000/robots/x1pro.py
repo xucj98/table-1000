@@ -52,10 +52,11 @@ _READY = {'lift_joint': .40, 'head_pitch_joint': .30,
 SPEC = RobotSpec(
     name='x1pro', urdf='asset_sources/robots/x1pro/robot.urdf',
     arms={'right': _arm('right'), 'left': _arm('left')},
-    # Wheels on base_link at (0, +-0.24, 0.086); speed limits are simulation
-    # values, not the real controller's.
+    # Wheels on base_link at (0, +-0.24, 0.086), 5 N m each (URDF): at most
+    # 2 x 5 / 0.086 = 116 N of push and 116 x 0.24 = 28 N m of turn. Speed
+    # limits are simulation values, not the real controller's.
     base=BaseSpec(wheels=('left_wheel_joint', 'right_wheel_joint'), wheel_radius=.086, track=.48,
-                  max_speed=(.5, 1.), max_acceleration=(1., 2.)),
+                  max_speed=(.5, 1.), max_acceleration=(1., 2.), max_force=(116., 28.)),
     lift=('lift_joint',), head=('head_yaw_joint', 'head_pitch_joint'),
     keyframes={'ready': _READY},
     seated=tuple(SEATED),

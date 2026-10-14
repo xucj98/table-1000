@@ -130,3 +130,14 @@ def test_end_effector_delta_moves_the_tcp(model):
     positions, _ = controller.substep(c.SUBSTEPS)
     reached = model.tcp('right', model.vector(dict(zip(controller.joints, positions[0]))))
     np.testing.assert_allclose(reached[:3, 3] - start[:3, 3], [.05, 0., -.05], atol=1e-3)
+
+
+def test_blocked_base_target_stays_near_the_measured_pose():
+    base = c.BaseVelocity(SPEC.base)
+    base.reset([[0., 0., 0.]])
+    for _ in range(50):                       # 2 s at 0.5 m/s against a wall at x = 0
+        base.measure([[0., 0., 0.]])
+        base.set_action([[.5, 0.]])
+        run(base, False)
+    base.measure([[0., 0., 0.]])
+    assert base.pose[0, 0] == pytest.approx(SPEC.base.max_lag[0])

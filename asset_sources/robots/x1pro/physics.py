@@ -33,6 +33,10 @@ FILTERED_PAIRS = [('left_arm_gripper_left_link', 'left_arm_gripper_right_link'),
                   ('head_pitch_link', 'lift_link')]
 # (static, dynamic) friction; gripper pads are rubber-like.
 MATERIALS = {'body': (.4, .3), 'finger': (1., .8)}
+# Pad contact patch radius (m) for torsional friction. PhysX point contacts
+# otherwise let a held object pivot freely about the line between the pads;
+# a soft pad resists that over its contact patch.
+PAD_PATCH_RADIUS = .006
 
 
 def gains(name):
@@ -88,4 +92,10 @@ def author(import_path, output_path):
         if prim.HasAPI(UsdPhysics.RigidBodyAPI):
             kind = 'finger' if prim.GetName().endswith(('_gripper_left_link', '_gripper_right_link')) else 'body'
             UsdShade.MaterialBindingAPI.Apply(prim).Bind(materials[kind], materialPurpose='physics')
+            if kind == 'finger':
+                for shape in Usd.PrimRange(prim):
+                    if shape.HasAPI(UsdPhysics.CollisionAPI):
+                        collision = PhysxSchema.PhysxCollisionAPI.Apply(shape)
+                        collision.CreateTorsionalPatchRadiusAttr(PAD_PATCH_RADIUS)
+                        collision.CreateMinTorsionalPatchRadiusAttr(PAD_PATCH_RADIUS)
     layer.Save()

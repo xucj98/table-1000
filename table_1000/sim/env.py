@@ -75,6 +75,7 @@ class Env:
 
     def step(self, action):
         """Apply ``action`` for one control step; returns ``(obs, info)``."""
+        self.controller.measure(self.obs['base_pose'])
         self.controller.set_action(action)
         for k in range(1, SUBSTEPS + 1):
             positions, velocities = self.controller.substep(k)

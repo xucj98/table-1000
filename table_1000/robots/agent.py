@@ -49,7 +49,10 @@ class BaseSpec:
 
     The simulator drives ``virtual_joints`` (world x, world y, yaw); the wheels
     only turn to match. Speeds are limited to ``max_speed`` (m/s, rad/s) and
-    changed at most by ``max_acceleration`` (m/s^2, rad/s^2).
+    changed at most by ``max_acceleration`` (m/s^2, rad/s^2). The virtual drives
+    push with at most ``max_force`` (N, N m for yaw), what the wheel motors can
+    deliver, so a blocked base stops instead of shoving the obstacle; its target
+    stays within ``max_lag`` (m, rad) of the measured pose.
     """
     virtual_joints: tuple = ('base_x_joint', 'base_y_joint', 'base_yaw_joint')
     wheels: tuple = ()
@@ -57,6 +60,8 @@ class BaseSpec:
     track: float = .5
     max_speed: tuple = (.5, 1.)
     max_acceleration: tuple = (1., 2.)
+    max_force: tuple = (200., 50.)
+    max_lag: tuple = (.05, .1)
 
 
 @dataclass(frozen=True)
