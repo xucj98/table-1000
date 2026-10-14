@@ -10,11 +10,23 @@ Read by ``scripts/assets/prepare_robot.py x1pro``. The raw package
 RAW = 'robots/x1pro/raw/ex001_render'
 URDF = 'urdf/ex001_robot_fx001_h_evt1.urdf'
 
-# Convex pieces per link (CoACD); links not listed get a single hull.
-PIECES = {name: 4 for name in ['chassis_base_link', 'lift_link', 'head_yaw_link', 'head_pitch_link'] + [
-    f'{side}_{name}' for side in ('left', 'right') for name in (
-        'arm_base_link', 'arm_link1', 'arm_link2', 'arm_link3', 'arm_link4', 'arm_link5',
-        'arm_gripper_base_link', 'arm_gripper_left_link', 'arm_gripper_right_link')]}
+# Largest distance (m, 99th percentile) the collision surface may stand off the
+# visual; pieces are added until it is met. Hands touch objects on purpose and
+# get the tightest fit.
+EXCESS = {'gripper': .003, '_arm_link': .010, '_arm_base_link': .010}
+DEFAULT_EXCESS = .015
+
+
+def excess(link):
+    matches = [value for key, value in EXCESS.items() if key in link]
+    return min(matches) if matches else DEFAULT_EXCESS
+
+
+# Parts of a visual mesh left out of its collision, as boxes ((min xyz), (max
+# xyz)) in the mesh frame: the bracket on the back of the torso runs inside
+# the lift column and never meets anything else.
+COLLISION_EXCLUDE = {'lift_link': [((-1., -1., -1.), (.075, 1., 1.))]}
+
 # Links inside the gripper base; they get no collision.
 NO_COLLISION = ('arm_link6', 'motor_link')
 

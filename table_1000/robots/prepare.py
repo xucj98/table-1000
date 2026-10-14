@@ -6,8 +6,13 @@ package named by the source's ``prepare.py``:
 1. drop placeholder visuals (1 mm boxes);
 2. simplify every visual mesh by quadric decimation, doubling the face count
    until the two-sided 99th-percentile surface distance is within MAX_ERROR;
-3. split each simplified visual into convex pieces with CoACD (``PIECES`` per
-   link, one hull otherwise; ``NO_COLLISION`` links get none);
+3. split each simplified visual into convex pieces: one hull, then CoACD with
+   2, 4, 8 and 16 pieces, until the collision surface lies within the link's
+   ``EXCESS`` tolerance of the visual (99th percentile over the outer surface
+   of the pieces). Every piece has at most MAX_VERTICES vertices (PhysX's
+   default hull limit), reduced so that it still encloses its CoACD piece.
+   ``NO_COLLISION`` links get none, nor do links whose pieces lie inside the
+   pieces of another link of the same rigid body (sensors in a housing);
 4. apply the robot's joint edits and merge fixed-joint subtrees into their
    moving body (the Isaac importer only merges massless links).
 
@@ -30,6 +35,9 @@ MAX_ERROR = .001          # m, two-sided 99th-percentile surface distance
 INITIAL_FACES = 250000    # total visual budget before error-driven refinement
 OUTSIDE_TOLERANCE = 5e-4  # m, visual vertices allowed outside their collision pieces
 SIZE_BUDGET = 10e6        # bytes for the whole robot source directory
+MAX_VERTICES = 64         # per convex piece; PhysX cooks convex hulls with at most 64 by default
+PIECE_COUNTS = (1, 2, 4, 8, 16)
+ENCLOSED_TOLERANCE = .001 # m, a link whose pieces are inside others' by this much gets no collision
 PLACEHOLDER = '0.001 0.001 0.001'
 
 
@@ -72,18 +80,138 @@ def simplify(original, faces):
     return original, 0.
 
 
-def decompose(mesh, pieces):
-    """Convex pieces of ``mesh``, ordered by centroid so files do not depend on
-    CoACD's thread scheduling (its pieces are deterministic, their order is not)."""
+def excluded(points, boxes):
+    """Mask of ``points`` inside any of ``boxes`` (``((min xyz), (max xyz))``)."""
+    mask = np.zeros(len(points), dtype=bool)
+    for low, high in boxes:
+        mask |= np.all((points >= low) & (points <= high), axis=1)
+    return mask
+
+
+def collision_part(mesh, boxes):
+    """``mesh`` without the faces whose centre lies in ``boxes``."""
+    if not boxes:
+        return mesh
+    keep = ~excluded(mesh.triangles_center, boxes)
+    part = mesh.submesh([np.flatnonzero(keep)], append=True)
+    part.merge_vertices()
+    return part
+
+
+def enclose(hull, max_vertices=MAX_VERTICES):
+    """A convex hull with at most ``max_vertices`` vertices that contains ``hull``.
+
+    The hull is decimated, then scaled about its centroid just enough to
+    contain every original vertex again (scaling keeps the vertex count).
+    """
+    import open3d as o3d
+    import trimesh
+    if len(hull.vertices) <= max_vertices:
+        return hull
+    target = 2 * max_vertices - 4
+    while True:
+        decimated = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(hull.vertices),
+                                              o3d.utility.Vector3iVector(hull.faces))
+        decimated = decimated.simplify_quadric_decimation(int(target))
+        reduced = trimesh.Trimesh(np.asarray(decimated.vertices)).convex_hull
+        if len(reduced.vertices) <= max_vertices:
+            break
+        target = int(target * .8)
+    center = reduced.vertices.mean(0)
+    normals = reduced.face_normals
+    offsets = np.einsum('ij,ij->i', normals, reduced.triangles[:, 0]) - normals @ center
+    scale = max(1., float(((hull.vertices - center) @ normals.T / offsets).max()))
+    return trimesh.Trimesh(center + (reduced.vertices - center) * scale * (1 + 1e-6)).convex_hull
+
+
+def excess(hulls, visual, samples=20000):
+    """99th-percentile distance from the outer surface of ``hulls`` to ``visual``.
+
+    Points of a piece that lie inside another piece are not on the outer
+    surface and are skipped.
+    """
+    import trimesh
+    union = trimesh.util.concatenate(hulls)
+    points, faces = trimesh.sample.sample_surface(union, samples, seed=0)
+    owner = np.repeat(np.arange(len(hulls)), [len(h.faces) for h in hulls])[faces]
+    keep = np.ones(len(points), dtype=bool)
+    for index, hull in enumerate(hulls):
+        others = owner != index
+        offsets = np.einsum('ij,ij->i', hull.face_normals, hull.triangles[:, 0])
+        inside = ((points[others] @ hull.face_normals.T - offsets).max(axis=1) < -1e-4)
+        keep[np.flatnonzero(others)[inside]] = False
+    distances = trimesh.proximity.closest_point(visual, points[keep])[1]
+    return float(np.percentile(distances, 99))
+
+
+def decompose(mesh, tolerance):
+    """``(pieces, excess)``: the fewest convex pieces (from PIECE_COUNTS) within
+    ``tolerance`` of ``mesh``, or the last attempt. Pieces are ordered by
+    centroid so files do not depend on CoACD's thread scheduling."""
+    for count in PIECE_COUNTS:
+        hulls = convex_pieces(mesh, count)
+        error = excess(hulls, mesh)
+        if error <= tolerance:
+            break
+    return hulls, error
+
+
+def convex_pieces(mesh, count):
+    """At most ``count`` convex pieces of ``mesh`` (one hull, else CoACD), each
+    with at most MAX_VERTICES vertices, ordered by centroid."""
     import coacd
     import trimesh
-    if pieces == 1:
-        return [mesh.convex_hull]
-    coacd.set_log_level('error')
-    parts = coacd.run_coacd(coacd.Mesh(mesh.vertices, mesh.faces), threshold=.3, max_convex_hull=pieces,
-                            preprocess_mode='auto', resolution=2000, seed=0)
-    hulls = [trimesh.Trimesh(v, f).convex_hull for v, f in parts]
-    return sorted(hulls, key=lambda hull: tuple(np.round(hull.vertices.mean(0), 6)))
+    if count == 1:
+        hulls = [mesh.convex_hull]
+    else:
+        coacd.set_log_level('error')
+        parts = coacd.run_coacd(coacd.Mesh(mesh.vertices, mesh.faces), threshold=.05, max_convex_hull=count,
+                                preprocess_mode='auto', resolution=2000, seed=0)
+        hulls = [trimesh.Trimesh(v, f).convex_hull for v, f in parts]
+    return sorted((enclose(hull) for hull in hulls), key=lambda hull: tuple(np.round(hull.vertices.mean(0), 6)))
+
+
+def link_poses(root):
+    """Pose of every link with all joints at zero, and the rigid body (fixed-joint root) it belongs to."""
+    parent_joint = {joint.find('child').get('link'): joint for joint in root.findall('joint')}
+    poses, bodies = {}, {}
+
+    def resolve(name):
+        if name not in poses:
+            joint = parent_joint.get(name)
+            if joint is None:
+                poses[name], bodies[name] = np.eye(4), name
+            else:
+                parent = joint.find('parent').get('link')
+                resolve(parent)
+                poses[name] = poses[parent] @ read_origin(joint)
+                bodies[name] = bodies[parent] if joint.get('type') == 'fixed' else name
+        return poses[name]
+
+    for link in root.findall('link'):
+        resolve(link.get('name'))
+    return poses, bodies
+
+
+def enclosed_links(root, source):
+    """Links whose collision pieces lie inside other links' pieces of the same rigid body."""
+    poses, bodies = link_poses(root)
+    pieces = {}
+    for link in root.findall('link'):
+        for collision in link.findall('collision'):
+            mesh = load_mesh(source / collision.find('geometry/mesh').get('filename'))
+            mesh.apply_transform(poses[link.get('name')] @ read_origin(collision))
+            pieces.setdefault(link.get('name'), []).append(mesh)
+    enclosed = []
+    for name, own in pieces.items():
+        others = [hull for other, hulls in pieces.items()
+                  if other != name and other not in enclosed and bodies[other] == bodies[name] for hull in hulls]
+        if not others:
+            continue
+        points = np.vstack([hull.vertices for hull in own])
+        if outside_distance(points, others).max() <= ENCLOSED_TOLERANCE:
+            enclosed.append(name)
+    return enclosed
 
 
 # -- fixed-joint merge ---------------------------------------------------------
@@ -222,7 +350,7 @@ def prepare(source, raw):
         for shape in references:
             shape.set('filename', output)
 
-    written = {}
+    written, tolerances = {}, {}
     for link in root.findall('link'):
         for collision in link.findall('collision'):
             link.remove(collision)
@@ -233,19 +361,33 @@ def prepare(source, raw):
             mesh_name = visual.find('geometry/mesh').get('filename')
             stem = Path(mesh_name).stem
             if stem not in written:
-                hulls = decompose(load_mesh(source / mesh_name), spec.PIECES.get(link.get('name'), 1))
+                tolerance = spec.excess(link.get('name'))
+                boxes = getattr(spec, 'COLLISION_EXCLUDE', {}).get(link.get('name'), [])
+                hulls, error = decompose(collision_part(load_mesh(source / mesh_name), boxes), tolerance)
                 written[stem] = []
                 for index, hull in enumerate(hulls):
                     output = f'meshes/collision/{stem}_{index}.ply'
                     hull.export(source / output)
                     written[stem].append(output)
-                report['collision'][stem] = len(hulls)
+                report['collision'][stem] = {'pieces': len(hulls), 'excess_m': error, 'tolerance_m': tolerance,
+                                             'vertices': max(len(hull.vertices) for hull in hulls)}
+                print(f'{stem}: {len(hulls)} pieces, excess {error * 1000:.1f} mm (tolerance {tolerance * 1000:.0f})',
+                      flush=True)
             for output in written[stem]:
                 collision = ET.SubElement(link, 'collision')
                 if visual.find('origin') is not None:
                     collision.append(copy.deepcopy(visual.find('origin')))
                 ET.SubElement(ET.SubElement(collision, 'geometry'), 'mesh', filename=output)
 
+    report['enclosed'] = enclosed_links(root, source)
+    for link in root.findall('link'):
+        if link.get('name') in report['enclosed']:
+            for collision in link.findall('collision'):
+                link.remove(collision)
+    used = {c.find('geometry/mesh').get('filename') for c in root.iter('collision')}
+    for path in (source / 'meshes' / 'collision').iterdir():
+        if f'meshes/collision/{path.name}' not in used:
+            path.unlink()
     spec.edit(root)
     report['bodies'] = merge(root)
     ET.indent(root)
@@ -266,8 +408,10 @@ def outside_distance(points, hulls):
 
 
 def check(source):
-    """Coverage of every visual mesh by its collision pieces, and source size."""
+    """Coverage of every visual mesh by its collision pieces (outside the
+    ``COLLISION_EXCLUDE`` boxes), and source size."""
     source = Path(source)
+    exclude = getattr(load_spec(source), 'COLLISION_EXCLUDE', {})
     root = ET.parse(source / 'robot.urdf').getroot()
     pieces = {}
     for collision in root.iter('collision'):
@@ -276,6 +420,7 @@ def check(source):
     coverage = {}
     for stem, names in sorted(pieces.items()):
         vertices = load_mesh(source / 'meshes' / 'visual' / f'{stem}.ply').vertices
+        vertices = vertices[~excluded(vertices, exclude.get(stem, []))]
         outside = outside_distance(vertices, [load_mesh(source / name) for name in sorted(names)])
         coverage[stem] = {'pieces': len(names), 'max_outside_m': float(outside.max())}
     size = sum(path.stat().st_size for path in source.rglob('*') if path.is_file())
@@ -299,7 +444,9 @@ def main(argv=None):
         report = prepare(source, args.assets / load_spec(source).RAW)
         (output / 'prepare.json').write_text(json.dumps(report, indent=2) + '\n')
         worst = max(report['visual'].items(), key=lambda item: item[1]['error_m'])
-        print(f"{len(report['visual'])} visual meshes, {sum(report['collision'].values())} collision pieces, "
+        pieces = sum(entry['pieces'] for stem, entry in report['collision'].items())
+        print(f"{len(report['visual'])} visual meshes, {pieces} collision pieces before dropping enclosed links "
+              f"{report['enclosed']}, "
               f"{report['bodies']} bodies; largest simplification error {worst[1]['error_m'] * 1000:.2f} mm ({worst[0]})")
     result = check(source)
     (output / 'check.json').write_text(json.dumps(result, indent=2) + '\n')
