@@ -85,6 +85,9 @@ class IsaacBackend:
             if root is not None:
                 self.articulations[name] = self.world.scene.add(SingleArticulation(root, name=f'{name}_articulation'))
         self.keys = list(self.bodies)
+        # Kinematic bodies (fixed test shapes) are posed but take no velocities.
+        self.kinematic = {key for key, path in self.bodies.items()
+                          if self.stage.GetPrimAtPath(path).GetAttribute('physics:kinematicEnabled').Get()}
         self.views = RigidPrim([self.bodies[key] for key in self.keys], name='bodies', reset_xform_properties=False)
         self.cameras = cameras(self.stage) if cameras else None
         self.world.reset()
@@ -139,7 +142,9 @@ class IsaacBackend:
             poses = [layout[self.keys[i].split(':')[0]] @ self.rest[self.keys[i]] for i in free]
             positions, orientations = zip(*(position_quaternion(pose) for pose in poses))
             self.views.set_world_poses(np.array(positions), np.array(orientations), indices=np.array(free))
-            self.views.set_velocities(np.zeros((len(free), 6)), indices=np.array(free))
+            moving = [i for i in free if self.keys[i] not in self.kinematic]
+            if moving:
+                self.views.set_velocities(np.zeros((len(moving), 6)), indices=np.array(moving))
         q = np.zeros(len(self.robot_joints))
         for name, value in robot_q.items():
             q[self.dof[name]] = value
@@ -207,7 +212,9 @@ class IsaacBackend:
         poses = [transform @ self.rest[self.keys[i]] for i in indices]
         positions, orientations = zip(*(position_quaternion(pose) for pose in poses))
         self.views.set_world_poses(np.array(positions), np.array(orientations), indices=np.array(indices))
-        self.views.set_velocities(np.zeros((len(indices), 6)), indices=np.array(indices))
+        moving = [i for i in indices if self.keys[i] not in self.kinematic]
+        if moving:
+            self.views.set_velocities(np.zeros((len(moving), 6)), indices=np.array(moving))
 
     def object_joints(self, name):
         """``{joint: [N]}`` of an object articulation."""

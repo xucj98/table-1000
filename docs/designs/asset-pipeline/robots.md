@@ -1,6 +1,6 @@
 # 机器人资产规范
 
-规定从厂商 URDF 包得到仿真用机器人资产的文件、几何、碰撞、物理与验收要求。以 [X1Pro](../../../asset_sources/robots/x1pro/) 为例；执行命令见[第三章](../../tutorials/03-robot-import.md)。
+规定从厂商 URDF 包得到仿真用机器人的文件、几何、碰撞、物理、控制接口与验收要求。交付的不只是可导入的模型，还有规划器、关节与末端控制接口，并在仿真中验证其行为与性能。以 [X1Pro](../../../asset_sources/robots/x1pro/) 为例；执行命令见[第三章](../../tutorials/03-robot-import.md)。
 
 ## 流程与存储
 
@@ -8,14 +8,16 @@
 厂商 URDF 包（assets/robots/<name>/raw/，存档于 Hugging Face 数据集）
     ──prepare.py 的选择 + 转换工具──> robot.urdf + meshes/visual/ + meshes/collision/
                                      └──检查──> check.json
-robot.urdf + physics.py ──导入与物理层──> import/robot.usd + robot.usda
+robot.urdf (+ 虚拟底盘关节) + physics.py ──导入与物理层──> import/robot.usd + robot.usda
 robot.urdf ──Blender──> three_quarter.jpg
+table_1000/robots/<name>.py (SPEC) ──> 运动学与规划模型、控制器 ──检查场景──> report.json
 ```
 
 | 位置 | 内容 | Git |
 | --- | --- | --- |
 | `asset_sources/robots/<name>/` | `robot.urdf`、`meshes/visual/`、`meshes/collision/`、`prepare.py`、`physics.py`、`README.md`、`three_quarter.jpg` | 是 |
-| `table_1000/robots/<name>.py` | 规划接口：手臂与夹爪关节、夹爪换算、TCP、相机挂载 | 是 |
+| `table_1000/robots/<name>.py` | 机器人描述 `SPEC`：关节分组、TCP、夹爪、底盘、关键姿态；相机挂载 | 是 |
+| `table_1000/robots/` 其余 | 与机器人无关的工具：转换、构建、运动学与规划（`kinematics.py`）、控制器（`controllers.py`）、检查（`checks.py`）、遥控（`teleop.py`） | 是 |
 | `assets/robots/<name>/raw/` | 厂商原始包，原样保存 | 否；存档于数据集，版本记录在 `assets.lock.json` |
 | `assets/robots/<name>/` 其余 | `import/`、`robot.usda`、源码快照、`build.json`、`prepare.json`、`check.json` | 否；可由源码重建 |
 
@@ -51,21 +53,60 @@ robot.urdf ──Blender──> three_quarter.jpg
 | 自碰撞与过滤 | 开启自碰撞；`FilteredPairsAPI` 只排除真机上不会接触、凸块却重叠的刚体对，逐对注明原因 |
 | 材料 | 机身与夹爪指垫的静/动摩擦 |
 | 重力补偿 | 如采用理想重力补偿（连杆不受重力），在 README 中写明；手中物体仍受重力 |
+| 夹爪 | 真机由一个电机同步驱动两指时，用 `PhysxMimicJointAPI` 耦合两指，只驱动一指。两指各自驱动、都顶在力上限时，沿开合方向没有回复力，手一加速，两指连同物体一起侧移 |
+| 指垫 | 扭转摩擦半径（`torsionalPatchRadius`）。点接触没有扭转摩擦，物体会绕两指连线转动 |
+| 底盘 | 移动底盘由构建时加入的三个虚拟关节（世界 x、y、偏航）驱动，推力和扭矩上限取轮电机能给出的值，挡住时停下而不硬推；机器人与地面的碰撞关闭，轮子只随动 |
 
 未对照真机标定的数值在文件和 README 中注明“仿真取值，未标定”。
 
-## 规划接口
+## 机器人层：运动学、规划与控制
 
-`table_1000/robots/<name>.py` 定义任务和规划共用的常量与函数：手臂关节名、手指关节与开合换算、TCP 相对夹爪的偏移、相机挂载位置，以及从源码 URDF 构建规划模型的函数。规划用的机器人模型取源码 `robot.urdf` 和碰撞凸块，不另做一套几何。
+结构参照 ManiSkill3 的 agent 与 controller，与仿真器无关，同一套代码可接不同后端。
+
+- **描述**：`SPEC`（`RobotSpec`）列出升降、头部、各手臂（关节、TCP、手指、开合换算、安装连杆）、底盘（虚拟关节、轮子、速度、加速度、推力上限）和关键姿态。底盘位姿即虚拟关节值，机器人 prim 留在原点。
+- **运动学与规划**（`RobotModel`）：一个 MPlib/Pinocchio 模型包含全部身体关节，每只手臂一个规划器，升降保持不动。手臂规划同时检查躯干、头和另一只手臂当前的位置。提供正运动学、IK、头部朝向（look-at）、RRTConnect 与直线（screw）规划、路径碰撞检查。规划世界默认只有机器人本身（自碰撞），任务按需加入物体。
+- **控制**（`RobotController`）：25 Hz 一个动作，每个动作覆盖 10 个 4 ms 物理步。位置目标在物理步间线性插值，并给出对应速度作前馈。
+
+| 动作组 | 内容 | 模式 |
+| --- | --- | --- |
+| `base` | 前进速度、偏航角速度 | 速度（限速、限加速度、防积分饱和） |
+| `lift`、`head` | 关节位置 | 绝对或增量 |
+| `<arm>` | 6 个关节位置，或 TCP 位姿增量（安装连杆坐标系，内部 IK） | `pos`、`delta`、`ee_delta` |
+| `<arm>_gripper` | 两指间距 | 绝对 |
+
+环境的 `reset(layout)` 与 `step(action)` 见[场景与专家任务规范](../scenes-and-tasks.md)。
 
 ## 验收
+
+分两部分。资产检查与物理常识用例是硬性条件；对比指标只记录，用于比较不同碰撞方案、参数或机器人。
+
+**资产检查**
 
 | 项目 | 通过条件 |
 | --- | --- |
 | 源码检查 `check.json` | 外观越出碰撞凸块不超过 0.5 mm；目录不超过 10 MB |
 | 转换报告 `prepare.json` | 每个外观网格误差不超过 1 mm；刚体数与 README 一致 |
 | 构建 | 刚体数、碰撞形状数与 README 一致 |
-| 保持姿态 | 4 ms 步长在地面保持初始姿态 2 s，关节跟踪误差小于 0.02 rad；记录每步耗时 |
 | 缩略图 | 左为外观，右为按刚体分色的碰撞凸块；人工确认外观无破面、碰撞覆盖完整、刚体划分合理 |
 
-修改 `prepare.py` 的选择或转换工具后，重新生成源码并逐项重验；碰撞凸块变化后，依赖它的场景任务需重新批量验收。
+**物理常识用例**（`scripts/robots/check_robot.py`，检查场景：机器人前方一张桌子与若干简单形状）
+
+| 用例 | 符合常识的表现 |
+| --- | --- |
+| 手臂撞固定块 | 被挡住，不穿透、不抖动（去趋势后的标准差不超过 1 mrad）；撤掉方块后到达目标 |
+| 手臂推自由物 | 方块、圆柱被推动，仍在桌上 |
+| 物体落到机身上 | 停在可见表面上（与外观网格的距离不超过 15 mm）或滚落 |
+| 躯干升入隔板 | 被挡住，不发散，随后能下降 |
+| 自碰撞 | 手臂撞到躯干时停下，能退回 |
+| 夹持与晃动 | 方块、圆柱、细棒夹起后晃动手腕，相对 TCP 漂移不超过 5 mm，松开后落下 |
+| 底盘撞墙 | 停下、不推动墙，能开走 |
+| 持物行驶 | 前进、急停、原地转，手中物体漂移不超过 5 mm |
+| 关节限位 | 超限指令停在限位，不越界、不抖动 |
+
+每个用例都检查：机器人接触的穿透不超过 2 mm；关节速度不超过 URDF 上限的 1.5 倍；物体速度不超过 2 m/s。用例全部记录进 `report.json`，并可录视频复核。
+
+**对比指标**：模型与仿真的 TCP 一致性；IK 成功率、精度、耗时；只考虑自碰撞的随机起止规划的成功率和耗时；关节轨迹跟踪误差与到位时间；底盘速度跟踪、原地转向漂移、停车误差；静止与运动时每物理步耗时。
+
+**遥控**：`scripts/robots/teleop.py` 在浏览器中用键盘操作机器人，供人工验收和测试，会话动作可回放。
+
+修改 `prepare.py` 的选择、转换工具或 `physics.py` 后，重新生成或构建并逐项重验；碰撞凸块或物理参数变化后，依赖它的场景任务需重新批量验收。

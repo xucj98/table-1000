@@ -7,15 +7,17 @@
 ```text
 scene.py ──placement(seed) / check()──> 初始摆放 + 布局检查
        └──离线可达性（MPlib IK）──> reach.json
-scene.py + assets/ ──Isaac Sim 舞台──> solve() ──> result.json / trace.csv / contacts.json / 视频
-                                              └──批量──> summary.json / summary.csv
+scene.py + assets/ ──后端（Isaac Sim 舞台）──> Env.reset(layout) / Env.step(action)
+                                   solve()：每个控制周期产生一个动作 ──> result.json / trace.csv / contacts.json / 视频
+                                                                     └──批量──> summary.json / summary.csv
 ```
 
 | 位置 | 内容 | Git |
 | --- | --- | --- |
 | `asset_sources/scenes/<scene>/` | `scene.py`、`README.md` | 是 |
 | `table_1000/scenes/` | 场景加载与舞台组装 | 是 |
-| `table_1000/tasks/` | 专家脚本、几何、规划执行层、运行与批量入口 | 是 |
+| `table_1000/sim/` | 环境 `Env`（与仿真器无关）、Isaac 后端、接触记录 | 是 |
+| `table_1000/tasks/` | 专家脚本、几何、动作生成层、运行与批量入口 | 是 |
 | `tests/scenes/`、`tests/tasks/` | 布局与几何的静态检查 | 是 |
 | `outputs/` | 单次运行、批量结果与视频 | 否；验收结论写入任务报告 |
 
@@ -26,7 +28,7 @@ scene.py + assets/ ──Isaac Sim 舞台──> solve() ──> result.json / t
 - **世界系**：原点在桌面中心正下方的地面，+Z 向上，单位 m、rad。
 - **桌子**：尺寸、高度、板厚、腿尺寸与摩擦。
 - **机器人**：资产路径（相对 `assets/`）、base_link 位置与偏航、**全部**关节的初始值。
-- **物体**：每件的资产路径、区域中心、高度、朝向，以及随机范围。
+- **物体**：`OBJECTS` 列出物体名；每件一个同名大写字典，写资产路径、区域中心、高度、朝向，以及随机范围。测试场景可另列 `PRIMITIVES`（盒、球、圆柱，给质量为动态，不给为运动学）。
 - `placement(seed=None, offsets=None)`：用 `numpy.random.default_rng(seed)` 按固定顺序为每件物体独立抽取偏移，返回 `seed`、`offsets` 与各物体的 4×4 世界位姿；`offsets` 直接指定偏移；同一 seed 结果相同。
 - `check(layout)`：返回违反的布局约束列表，空表示有效。
 
@@ -46,13 +48,22 @@ scene.py + assets/ ──Isaac Sim 舞台──> solve() ──> result.json / t
 | 项目 | 值 |
 | --- | --- |
 | 物理 | CPU PhysX，TGS，MBP broadphase，开启 CCD，步长 4 ms |
-| 机器人 | 根固定；连杆理想重力补偿（见机器人规范） |
+| 控制 | 25 Hz：一个动作覆盖 10 个物理步，与真机 30 Hz 接近，和 RoboDojo 的 25 Hz 采集频率一致 |
+| 机器人 | 底盘由虚拟平面关节驱动，场景给出初始位姿；连杆理想重力补偿（见机器人规范） |
 | 渲染 | 与资产物理测试相同，定义在 `table_1000/runtime/render.py`：RTX Real-Time 2.0（仅录像运行启用），总反弹与镜面/透射反弹上限 12；`DomeLight` 900，`DistantLight` 2500，旋转 (−40, 20, 0)° |
-| 视频 | 每视角一个相机与渲染产品；每 10 个物理步一帧，25 fps 即 1 倍速；每帧对同一物理状态渲染 4 个子帧，关闭 RT2 辐射缓存与光照缓存（避免拖影）；渲染不推进物理 |
+| 视频 | 每视角一个相机与渲染产品；每个控制周期一帧，25 fps 即 1 倍速；每帧对同一物理状态渲染 4 个子帧，关闭 RT2 辐射缓存与光照缓存（避免拖影）；渲染不推进物理 |
+
+## 环境
+
+`Env` 包装一个后端（目前是 Isaac Sim CPU 后端），所有数组带环境维 N（CPU 后端 N = 1，GPU 后端可以有多个）：
+
+- `reset(layout)` 把新摆放写回已建好的舞台，不重建（约 10 ms）。一个进程可以连续跑多个初始摆放，省去每例约 50 s 的启动和 5 s 的加载。
+- `step(action)` 执行一个控制周期，返回观测：全部关节位置与速度、底盘位姿、各手臂 TCP 世界位姿、时间。
+- 仿真器相关的调用只在后端里；`Env`、机器人层和专家脚本不直接调用 Isaac，以后接其他仿真器或 GPU 并行时只换后端。
 
 ## 专家脚本
 
-- 一个固定的 `solve()` 处理所有初始摆放，按阶段顺序写出，参照 ManiSkill3 motionplanning solutions。
+- 一个固定的 `solve()` 处理所有初始摆放，按阶段顺序写出，参照 ManiSkill3 motionplanning solutions。它是一个生成器，每个控制周期产生一个动作，由 `run_expert` 送进 `env.step`；多个环境可以各跑一个、同步推进。
 - 每个目标位姿由物体**当下**的物理位姿与资产几何（`model.json`、物理引擎读出的质心）算出；不按 seed、偏移或世界坐标写特例。
 - 规划世界包含桌子、物体各刚体和机器人全身；每次规划前同步物理位姿。接触许可只在相应阶段为手指与被抓部件开放。
 - 允许的重试必须列明：可选的动作候选（如后撤距离、抬起高度），以及有次数上限的重抓。其余失败直接抛出带阶段名与原因的异常。
@@ -77,8 +88,8 @@ scene.py + assets/ ──Isaac Sim 舞台──> solve() ──> result.json / t
 | corners | 各区域 3 × 3 代表点的全部组合（两件物体时 81 例），各物体独立变化 |
 | seeds | 连续 seed 的独立随机摆放（本例 40 例） |
 
-- 每例是一次独立进程；批量运行期间不改代码、场景和资产。
-- 没有产生 `result.json` 的运行（启动失败、被监督进程因心跳超时停止）属于任务之外的故障：保留原目录记录，重跑一次，次数写入汇总表。产生了结果的运行不重跑。
+- 每个受监督进程连续跑 `--per-process` 例（默认 10），例与例之间用 `reset` 复位；批量从固定提交的独立检出运行，运行期间不改代码、场景和资产。
+- 没有产生 `result.json` 的例（启动失败、进程被心跳超时停止）属于任务之外的故障：保留原目录记录，在新进程中重跑一次，次数写入汇总表。产生了结果的例不重跑。
 - 全部例子（含失败）汇总到 `summary.json` 与 `summary.csv`：seed、偏移、结果、失败阶段与原因、重抓次数、意外接触数、耗时。
 - **通过条件**：两批全部 PASS，所有进程正常退出。
 - **视频抽查**：至少中心与一个角点组合录视频，逐视角检查：流程完整；手、臂与物体无可见穿模；夹持稳定、物体无异常滑移或跳动；画面无闪烁、无错帧、快速运动后无拖影。

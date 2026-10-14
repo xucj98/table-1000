@@ -48,7 +48,7 @@
 
 ## 4. 编写专家脚本
 
-[drawer_pen.py](../../table_1000/tasks/drawer_pen.py) 的 `Solver.solve()` 参照 ManiSkill3 motionplanning solutions 的写法，一个阶段一行：
+[drawer_pen.py](../../table_1000/tasks/drawer_pen.py) 的 `Solver.solve()` 参照 ManiSkill3 motionplanning solutions 的写法，一个阶段一行。它是一个生成器：每个控制周期（25 Hz）产生一个动作，由 `run_expert` 送进 `env.step`。
 
 | 阶段 | 动作 |
 | --- | --- |
@@ -64,13 +64,13 @@
 - **松手位**：抽屉内腔露出部分的中心、侧壁上方 12 mm；手部姿态由合爪后实测的手-笔相对位姿反算，使笔轴沿抽屉宽度方向。
 - **拉与推**：沿实时抽屉轴移动 TCP；每段后检查抽屉是否跟上（偏差 1.5 cm 以内），没跟上就松手、重读把手位姿、重新抓取，全程最多 2 次。
 
-**规划与执行。** [motion.py](../../table_1000/tasks/motion.py) 是 MPlib 与 Isaac Sim 之间的薄层：
+**规划与执行。** [motion.py](../../table_1000/tasks/motion.py) 在机器人层（[kinematics.py](../../table_1000/robots/kinematics.py)）与环境之间：
 
-- **空程**用 IK 加 RRTConnect，**接触动作**用[闭环直线螺旋路径](../../table_1000/planning/screw.py)，两者都用 TOPP 按 4 ms 采样时间参数化。
-- **规划世界**：桌子、抽屉盒各刚体（把手单独成一个对象）、笔和机器人全身（另一臂冻结在初始姿态）。物体几何取自资产的 `model.json`，每次规划前按物理引擎中的实时位姿更新。MPlib 0.2.1 摆放挂接物体时不计 articulation 的基座位姿，所以规划在机器人 base_link 坐标系中进行。
+- **空程**用 IK 加 RRTConnect，**接触动作**用[闭环直线螺旋路径](../../table_1000/planning/screw.py)，两者都用 TOPP 按控制周期（0.04 s）采样时间参数化。
+- **规划世界**：桌子、抽屉盒各刚体（把手单独成一个对象）、笔和机器人全身。全身模型包含升降、头和另一只手臂的当前位置，规划时只动右臂。物体几何取自资产的 `model.json`，每次规划前按物理引擎中的实时位姿更新。MPlib 0.2.1 摆放挂接物体时不计 articulation 的基座位姿，所以规划在机器人 base_link 坐标系中进行。
 - **接触许可**：只在相应阶段给手指与把手、手指与笔开放；拉推抽屉时把抽屉作为被手带动的物体挂在 TCP 上一起规划。
 - **余量**：机器人凸块（手指除外）加厚 2 mm；空程规划时桌子和抽屉盒再加厚 3 mm；RRTConnect 的路径另按 0.01 rad 关节步长逐点复查，有碰撞就重规划。
-- **执行**：逐个物理步下发关节位置和速度目标，到终点后等待关节误差小于 0.01 rad。
+- **执行**：每个控制周期发一个右臂关节位置动作；控制器在 10 个物理步内线性插值并给速度前馈。到终点后等待关节误差小于 0.01 rad。
 - **失败传播**：IK、碰撞、关节限位、TOPP、跟踪任一失败都抛出带阶段名和原因的异常。只在列明的几处换用较短动作再试：把手后撤距离、开抽屉后的升高高度、笔抬起高度、撤手方向。
 
 ## 5. 单次运行与视频
@@ -80,7 +80,7 @@
 "$ISAAC_PYTHON" scripts/tasks/drawer_pen.py --seed 3 --output outputs/drawer-pen/seed-3 --gpu 0
 ```
 
-`--offsets CX CY PX PY` 直接给出两件物体的偏移，`--seed` 按 `placement()` 抽样。运行在受监督的子进程中：结果落盘后写 `shutdown.json`；`app.close()` 超过期限，或子进程心跳 300 s 未更新（例如渲染器启动失败后挂起）时，父进程依次发 TERM、KILL，真实退出码与原因写入 `parent-lifecycle.json`。
+`--offsets CX CY PX PY` 直接给出两件物体的偏移，`--seed` 按 `placement()` 抽样，`--cases FILE` 在一个进程里依次跑一组例子（舞台只建一次，例与例之间 `reset`）。运行在受监督的子进程中：结果落盘后写 `shutdown.json`；`app.close()` 超过期限，或子进程心跳 300 s 未更新（例如渲染器启动失败后挂起）时，父进程依次发 TERM、KILL，真实退出码与原因写入 `parent-lifecycle.json`。
 
 | 文件 | 内容 |
 | --- | --- |
@@ -89,9 +89,9 @@
 | `contacts.json` | 按时间段记录的接触，分为预期与意外 |
 | `wide.mp4`、`close.mp4`、`head.mp4` | `--video` 时的远景、近景与头部相机视频 |
 
-**判定。** PASS 需同时满足：流程无失败、抽屉合上（开度 ≤ 5 mm）、笔在抽屉内腔、手离把手 5 cm 以上、无意外接触。PhysX 接触点间距小于 0.5 mm 计为接触；预期接触只有手指与把手、手指与笔、轮子与地面、夹爪两指之间，其余都计为意外。笔从抬起到松手之间拿在手里，这段时间笔与手指以外的任何物体接触也计为意外。接触报告挂在机器人和抽屉盒刚体上，不挂在笔上，否则笔帽卡扣每步的内部接触会大量回调，物理步进慢约 4 倍。
+**判定。** PASS 需同时满足：流程无失败、抽屉合上（开度 ≤ 5 mm）、笔在抽屉内腔、手离把手 5 cm 以上、无意外接触。PhysX 接触点间距小于 0.5 mm 计为接触；预期接触只有手指与把手、手指与笔、夹爪两指之间，其余都计为意外（机器人与地面的碰撞已关闭）。笔从抬起到松手之间拿在手里，这段时间笔与手指以外的任何物体接触也计为意外。接触报告挂在机器人和抽屉盒刚体上，不挂在笔上，否则笔帽卡扣每步的内部接触会大量回调，物理步进慢约 4 倍。
 
-**视频。** [cameras.py](../../table_1000/runtime/cameras.py) 为每个视角建一个相机、一个渲染产品和一个 RGB annotator，每 10 个物理步（0.04 s）同步渲染一次全部视角，25 fps 播放即 1 倍速；渲染不推进物理，有无 `--video` 走同一条物理轨迹。每帧左上角标注仿真时间和当前阶段。
+**视频。** [cameras.py](../../table_1000/runtime/cameras.py) 为每个视角建一个相机、一个渲染产品和一个 RGB annotator，每个控制周期（0.04 s）同步渲染一次全部视角，25 fps 播放即 1 倍速；渲染不推进物理，有无 `--video` 走同一条物理轨迹。每帧左上角标注仿真时间和当前阶段。
 
 - **相机不在视角之间移动**：渲染器的时间累积随相机保留；移动同一个相机轮流拍各视角会在每帧清空累积，视频出现高频闪烁（静止场景下帧间变化约为固定相机的 7 倍）。
 - **残影**：RT2 在时间上降噪，并用辐射缓存和光照缓存跨帧复用间接光。每帧只渲染一次时，松手后下落的笔在原位置留下深色拖影；即使多渲染几次，笔的蓝色反弹光仍会在盒面上停留约 1 s。现在两个缓存都关闭，每帧对同一物理状态渲染 `--subframes` 次（默认 4）。在笔瞬移 12 cm 的测试中，这样设置后残留降到渲染噪声水平，2–8 个子帧结果相近，1 个子帧时仍明显；关缓存还让每次渲染快了约一半。关掉 DLSS 或半透明运动矢量都没有改善。
@@ -100,14 +100,14 @@
 ## 6. 批量验收
 
 ```bash
-"$ISAAC_PYTHON" scripts/tasks/drawer_pen_batch.py corners --output outputs/drawer-pen/corners --gpus 0 1 --jobs 8
-"$ISAAC_PYTHON" scripts/tasks/drawer_pen_batch.py seeds --first 0 --count 40 --output outputs/drawer-pen/seeds --gpus 0 1 --jobs 8
+"$ISAAC_PYTHON" scripts/tasks/drawer_pen_batch.py corners --output outputs/drawer-pen/corners --gpus 0 1 --jobs 8 --per-process 10
+"$ISAAC_PYTHON" scripts/tasks/drawer_pen_batch.py seeds --first 0 --count 40 --output outputs/drawer-pen/seeds --gpus 0 1 --jobs 4 --per-process 10
 ```
 
 - **corners**：两个区域各取中心、四个边中点和四个角，两两组合共 81 例，两件物体独立变化。
 - **seeds**：连续 seed 的独立随机摆放。
 
-每例是一次独立运行，已有结果的例子不重跑；验收批次运行期间不改代码、场景和资产。同一张 GPU 上的启动间隔 20 s。8 路同时启动时，Isaac 偶尔在启动阶段建不成光线追踪管线并挂起，由监督进程在心跳 300 s 未更新时停止；这种没有 `result.json` 的运行属于任务之外的故障，原目录改名为 `<例子>.no-result-<n>` 留作记录后重跑一次。有结果的运行，不论 PASS 还是 FAIL，都不重跑。汇总表的 `attempts`、`no_result_attempts` 两列记录启动次数。全部例子（含失败）汇总到 `summary.json` 与 `summary.csv`：seed、偏移、结果、失败阶段与原因、重抓次数、意外接触数和耗时。
+每个进程连续跑 `--per-process` 例，例与例之间 `reset`；已有结果的例子不重跑。验收批次从固定提交的独立检出（`git worktree add --detach <目录> <提交>`）运行，运行期间不改代码、场景和资产。同一张 GPU 上的启动间隔 20 s。8 路同时启动时，Isaac 偶尔在启动阶段建不成光线追踪管线并挂起，由监督进程在心跳 300 s 未更新时停止；这种没有 `result.json` 的例子属于任务之外的故障，原目录改名为 `<例子>.no-result-<n>` 留作记录后在新进程中重跑一次。有结果的运行，不论 PASS 还是 FAIL，都不重跑。汇总表的 `attempts`、`no_result_attempts` 两列记录启动次数。全部例子（含失败）汇总到 `summary.json` 与 `summary.csv`：seed、偏移、结果、失败阶段与原因、重抓次数、意外接触数和耗时。
 
 **通过条件**：两批全部 PASS，所有进程正常退出。之后录中心和至少一个角点组合的视频，逐视角检查：
 
