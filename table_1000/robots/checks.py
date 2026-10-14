@@ -31,7 +31,10 @@ from scipy.spatial.transform import Rotation
 
 from table_1000.robots.controllers import CONTROL_HZ
 
-PENETRATION_LIMIT = .002     # m
+PENETRATION_LIMIT = .002     # m, slow or resting contacts
+# Objects dropped onto the robot hit it at about 2 m/s, 9 mm per 4 ms step; a
+# few millimetres of transient overlap is the price of that step and accepted.
+IMPACT_PENETRATION_LIMIT = .01
 # Joint speed / URDF velocity limit. A finger knocked by an obstacle is back-driven
 # a little past its limit; flung bodies go far beyond.
 SPEED_MARGIN = 1.5
@@ -329,7 +332,7 @@ class Checker:
                                              'gap_to_visual_m': gap, 'penetration_m': self.penetration()}
         gaps = [r['gap_to_visual_m'] for r in results.values() if r['gap_to_visual_m'] is not None]
         result = {'drops': results, 'max_gap_m': max(gaps, default=0.)}
-        result['checks'] = {'no_deep_drop_penetration': all(r['penetration_m'] <= PENETRATION_LIMIT
+        result['checks'] = {'no_deep_drop_penetration': all(r['penetration_m'] <= IMPACT_PENETRATION_LIMIT
                                                             for r in results.values()),
                             # Resting more than 15 mm above the visible surface: the collision shell is too fat.
                             'rests_on_visible_surface': result['max_gap_m'] <= .015}
@@ -606,6 +609,57 @@ class Checker:
         self.move_joints('right', self.ik('right', translation(.45, -.25, .95, down(45))), 2.)
         moving = (self.backend.timings['step_s'] - before) / (50 * self.env.controller.substeps) * 1e3
         return {'hold': hold, 'arm_moving': moving}
+
+
+def physics_ms(checker, actions):
+    """Median physics time per 4 ms step over the control steps of ``actions``."""
+    times = []
+    for action in actions:
+        before = checker.backend.timings['step_s']
+        checker.step(action)
+        times.append((checker.backend.timings['step_s'] - before) / checker.env.controller.substeps * 1e3)
+    return float(np.median(times))
+
+
+def benchmark(checker, sweeps=3, samples=1000, plans=10, seed=0):
+    """Cost of the robot's collision geometry: physics while holding and while an
+    arm swings into the torso and back; planning collision checks and RRT."""
+    model, arm = checker.model, checker.spec.arms['right']
+    checker.reset()
+    checker.step(count=5)
+    hold = physics_ms(checker, [{}] * 75)
+    ready = checker.arm_q('right')
+    target, _ = checker.colliding_target('right', ready)
+    path = []
+    for _ in range(sweeps):
+        for start, goal in ((ready, target), (target, ready)):
+            path += [{'right': (start + (goal - start) * k / 50)[None]} for k in range(1, 51)]
+    sweep = physics_ms(checker, path)
+    planner = model.planners['right']
+    rng = np.random.default_rng(seed)
+    configurations = []
+    for _ in range(samples):
+        q = model.q.copy()
+        for name in checker.spec.arms:
+            indices = model.arm_indices(name)
+            q[indices] = rng.uniform(*model.limits[indices].T)
+        configurations.append(q)
+    started = time.perf_counter()
+    for q in configurations:
+        planner.robot.set_qpos(q, True)
+        planner.check_for_self_collision()
+    check_us = (time.perf_counter() - started) / samples * 1e6
+    model.set_state()
+    free = [q for q in configurations if not model.self_collisions(q)]
+    times = []
+    for start, goal in zip(free[:plans], free[plans:2 * plans]):
+        model.set_state(dict(zip(model.joints, start)))
+        started = time.perf_counter()
+        model.plan_rrt('right', None, goals=[goal], planning_time=2.)
+        times.append(time.perf_counter() - started)
+    checker.reset()
+    return {'physics_hold_ms': hold, 'physics_self_contact_ms': sweep, 'self_collision_check_us': check_us,
+            'rrt_median_s': float(np.median(times))}
 
 
 def _pose_error(a, b):

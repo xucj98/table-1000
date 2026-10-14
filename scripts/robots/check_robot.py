@@ -28,6 +28,9 @@ def main(argv=None):
     parser.add_argument('--video', action='store_true')
     parser.add_argument('--cases', nargs='*')
     parser.add_argument('--no-metrics', action='store_true')
+    parser.add_argument('--benchmark', action='store_true', help='only the collision-cost benchmark')
+    parser.add_argument('--root', type=Path, default=ROOT, help='repository root holding the robot source')
+    parser.add_argument('--assets', type=Path, default=ROOT / 'assets')
     args = parser.parse_args(argv)
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -44,9 +47,13 @@ def main(argv=None):
         from table_1000.robots.controllers import CONTROL_HZ
         from table_1000.runtime.cameras import Cameras
         cameras = (lambda stage: Cameras(stage, VIEW, output / 'frames', fps=CONTROL_HZ)) if args.video else None
-        checker = Checker(load_spec(args.robot), output, ROOT / 'assets', ROOT, cameras)
+        checker = Checker(load_spec(args.robot), output, args.assets.resolve(), args.root.resolve(), cameras)
         report['load_s'] = checker.load_s
-        for name in args.cases or Checker.CASES:
+        if args.benchmark:
+            from table_1000.robots.checks import benchmark
+            report['benchmark'] = benchmark(checker)
+            args.cases, args.no_metrics = [], True
+        for name in (Checker.CASES if args.cases is None else args.cases):
             checker.case = name
             case_started = time.perf_counter()
             try:
