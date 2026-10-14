@@ -17,6 +17,8 @@ arm's planner (see :class:`table_1000.planning.world.PlanningScene`).
 
 from pathlib import Path
 
+import time
+
 import numpy as np
 
 from table_1000.planning.model import write_planning_urdf, write_srdf
@@ -165,16 +167,19 @@ class RobotModel:
         """RRTConnect to an IK solution of ``target`` (or to ``goals``, full configurations)."""
         planner = self.planners[arm]
         start = np.clip(self.q if q is None else q, self.limits[:, 0], self.limits[:, 1])
+        started = time.perf_counter()
         if goals is None:
             status, goals = self.ik(arm, target, start, world=world, closest=False)
             if status != 'Success':
-                return {'status': status, 'reason': status}
+                return {'status': status, 'reason': status, 'ik_s': time.perf_counter() - started}
+        ik_s = time.perf_counter() - started
         # The torso lift is the first joint of the move group; hold it.
         result = planner.plan_qpos(list(goals), start, time_step=time_step, planning_time=planning_time,
                                    fixed_joint_indices=list(range(len(self.spec.lift))))
         planner.robot.set_qpos(self.q, True)
         if result['status'] != 'Success':
             result['reason'] = result['status']
+        result.update(ik_s=ik_s, rrt_s=time.perf_counter() - started - ik_s)
         return self._arm_path(arm, result)
 
     def check_path(self, arm, positions, step=.01):

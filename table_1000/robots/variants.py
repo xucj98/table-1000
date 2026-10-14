@@ -264,7 +264,21 @@ def make_checkout(robot, source, folder):
     return folder
 
 
-def task_cost(summary):
+def plan_costs(batch):
+    """Planning time by kind and part, summed over the cases of a batch directory."""
+    totals = {}
+    for path in Path(batch).glob('*/result.json'):
+        for plan in json.loads(path.read_text()).get('plans') or []:
+            kind = plan['kind']
+            totals[f'{kind}_plans'] = totals.get(f'{kind}_plans', 0) + 1
+            totals[f'{kind}_s'] = totals.get(f'{kind}_s', 0.) + plan['planning_s']
+            for key in ('ik_s', 'rrt_s', 'validation_s', 'validation_checks'):
+                if key in plan:
+                    totals[f'{kind}_{key}'] = totals.get(f'{kind}_{key}', 0.) + plan[key]
+    return totals
+
+
+def task_cost(summary, batch=None):
     rows = summary['rows']
     total = lambda key: float(sum(row[key] or 0. for row in rows))
     return {'cases': len(rows), 'passed': summary['passed'], 'regrasps': int(sum(row['regrasps'] or 0 for row in rows)),
@@ -272,7 +286,10 @@ def task_cost(summary):
             'processes_ok': summary['processes_ok'], 'simulated_s': total('simulated_s'),
             'total_s': total('case_s'), 'physics_s': total('step_s'), 'planning_s': total('planning_s'),
             'other_s': total('case_s') - total('step_s') - total('planning_s'), 'batch_wall_s': summary['wall_s'],
-            'jobs': summary['jobs'], 'per_process': summary['per_process']}
+            'jobs': summary['jobs'], 'per_process': summary['per_process'],
+            # Physics per 4 ms step, comparable also when cases end early.
+            'physics_ms_per_step': 1e3 * total('step_s') / max(total('simulated_s') / .004, 1),
+            'plans': plan_costs(batch) if batch else {}}
 
 
 def renders(robot, checkout, output):
@@ -346,7 +363,7 @@ def run(robot, name, source, output, gpus, jobs=4, per_process=5, skip_task=Fals
                         '--output', str(batch), '--gpus', *map(str, gpus), '--jobs', str(jobs),
                         '--per-process', str(per_process)], cwd=checkout,
                        stdout=(folder / 'batch.log').open('w'), stderr=subprocess.STDOUT)
-        report['task'] = task_cost(json.loads((batch / 'summary.json').read_text()))
+        report['task'] = task_cost(json.loads((batch / 'summary.json').read_text()), batch)
     report['report_s'] = time.perf_counter() - started
     write(folder, report)
     return report

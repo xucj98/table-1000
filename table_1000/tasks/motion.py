@@ -98,8 +98,9 @@ class MotionPlanner:
             self.log.append(entry)
             raise PlanningFailed(stage, result.get('reason', result['status']), entry)
         entry['duration_s'] = float(result['duration'])
-        if 'validation_checks' in result:
-            entry['validation_checks'] = result['validation_checks']
+        for key in ('validation_checks', 'ik_s', 'rrt_s', 'validation_s'):
+            if key in result:
+                entry[key] = result[key]
         self.log.append(entry)
         return result
 
@@ -107,11 +108,14 @@ class MotionPlanner:
         """Fail ``result`` if its path collides anywhere at VALIDATION_STEP."""
         if result['status'] != 'Success':
             return result
+        started = time.perf_counter()
         checks, pairs = self.model.check_path(self.arm.name, result['position'], VALIDATION_STEP)
+        elapsed = time.perf_counter() - started
         if pairs:
             return {'status': 'path collision', 'reason': 'path collision', 'collisions': pairs,
-                    'validation_checks': checks}
-        result['validation_checks'] = checks
+                    'validation_checks': checks, 'validation_s': elapsed,
+                    **{key: result[key] for key in ('ik_s', 'rrt_s') if key in result}}
+        result.update(validation_checks=checks, validation_s=elapsed)
         return result
 
     def move_to_pose_with_RRTConnect(self, stage, target, planning_time=3., attempts=3):
