@@ -21,13 +21,11 @@ ROBOT = {
     'asset': 'robots/x1pro',
     'position': (-.03, -.80, 0.),
     'yaw': math.pi / 2,
+    # Arms in the zero pose (folded, the real robot's usual start), torso raised
+    # so the folded hands clear the table top; joints not listed are at zero.
     'joints': {
         'lift_joint': .40,
         'head_pitch_joint': .30,   # head camera looks at the workspace
-        'right_arm_joint1': 0., 'right_arm_joint2': .4, 'right_arm_joint3': -1., 'right_arm_joint4': 0.,
-        'right_arm_joint5': 0., 'right_arm_joint6': 0.,
-        'left_arm_joint1': 0., 'left_arm_joint2': .4, 'left_arm_joint3': -1., 'left_arm_joint4': 0.,
-        'left_arm_joint5': 0., 'left_arm_joint6': 0.,
     },
 }
 

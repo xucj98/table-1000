@@ -27,11 +27,17 @@ VELOCITY_LIMIT, ACCELERATION_LIMIT = .8, 1.5
 # Planning hulls (except the fingers, which touch objects on purpose) are grown
 # by this much, so plans keep the robot clear of itself and of objects.
 PLANNING_PADDING = .002
-# Bodies whose collision hulls overlap at every configuration: the head
-# housing seated on the torso and the closed finger pads.
+# Bodies whose collision hulls overlap where the real robot does not collide:
+# the head housing seated on the torso, the closed finger pads, and each arm's
+# forearm (link4) resting on its upper arm (link2) when folded. The zero pose
+# folds the arms fully (joint2 and joint3 at their limits), with the visual
+# surfaces of link2 and link4 touching; the joint limits keep them from coming
+# any closer.
 SEATED = [('head_pitch_link', 'lift_link'),
           ('left_arm_gripper_left_link', 'left_arm_gripper_right_link'),
-          ('right_arm_gripper_left_link', 'right_arm_gripper_right_link')]
+          ('right_arm_gripper_left_link', 'right_arm_gripper_right_link'),
+          ('left_arm_link2', 'left_arm_link4'),
+          ('right_arm_link2', 'right_arm_link4')]
 
 
 def _arm(side):
@@ -43,8 +49,9 @@ def _arm(side):
         max_gap=MAX_GAP, mount='lift_link', velocity_limit=VELOCITY_LIMIT, acceleration_limit=ACCELERATION_LIMIT)
 
 
-# Arms raised in front of the torso, head looking at the work surface. (At all
-# zeros the folded arms' link2 and link4 hulls overlap.)
+# Arms raised in front of the torso, head looking at the work surface. The
+# zero pose (every joint at 0: torso down, arms folded, head level) is the
+# usual starting pose of the real robot.
 _READY = {'lift_joint': .40, 'head_pitch_joint': .30,
           **{f'{side}_arm_joint{i}': value for side in ('left', 'right')
              for i, value in zip((2, 3), (.4, -1.))}}
@@ -58,7 +65,7 @@ SPEC = RobotSpec(
     base=BaseSpec(wheels=('left_wheel_joint', 'right_wheel_joint'), wheel_radius=.086, track=.48,
                   max_speed=(.5, 1.), max_acceleration=(1., 2.), max_force=(116., 28.)),
     lift=('lift_joint',), head=('head_yaw_joint', 'head_pitch_joint'),
-    keyframes={'ready': _READY},
+    keyframes={'zero': {}, 'ready': _READY},
     seated=tuple(SEATED),
     unpadded=tuple(f'{side}_arm_gripper_{finger}_link' for side in ('left', 'right') for finger in ('left', 'right')),
     planning_padding=PLANNING_PADDING)

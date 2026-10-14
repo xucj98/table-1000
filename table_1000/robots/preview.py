@@ -159,7 +159,7 @@ def render(spec):
         # ``isolate`` hides every link outside the focus (close-ups of one arm or hand).
         for name, objects in groups.items():
             for obj, link in zip(objects, links[name]):
-                obj.hide_render = name != panel['kind'] or (panel.get('isolate') and link not in focus)
+                obj.hide_render = name != panel['kind'] or bool(panel.get('isolate') and link not in focus)
         scene.render.filepath = panel['path']
         bpy.ops.render.render(write_still=True)
         panels.append(scene.render.filepath)

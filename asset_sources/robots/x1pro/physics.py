@@ -34,11 +34,15 @@ SOLVER_ITERATIONS = (16, 4)
 # finger therefore mimics its left one: right + left = 0.
 MIMIC_FINGERS = [(f'{side}_arm_gripper_right_joint', f'{side}_arm_gripper_left_joint') for side in ('left', 'right')]
 # Body pairs that never collide on the real robot but whose convex hulls
-# overlap: each gripper's two fingers (guided racks that pass each other) and
-# the head housing seated on the torso.
+# overlap: each gripper's two fingers (guided racks that pass each other), the
+# head housing seated on the torso, and each forearm (link4) resting on its
+# upper arm (link2) in the folded zero pose, which the joint limits make the
+# closest they come.
 FILTERED_PAIRS = [('left_arm_gripper_left_link', 'left_arm_gripper_right_link'),
                   ('right_arm_gripper_left_link', 'right_arm_gripper_right_link'),
-                  ('head_pitch_link', 'lift_link')]
+                  ('head_pitch_link', 'lift_link'),
+                  ('left_arm_link2', 'left_arm_link4'),
+                  ('right_arm_link2', 'right_arm_link4')]
 # (static, dynamic) friction; gripper pads are rubber-like.
 MATERIALS = {'body': (.4, .3), 'finger': (1., .8)}
 # Pad contact patch radius (m) for torsional friction. PhysX point contacts
