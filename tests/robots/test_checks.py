@@ -2,6 +2,8 @@
 
 from types import SimpleNamespace
 
+import numpy as np
+
 from table_1000.robots.checks import Checker
 
 
@@ -17,8 +19,15 @@ def checker():
     """A checker whose environment reset clears the backend's contacts, as the simulator does."""
     contacts = Contacts()
     check = Checker.__new__(Checker)
-    check.backend = SimpleNamespace(contacts=contacts)
-    check.env = SimpleNamespace(initial_robot_q=dict, reset=lambda layout, q: contacts.entries.clear())
+    obs = {'agent': {'qpos': np.zeros((1, 0)), 'base_pose': np.zeros((1, 3))}}
+
+    def reset(layout, q):
+        contacts.entries.clear()
+        return obs
+
+    check.env = SimpleNamespace(contacts=contacts, initial_robot_q=dict, reset=reset, obs=obs, joints=[])
+    check.model = SimpleNamespace(set_state=lambda q, base: None)
+    check.spec = SimpleNamespace(base=object())
     check.scene = SimpleNamespace(placement=lambda **poses: poses)
     return check, contacts
 

@@ -123,8 +123,8 @@ def main(argv=None):
     parser.add_argument('--output', type=Path, default=Path('assets/robots'))
     parser.add_argument('--gpu', type=int, default=0)
     args = parser.parse_args(argv)
-    from table_1000.sim.isaac.app import start_app
-    app = start_app(gpu=args.gpu, workers=4)
+    from table_1000.sim.isaaclab.app import start_app
+    app = start_app(gpu=args.gpu, workers=4, cameras=False)
     # Kit owns stdout/stderr and app.close() may end the process, so failures
     # are written next to the output before closing.
     try:

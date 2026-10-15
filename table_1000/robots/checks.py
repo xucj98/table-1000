@@ -34,9 +34,9 @@ import xml.etree.ElementTree as ET
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from table_1000.robots.cameras import direction, project
-from table_1000.robots.controllers import CONTROL_HZ
+from table_1000.robots.cameras import direction, optical_pose, project
 from table_1000.scenes import primitive_surface
+from table_1000.sim import CONTROL_HZ, SUBSTEPS
 
 PENETRATION_LIMIT = .002     # m, slow or resting contacts
 # Objects dropped onto the robot hit it at about 2 m/s, 9 mm per 4 ms step; a
@@ -102,7 +102,7 @@ NEEDS = {'sensors': 'cameras', 'lift_into_shelf': 'lift', 'base_into_wall': 'bas
 def save_marked(path, outputs, pixels):
     """The rgb image (else the depth image, white near, up to 2 m) with a cross at each pixel."""
     from PIL import Image, ImageDraw
-    from table_1000.sim.isaac.cameras import depth_image
+    from table_1000.sim.isaaclab.cameras import depth_image
     image = Image.fromarray(outputs['rgb'][0] if 'rgb' in outputs else depth_image(outputs['depth'][0]))
     draw = ImageDraw.Draw(image)
     for x, y in pixels:
@@ -136,7 +136,7 @@ def select_cases(spec, settings):
 
 
 def check_scene(spec, settings):
-    """Scene module for :class:`~table_1000.sim.isaac.backend.IsaacBackend` from a robot's ``robot_test`` settings."""
+    """Scene source for :class:`~table_1000.sim.isaaclab.env.RobotEnv` from a robot's ``robot_test`` settings."""
     robot = settings.ROBOT
     scene = types.SimpleNamespace(
         TABLE=settings.TABLE, OBJECTS=(), PRIMITIVES=PRIMITIVES,
@@ -199,21 +199,21 @@ class VisualModel:
 
 
 class Checker:
-    def __init__(self, spec, settings, output, assets, root, cameras=None):
+    def __init__(self, spec, settings, output, assets, root, views=None, video=False):
+        """``views``: fixed views for videos; ``video`` records them and every robot camera."""
         from table_1000.robots.kinematics import RobotModel
-        from table_1000.sim.env import Env
-        from table_1000.sim.isaac.backend import IsaacBackend
-        self.spec, self.settings, self.output = spec, settings, Path(output)
+        from table_1000.sim.isaaclab.env import RobotEnv
+        from table_1000.sim.isaaclab.video import Video
+        self.spec, self.settings, self.output, self.root = spec, settings, Path(output), Path(root)
         self.arm = spec.primary_arm
         self.gripper = f'{self.arm}_gripper'
         self.top = settings.TABLE['height']
         self.scene = check_scene(spec, settings)
         started = time.perf_counter()
-        self.backend = IsaacBackend(self.scene, self.scene.placement(), assets, spec=spec, cameras=cameras,
-                                    sensors=tuple(spec.cameras), ground_truth=True,
-                                    contact_objects=tuple(PRIMITIVES), contact_watch=('robot', *PRIMITIVES))
+        self.env = RobotEnv(self.scene, spec, assets, cameras=spec.cameras, depth=True, views=views or {}, root=root,
+                            contact_watch=('robot', *PRIMITIVES))
+        self.video = Video(self.env, [*(views or {}), *spec.cameras], self.output / 'frames', CONTROL_HZ) if video else None
         self.model = RobotModel(spec, self.output / 'planning')
-        self.env = Env(self.scene, self.backend, spec, [self.model])
         self.visual = VisualModel(spec, self.model, root)
         self.load_s = time.perf_counter() - started
         self.body_joints = [j for j in spec.body_joints]
@@ -224,7 +224,6 @@ class Checker:
         self.speed_limits = np.array([limits[j] for j in self.body_joints])
         self.case, self.past = '', []
         self.trace = {'joint_speed': 0., 'joint': None, 'object_speed': 0.}
-        self.env.caption = lambda env: f'{self.case}  t={env.time:5.2f}s'
 
     # -- driving ---------------------------------------------------------------
     def run(self, case):
@@ -238,28 +237,40 @@ class Checker:
     def reset(self, robot=None, **poses):
         q = self.env.initial_robot_q()
         q.update(robot or {})
-        self.past += self.backend.contacts.intervals()
-        return self.env.reset(self.scene.placement(**poses), q)
+        self.past += self.env.contacts.intervals()
+        obs = self.env.reset(self.scene.placement(**poses), q)
+        self.model.set_state(dict(zip(self.env.joints, obs['agent']['qpos'][0])), self.base_transform())
+        return obs
 
     def intervals(self):
         """Contact intervals of the case so far, over all its resets."""
-        return self.past + self.backend.contacts.intervals()
+        return self.past + self.env.contacts.intervals()
+
+    def base_transform(self):
+        x, y, yaw = self.env.obs['agent']['base_pose'][0]
+        transform = translation(x, y, 0. if self.spec.base else self.settings.ROBOT['position'][2])
+        transform[:3, :3] = Rotation.from_euler('z', yaw).as_matrix()
+        return transform
 
     def step(self, action=None, count=1):
         for _ in range(count):
-            obs, info = self.env.step(action or {})
-            ratio = np.abs([obs['qvel'][j][0] for j in self.body_joints]) / self.speed_limits
+            obs = self.env.step(action or {})
+            ratio = np.abs(obs['agent']['qvel'][0, [self.env.joints.index(j) for j in self.body_joints]]) / self.speed_limits
             if ratio.max() > self.trace['joint_speed']:
                 self.trace['joint_speed'], self.trace['joint'] = float(ratio.max()), self.body_joints[int(ratio.argmax())]
-            velocities = self.backend.body_velocities()
+            velocities = self.env.privileged()['velocities']
             if velocities:
                 # Horizontal: falling off the robot or the table is no fling.
                 self.trace['object_speed'] = max(self.trace['object_speed'], max(
                     float(np.linalg.norm(v[0, :2])) for v in velocities.values()))
+            if self.video:
+                self.video.capture(f'{self.case}  t={self.env.time:5.2f}s')
+        # The planning model follows the measured joints, as on the real robot.
+        self.model.set_state(dict(zip(self.env.joints, obs['agent']['qpos'][0])), self.base_transform())
         return obs
 
     def q(self, joints):
-        return np.array([self.env.obs['qpos'][j][0] for j in joints])
+        return self.env.qpos(joints)[0]
 
     def arm_q(self, arm):
         return self.q(self.spec.arms[arm].joints)
@@ -304,7 +315,7 @@ class Checker:
         """Deepest contact of the case, or of the current sub-case since the last
         reset (robot pairs only by default)."""
         depth = 0.
-        for entry in self.backend.contacts.intervals() if sub_case else self.intervals():
+        for entry in self.env.contacts.intervals() if sub_case else self.intervals():
             if not robot_only or any(side.startswith('robot') for side in entry['pair']):
                 depth = max(depth, entry['max_penetration_m'])
         return depth
@@ -328,12 +339,16 @@ class Checker:
         return result
 
     def tcp(self, arm=None):
-        return self.env.obs['tcp'][arm or self.arm][0]
+        return self.env.obs['agent']['tcp'][arm or self.arm][0]
+
+    def pose_of(self, shape):
+        """World pose of a check shape, as simulated."""
+        return self.env.privileged()['poses'][shape][0]
 
     def held(self, body, arm=None):
         """Pose of ``body`` in the frame of the arm's TCP link, both as simulated."""
-        link = self.backend.link_pose(self.spec.arms[arm or self.arm].tcp[0])[0]
-        return np.linalg.inv(link) @ self.backend.body_poses()[f'{body}:body'][0]
+        link = self.env.link_pose(self.spec.arms[arm or self.arm].tcp[0])[0]
+        return np.linalg.inv(link) @ self.pose_of(body)
 
     @staticmethod
     def work_point_in(settings, dx, dy, dz, rotation=None):
@@ -358,12 +373,15 @@ class Checker:
         self.move_joints(self.arm, goal, 3.)
         blocked_error = float(np.abs(self.arm_q(self.arm) - goal).max())
         jitter = self.jitter(self.spec.arms[self.arm].joints)
-        self.backend.set_object_pose('block', parked(0))
+        self.env.set_shape_pose('block', parked(0))
         self.step(count=round(1.5 / DT))
         result = {'blocked_error_rad': blocked_error, 'blocked_jitter_rad': jitter, 'blocked_motion': self.last_jitter,
                   'freed_error_rad': float(np.abs(self.arm_q(self.arm) - goal).max())}
+        # The hand touched the block in the contact reports: the penetration checks see contacts.
+        result['block_contact'] = any('block' in side for entry in self.intervals() for side in entry['pair'])
         result['checks'] = {'stopped_by_block': blocked_error > .05, 'settled': jitter <= JITTER_LIMIT,
-                            'reaches_goal_when_freed': result['freed_error_rad'] <= .01}
+                            'reaches_goal_when_freed': result['freed_error_rad'] <= .01,
+                            'contact_reported': result['block_contact']}
         return self.common(result)
 
     def arm_pushes_objects(self):
@@ -371,14 +389,13 @@ class Checker:
         arm = self.arm
         self.reset(box=self.on_work(0., 0., .05), can=self.on_work(.02, .11, .10))
         start = self.ik(arm, self.work_point(0., -.21, .045, down(70)))
-        before = self.backend.body_poses()
+        before = {name: self.pose_of(name) for name in ('box', 'can')}
         self.move_joints(self.arm, start, 2.)
         self.move_line(arm, self.work_point(0., .25, .045, down(70)))
         self.step(count=round(1. / DT))
-        after = self.backend.body_poses()
-        moved = {name: float(np.linalg.norm(after[f'{name}:body'][0][:2, 3] - before[f'{name}:body'][0][:2, 3]))
-                 for name in ('box', 'can')}
-        heights = {name: float(after[f'{name}:body'][0][2, 3]) for name in ('box', 'can')}
+        after = {name: self.pose_of(name) for name in ('box', 'can')}
+        moved = {name: float(np.linalg.norm(after[name][:2, 3] - before[name][:2, 3])) for name in ('box', 'can')}
+        heights = {name: float(after[name][2, 3]) for name in ('box', 'can')}
         result = {'moved_m': moved, 'final_height_m': heights}
         result['checks'] = {'pushed': all(d > .01 for d in moved.values()),
                             'still_on_table': all(self.top < z < self.top + .1 for z in heights.values())}
@@ -397,10 +414,10 @@ class Checker:
                 if surface is None:
                     continue
                 half = PRIMITIVES[body]['size'] if body == 'ball' else PRIMITIVES[body]['size'][2] / 2
-                self.backend.set_object_pose(body, translation(point[0], point[1], surface + .25 + half))
+                self.env.set_shape_pose(body, translation(point[0], point[1], surface + .25 + half))
                 self.step(count=round(2.5 / DT))
-                pose = self.backend.body_poses()[f'{body}:body'][0]
-                speed = float(np.linalg.norm(self.backend.body_velocities()[f'{body}:body'][0, :3]))
+                pose = self.pose_of(body)
+                speed = float(np.linalg.norm(self.env.privileged()['velocities'][body][0, :3]))
                 resting_on_robot = pose[2, 3] > .1 and speed < .02
                 gap = self.visual.distance(primitive_surface(PRIMITIVES[body], pose)) if resting_on_robot else None
                 results[f'{name}/{body}'] = {'link': link, 'resting_on_robot': bool(resting_on_robot),
@@ -418,7 +435,7 @@ class Checker:
         top_link = self.child_link[self.spec.head[-1] if self.spec.head else self.spec.lift[-1]]
         head = self.model.fk(top_link, world=True)[:3, 3]
         top = self.visual.surface_below([head[0], head[1], 3.])
-        self.backend.set_object_pose('shelf', translation(head[0], head[1], top + .10))
+        self.env.set_shape_pose('shelf', translation(head[0], head[1], top + .10))
         lift = self.spec.lift[0]
         start = self.q([lift])[0]
         self.step({'lift': [[start + .3]]}, count=round(2.5 / DT))
@@ -446,7 +463,7 @@ class Checker:
         self.step(count=round(1. / DT))
         result = {'model_contact': contact, 'target': target.tolist(), 'blocked_error_rad': error, 'blocked_jitter_rad': jitter,
                   'back_error_rad': float(np.abs(self.arm_q(self.arm) - ready).max()),
-                  'self_contacts': sorted({' / '.join(e['pair']) for e in self.backend.contacts.intervals()
+                  'self_contacts': sorted({' / '.join(e['pair']) for e in self.env.contacts.intervals()
                                            if all(s.startswith('robot') for s in e['pair'])})}
         result['checks'] = {'stopped_at_contact': error > .05, 'settled': jitter <= JITTER_LIMIT,
                             'comes_back': result['back_error_rad'] <= .01}
@@ -473,7 +490,7 @@ class Checker:
         """Top-down grasp of ``body`` resting at ``pose``; returns the closed finger gap."""
         self.reset(**{body: pose})
         self.step(count=round(.5 / DT))
-        center = self.backend.body_poses()[f'{body}:body'][0][:3, 3]
+        center = self.pose_of(body)[:3, 3]
         # Pads 15 mm below the top, fingertips (18.5 mm past the TCP) clear of the table.
         z = max(center[2] + height / 2 - .015, self.top + .0185 + .004)
         grasp = translation(center[0], center[1], z, down(90))
@@ -505,9 +522,9 @@ class Checker:
             self.move_joints(self.arm, lifted, .5)
             self.step(count=round(.5 / DT))
             drift = float(np.linalg.norm(self.held(body)[:3, 3] - relative[:3, 3]))
-            held_z = self.backend.body_poses()[f'{body}:body'][0][2, 3]
+            held_z = self.pose_of(body)[2, 3]
             self.step({self.gripper: [[.08]]}, count=round(1.5 / DT))
-            final = self.backend.body_poses()[f'{body}:body'][0][2, 3]
+            final = self.pose_of(body)[2, 3]
             results[body] = {'finger_gap_m': gap, 'drift_m': drift, 'falls_when_released': bool(final < held_z - .04),
                              'penetration_m': self.penetration(sub_case=True), 'joint6': joint6}
         result = {'objects': results}
@@ -519,12 +536,12 @@ class Checker:
         """The base backs into a wall: it stops there without shoving or crossing it."""
         self.reset(wall=translation(-.65, 0., .5))
         self.step({'base': [[-.3, 0.]]}, count=round(3. / DT))
-        x_blocked = float(self.env.obs['base_pose'][0, 0])
+        x_blocked = float(self.env.obs['agent']['base_pose'][0, 0])
         jitter = self.jitter(list(self.spec.base.virtual_joints[:2]))
         self.step({'base': [[.3, 0.]]}, count=round(1.5 / DT))
         self.step({'base': [[0., 0.]]}, count=round(1. / DT))
         result = {'base_x_blocked_m': x_blocked, 'blocked_jitter_m': jitter,
-                  'base_x_after_m': float(self.env.obs['base_pose'][0, 0])}
+                  'base_x_after_m': float(self.env.obs['agent']['base_pose'][0, 0])}
         result['checks'] = {'stopped_by_wall': x_blocked > -.5, 'settled': jitter <= JITTER_LIMIT,
                             'drives_away': result['base_x_after_m'] > x_blocked + .2}
         return self.common(result)
@@ -548,10 +565,10 @@ class Checker:
             fingers = self.q(self.spec.arms[self.arm].fingers)
             phases[name + ' finger_centre'] = float(fingers.sum() / 2)
         arm = self.spec.arms[self.arm]
-        sim = self.backend.link_pose(arm.tcp[0])[0] @ translation(*arm.tcp[1])
+        sim = self.env.link_pose(arm.tcp[0])[0] @ translation(*arm.tcp[1])
         result = {'drift_m': max(v for k, v in phases.items() if 'finger' not in k), 'drift_by_phase_m': phases,
-                  'model_vs_sim_tcp_m': _pose_error(sim, self.tcp())[0],
-                  'base_pose': self.env.obs['base_pose'][0].tolist()}
+                  'model_vs_sim_tcp_m': _pose_error(sim, self.model.tcp(self.arm, world=True))[0],
+                  'base_pose': self.env.obs['agent']['base_pose'][0].tolist()}
         result['checks'] = {'held_without_slip': result['drift_m'] <= HOLD_DRIFT_LIMIT}
         return self.common(result)
 
@@ -591,7 +608,7 @@ class Checker:
             start = self.q(self.body_joints)
             self.step(count=round(1. / DT))
             drift = float(np.abs(self.q(self.body_joints) - start).max())
-            contacts = sorted({' / '.join(entry['pair']) for entry in self.backend.contacts.intervals()
+            contacts = sorted({' / '.join(entry['pair']) for entry in self.env.contacts.intervals()
                                if all(side.startswith('robot') for side in entry['pair'])})
             result[name] = {'planning_pairs': pairs, 'robot_contacts': contacts, 'drift_rad': drift}
             checks[f'{name}_planning'] = not pairs
@@ -614,9 +631,9 @@ class Checker:
         """Marker centres in camera ``name``'s optical frame and their radius, aimed at a
         3 x 3 grid of pixels and kept in front of what ``depth`` (rendered without
         markers) shows there; directions blocked within a few centimetres are skipped."""
-        camera = self.spec.cameras[name]
-        width, height = camera.resolution
-        radius = MARKER_DISTANCE * MARKER_PIXELS / camera.intrinsics[0]
+        sensor = self.spec.cameras[name].sensor
+        width, height = sensor.resolution
+        radius = MARKER_DISTANCE * MARKER_PIXELS / sensor.intrinsics[0]
         points = []
         for u in MARKER_GRID:
             for v in MARKER_GRID:
@@ -627,7 +644,7 @@ class Checker:
                 behind = patch[patch > 0].min() if (patch > 0).any() else np.inf
                 distance = min(MARKER_DISTANCE, .6 * behind)
                 if distance > 4 * radius:
-                    points.append(direction(camera, pixel) * distance)
+                    points.append(direction(sensor, pixel) * distance)
         return np.array(points).reshape(-1, 3), radius
 
     def sensors(self):
@@ -645,18 +662,19 @@ class Checker:
             self.reset(robot=q)
             self.step(count=round(.5 / DT))
             for name, camera in self.spec.cameras.items():
-                self.backend.set_markers([], 0.)
-                plain = self.backend.sense([name])[name]
+                sensor = camera.sensor
+                self.env.set_markers([], 0.)
+                plain = self.env.render([name])[name]
                 points, radius = self.markers(name, plain['depth'][0])
-                frame = self.model.fk(camera.frame, world=True)
-                self.backend.set_markers((frame[:3, :3] @ points.T).T + frame[:3, 3], radius)
-                seen = self.backend.sense([name])[name]
-                expected = project(camera, points)
+                frame = optical_pose(self.model, camera.mount, self.root / self.spec.urdf)
+                self.env.set_markers((frame[:3, :3] @ points.T).T + frame[:3, 3], radius)
+                seen = self.env.render([name])[name]
+                expected = project(sensor, points)
                 save_marked(self.output / 'sensors' / f'{name}_{pose}.jpg', seen, expected)
                 seen = seen['depth'][0]
                 entry = {'markers': len(points)}
-                if camera.kind == 'depth':
-                    pixels = np.clip(np.round(expected - .5).astype(int), 0, [camera.resolution[0] - 1, camera.resolution[1] - 1])
+                if sensor.kind == 'depth':
+                    pixels = np.clip(np.round(expected - .5).astype(int), 0, [sensor.resolution[0] - 1, sensor.resolution[1] - 1])
                     # The ray through the centre meets the sphere radius short of it.
                     surface = points[:, 2] * (1 - radius / np.linalg.norm(points, axis=1))
                     errors = np.abs(seen[pixels[:, 1], pixels[:, 0]] - surface)
@@ -664,10 +682,10 @@ class Checker:
                                  valid_pixels=float((plain['depth'][0] > 0).mean()))
                     passed = bool(len(errors) >= MARKERS_PLACED and errors.max() <= DEPTH_LIMIT and entry['valid_pixels'] > .5)
                 else:
-                    self.backend.set_markers([], 0.)
-                    self.backend.show_robot(False)
-                    bare = self.backend.sense([name])[name]['depth'][0]
-                    self.backend.show_robot(True)
+                    self.env.set_markers([], 0.)
+                    self.env.show_robot(False)
+                    bare = self.env.render([name])[name]['depth'][0]
+                    self.env.show_robot(True)
                     depth = plain['depth'][0]
                     robot = (depth > 0) & ((bare == 0) | (bare > depth + 1e-3))
                     errors = marker_errors(seen, depth, expected)
@@ -677,9 +695,9 @@ class Checker:
                                   and entry['self_view'] <= camera.self_view and entry['contrast'] >= CONTRAST_LIMIT)
                 result.setdefault(name, {})[pose] = entry
                 checks[f'{name}_{pose}'] = passed
-                if self.backend.cameras:
-                    self.backend.capture(f'{self.case} {name} {pose}')
-        self.backend.set_markers([], 0.)
+                if self.video:
+                    self.video.capture(f'{self.case} {name} {pose}')
+        self.env.set_markers([], 0.)
         result['checks'] = checks
         return self.common(result)
 
@@ -710,8 +728,8 @@ class Checker:
             errors = []
             for q in free[:30]:
                 self.reset(robot=dict(zip(arm.joints, q[indices])))
-                sim = self.backend.link_pose(arm.tcp[0])[0] @ translation(*arm.tcp[1])
-                position, rotation = _pose_error(sim, self.tcp(arm_name))
+                sim = self.env.link_pose(arm.tcp[0])[0] @ translation(*arm.tcp[1])
+                position, rotation = _pose_error(sim, self.model.tcp(arm_name, world=True))
                 errors.append((position, rotation))
             errors = np.array(errors)
             # IK on reachable poses.
@@ -774,14 +792,14 @@ class Checker:
         """Speed tracking (backing away from the table) and an in-place turn in the open."""
         self.reset()
         self.step({'base': [[-.4, 0.]]}, count=round(2. / DT))
-        velocity = [self.env.obs['qvel'][j][0] for j in self.spec.base.virtual_joints[:2]]
+        velocity = self.env.obs['agent']['qvel'][0, [self.env.joints.index(j) for j in self.spec.base.virtual_joints[:2]]]
         speed = float(np.linalg.norm(velocity))
         self.step({'base': [[0., 0.]]}, count=round(1. / DT))
-        start = self.env.obs['base_pose'][0].copy()
+        start = self.env.obs['agent']['base_pose'][0].copy()
         self.step({'base': [[0., .8]]}, count=round(2. / DT))
         self.step({'base': [[0., 0.]]}, count=round(1. / DT))
-        turned = self.env.obs['base_pose'][0]
-        target = self.env.controller.groups['base'].pose[0]
+        turned = self.env.obs['agent']['base_pose'][0]
+        target = self.env.terms['base'].pose[0].cpu().numpy()
         return {'speed_at_0.4_m_s': speed, 'turn_translation_drift_m': float(np.linalg.norm(turned[:2] - start[:2])),
                 'pose_error_after_stop_m': float(np.linalg.norm(turned[:2] - target[:2])),
                 'yaw_error_after_stop_rad': float(abs(turned[2] - target[2]))}
@@ -789,12 +807,12 @@ class Checker:
     def step_cost(self):
         """Physics ms per step: robot holding still, and moving its arm."""
         self.reset()
-        before = self.backend.timings['step_s']
+        before = self.env.timings['step_s']
         self.step(count=50)
-        hold = (self.backend.timings['step_s'] - before) / (50 * self.env.controller.substeps) * 1e3
-        before = self.backend.timings['step_s']
+        hold = (self.env.timings['step_s'] - before) / (50 * SUBSTEPS) * 1e3
+        before = self.env.timings['step_s']
         self.move_joints(self.arm, self.ik(self.arm, self.work_point(0., -.10, .195, down(45))), 2.)
-        moving = (self.backend.timings['step_s'] - before) / (50 * self.env.controller.substeps) * 1e3
+        moving = (self.env.timings['step_s'] - before) / (50 * SUBSTEPS) * 1e3
         return {'hold': hold, 'arm_moving': moving}
 
 
@@ -802,9 +820,9 @@ def physics_ms(checker, actions):
     """Median physics time per 4 ms step over the control steps of ``actions``."""
     times = []
     for action in actions:
-        before = checker.backend.timings['step_s']
+        before = checker.env.timings['step_s']
         checker.step(action)
-        times.append((checker.backend.timings['step_s'] - before) / checker.env.controller.substeps * 1e3)
+        times.append((checker.env.timings['step_s'] - before) / SUBSTEPS * 1e3)
     return float(np.median(times))
 
 

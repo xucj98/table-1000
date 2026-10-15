@@ -28,18 +28,16 @@ def main(argv=None):
     args = parser.parse_args(argv)
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    from table_1000.sim.isaac.app import start_app
-    from table_1000.sim.isaac.render import RT2_ARGS
-    app = start_app(gpu=args.gpu, workers=4, renderer='RaytracedLighting', disable_viewport_updates=True,
-                    extra_args=RT2_ARGS)
+    from table_1000.sim.isaaclab.app import start_app
+    from table_1000.sim.isaaclab.render import RT2_ARGS
+    app = start_app(gpu=args.gpu, workers=4, extra_args=RT2_ARGS)
     try:
         import numpy as np
         from table_1000.robots import load_robot_test, load_spec, teleop
         from table_1000.robots.checks import Checker, check_scene
-        from table_1000.robots.kinematics import RobotModel
-        from table_1000.sim.isaac.cameras import Cameras
-        from table_1000.sim.env import Env
-        from table_1000.sim.isaac.backend import IsaacBackend
+        from table_1000.sim.isaaclab import render
+        from table_1000.sim.isaaclab.env import RobotEnv
+        render.configure()
         spec, settings = load_spec(args.robot), load_robot_test(args.robot)
         scene = check_scene(spec, settings)
         # A box, a can and a stick on the table around the work point.
@@ -47,14 +45,11 @@ def main(argv=None):
         layout = scene.placement(box=on_table(0., 0., .04), can=on_table(.05, .20, .05),
                                  stick=on_table(-.05, -.15, .007, np.array([[0, 0, 1], [0, 1, 0], [-1, 0, 0.]])))
         # The page shows the outside view and the robot's own rgb cameras.
-        sensors = [name for name, camera in spec.cameras.items() if camera.kind == 'rgb']
-        backend = IsaacBackend(scene, layout, ROOT / 'assets', spec=spec, sensors=sensors,
-                               cameras=lambda stage: Cameras(stage, VIEWS, None, fps=25))
-        model = RobotModel(spec, output / 'planning')
+        cameras = {name: camera for name, camera in spec.cameras.items() if camera.sensor.kind == 'rgb'}
         # Keys move parts by increments: TCP deltas for the arms, joint deltas for the lift and head.
-        env = Env(scene, backend, spec, [model], modes={'lift': 'delta', 'head': 'delta', **{name: 'ee_delta' for name in spec.arms}},
-                  record=False)
-        teleop.run(env, layout, output, args.port, [*VIEWS, *sensors], args.render_every)
+        env = RobotEnv(scene, spec, ROOT / 'assets', cameras=cameras, views=VIEWS,
+                       modes={'lift': 'delta', 'head': 'delta', **{name: 'ee_delta' for name in spec.arms}})
+        teleop.run(env, layout, output, args.port, [*VIEWS, *cameras], args.render_every)
     finally:
         app.close()
 

@@ -1,26 +1,35 @@
-"""PhysX contact reports kept as time intervals per labelled body pair."""
+"""PhysX contact reports kept as time intervals per labelled body pair (environment 0).
+
+Isaac Lab's contact sensor reports forces, not how deep two bodies overlap,
+which the robot checks need; this reads PhysX's contact reports directly. They
+come from the bodies whose spawners activated contact reporting (the robot and
+the scene's shapes, see :mod:`table_1000.sim.isaaclab.scene`).
+"""
 
 
 class Contacts:
-    """PhysX contact reports for the bodies under ``paths``, kept as time intervals.
+    """Contact intervals of labelled bodies, timed by physics steps of ``dt``.
 
-    Pairs are kept when either side's label starts with one of ``watched``.
+    ``labels`` maps prim path prefixes to names; pairs are kept when either side's
+    label starts with one of ``watched``.
     """
 
     TOUCH = .0005
 
-    def __init__(self, stage, paths, labels, watched):
-        from omni.physx import get_physx_simulation_interface
-        from pxr import PhysxSchema, Usd, UsdPhysics
-        self.labels, self.watched = labels, tuple(watched)
-        for path in paths:
-            for prim in Usd.PrimRange(stage.GetPrimAtPath(path)):
-                if prim.HasAPI(UsdPhysics.RigidBodyAPI):
-                    PhysxSchema.PhysxContactReportAPI.Apply(prim).CreateThresholdAttr(0.)
+    def __init__(self, labels, watched, dt):
+        import carb
+        from omni.physx import get_physx_interface, get_physx_simulation_interface
+        # Isaac Lab turns PhysX contact processing off unless one of its contact sensors needs it.
+        carb.settings.get_settings().set_bool('/physics/disableContactProcessing', False)
+        self.labels, self.watched, self.dt = labels, tuple(watched), dt
         self.time, self.phase = 0., 'start'
         self.events = []
         self.open = {}
         self.subscription = get_physx_simulation_interface().subscribe_contact_report_events(self.on_report)
+        self.clock = get_physx_interface().subscribe_physics_step_events(self.on_step)
+
+    def on_step(self, dt):
+        self.time += dt
 
     def label(self, path):
         """Robot link (``robot.<link>``), object part (``<body key>.<part>``) or fixture."""
@@ -61,8 +70,10 @@ class Contacts:
         return self.events + [dict(entry, end=None) for entry in self.open.values()]
 
     def close(self):
-        self.subscription = None
+        self.subscription = self.clock = None
 
     def clear(self):
+        """Forget every interval and restart the clock (after a reset)."""
         self.events.clear()
         self.open.clear()
+        self.time = 0.

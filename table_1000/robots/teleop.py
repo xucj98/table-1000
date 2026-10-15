@@ -79,8 +79,9 @@ class Keys:
             yield self.pressed.get()
 
 
-def action_from_keys(keys, arm, gap, dt):
-    """One control step's action dict from the held keys."""
+def action_from_keys(keys, arm, gap, dt, yaw=0.):
+    """One control step's action dict from the held keys. TCP keys move along the base's axes
+    (heading ``yaw``); the arm's ``ee_delta`` action takes deltas in the world."""
     k = keys.fast()
     action = {'base': [[BASE_SPEED * k * keys.axis('KeyW', 'KeyS'), ANGULAR * k * keys.axis('KeyA', 'KeyD')]]}
     lift = LIFT_SPEED * k * keys.axis('KeyR', 'KeyF') * dt
@@ -92,7 +93,8 @@ def action_from_keys(keys, arm, gap, dt):
     move = np.array([keys.axis('KeyI', 'KeyK'), keys.axis('KeyJ', 'KeyL'), keys.axis('KeyU', 'KeyO')]) * LINEAR * k * dt
     turn = np.array([keys.axis('KeyZ', 'KeyX'), keys.axis('KeyC', 'KeyV'), keys.axis('KeyB', 'KeyN')]) * ROTATION * k * dt
     if move.any() or turn.any():
-        action[arm] = [np.r_[move, turn].tolist()]
+        heading = np.array([[np.cos(yaw), -np.sin(yaw), 0.], [np.sin(yaw), np.cos(yaw), 0.], [0., 0., 1.]])
+        action[arm] = [np.r_[heading @ move, heading @ turn].tolist()]
     action[f'{arm}_gripper'] = [[gap]]
     return action
 
@@ -167,18 +169,18 @@ class Server:
 
 def run(env, layout, output, port, views, render_every=5):
     """Teleoperate ``env`` until interrupted. Every ``render_every`` control steps the
-    page gets ``views``: the backend's video views, then robot cameras."""
-    from table_1000.robots.controllers import CONTROL_HZ
+    page gets ``views`` (the env's fixed views and robot cameras)."""
+    from table_1000.sim import CONTROL_HZ
     dt = 1 / CONTROL_HZ
     keys = Keys()
     server = Server(keys, views, port)
     arms = list(env.spec.arms)
     arm, gaps = arms[0], {name: 0. for name in arms}
     log = (Path(output) / 'actions.jsonl').open('a', buffering=1)
-    env.reset(layout)
+    obs = env.reset(layout)
     step, wall = 0, time.perf_counter()
     costs = {'physics': 0., 'render': 0., 'total': 0.}
-    before = dict(env.backend.timings)
+    before = dict(env.timings)
     print(f'teleop on http://<host>:{port}/', flush=True)
     while True:
         started = time.perf_counter()
@@ -188,32 +190,29 @@ def run(env, layout, output, port, views, render_every=5):
             elif key == 'Space':
                 gaps[arm] = env.spec.arms[arm].max_gap * .8 if gaps[arm] == 0. else 0.
             elif key == 'Backspace':
-                env.reset(layout)
+                obs = env.reset(layout)
                 wall = time.perf_counter()
                 log.write(json.dumps({'reset': True}) + '\n')
         # Keys for parts the robot lacks (a mobile base, a lift, a head) are ignored.
-        action = {group: value for group, value in action_from_keys(keys, arm, gaps[arm], dt).items()
-                  if group in env.controller.groups}
-        obs, info = env.step(action)
+        base = obs['agent']['base_pose'][0]
+        action = {group: value for group, value in action_from_keys(keys, arm, gaps[arm], dt, base[2]).items()
+                  if group in env.terms}
+        obs = env.step(action)
         log.write(json.dumps(action) + '\n')
         step += 1
-        failed = [name for name, value in info['ik_failed'].items() if value.any()]
-        base = obs['base_pose'][0]
-        tcp = obs['tcp'][arm][0][:3, 3]
+        base = obs['agent']['base_pose'][0]
+        tcp = obs['agent']['tcp'][arm][0][:3, 3]
         server.status = (f'arm {arm}  gap {gaps[arm]:.3f}  t {env.time:7.2f}s  '
                          f'base ({base[0]:+.3f}, {base[1]:+.3f}, {np.degrees(base[2]):+.1f} deg)  '
                          f'tcp ({tcp[0]:+.3f}, {tcp[1]:+.3f}, {tcp[2]:+.3f})'
-                         + ''.join(f'  {j} {obs["qpos"][j][0]:.3f}' for j in env.spec.lift)
+                         + ''.join(f'  {j} {value:.3f}' for j, value in zip(env.spec.lift, env.qpos(env.spec.lift)[0]))
                          + f'  realtime x{env.time / max(time.perf_counter() - wall, 1e-9):.2f}'
                          + '  ms/step physics {:.0f} render {:.0f} total {:.0f}'.format(
-                             *(1e3 * costs[k] / max(step, 1) for k in ('physics', 'render', 'total')))
-                         + (f'  IK FAILED: {", ".join(failed)}' if failed else ''))
+                             *(1e3 * costs[k] / max(step, 1) for k in ('physics', 'render', 'total'))))
         if step % render_every == 0:
-            images = env.backend.capture(save=False)
-            images.update({name: image[0] for name, image in env.images(views[len(images):])['images'].items()})
-            server.publish(images)
-        costs['physics'] = env.backend.timings['step_s'] - before['step_s']
-        costs['render'] = env.backend.timings['render_s'] - before['render_s']
+            server.publish({name: outputs['rgb'][0] for name, outputs in env.render(views).items()})
+        costs['physics'] = env.timings['step_s'] - before['step_s']
+        costs['render'] = env.timings['render_s'] - before['render_s']
         costs['total'] += time.perf_counter() - started
         spare = dt - (time.perf_counter() - started)
         if spare > 0:
@@ -225,5 +224,5 @@ def replay(env, layout, actions):
     obs = env.reset(layout)
     for line in Path(actions).read_text().splitlines():
         entry = json.loads(line)
-        obs = env.reset(layout) if entry.get('reset') else env.step(entry)[0]
+        obs = env.reset(layout) if entry.get('reset') else env.step(entry)
     return obs

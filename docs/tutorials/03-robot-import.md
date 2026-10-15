@@ -30,7 +30,7 @@ export ISAAC_PYTHON=$PWD/.venv/bin/python
 "$ISAAC_PYTHON" scripts/robots/teleop.py x1pro --output outputs/robots/x1pro-teleop --gpu 0 --port 8765
 ```
 
-构建把 `assets/robots/x1pro/robot.usda` 写到已忽略的 `assets/` 下，场景按 `robots/x1pro` 引用它；代码里用 `table_1000.robots.load_spec('x1pro')` 取机器人描述，`RobotModel` 做运动学与规划，`Env` 控制仿真中的机器人（第 5 节）。构建、源码检查、验收和遥控都只读源码目录；只有第 3 节的重新生成需要原始包。
+构建把 `assets/robots/x1pro/robot.usda` 写到已忽略的 `assets/` 下，场景按 `robots/x1pro` 引用它；代码里用 `table_1000.robots.load_spec('x1pro')` 取机器人描述，`RobotModel` 做运动学与规划，`RobotEnv` 控制仿真中的机器人（第 5 节）。构建、源码检查、验收和遥控都只读源码目录；只有第 3 节的重新生成需要原始包。
 
 ## 1. 准备环境与原始包（开发机器人）
 
@@ -110,18 +110,19 @@ uv sync --locked --all-extras
 机器人目录中的 [robot.py](../../asset_sources/robots/x1pro/robot.py) 的 `SPEC` 写这台机器人的关节分组：两只手臂（关节、TCP、手指、安装连杆；第一只右臂为主手臂）、升降、头部（偏航、俯仰）、差速底盘（轮距、轮半径、速度、加速度、推力上限）、关键姿态与相机。零位（全部关节为 0，真机最常用的起始姿态）总是关键姿态，另有 `ready`（躯干升起、两臂举在胸前）。升降、头部、底盘都是可选的：固定底座的单臂（如 Franka）只写手臂，机器人放在场景给定的位姿上。其余都是通用代码，结构参照 ManiSkill3：
 
 - [kinematics.py](../../table_1000/robots/kinematics.py) 的 `RobotModel`：一个 MPlib 模型包含全部身体关节，每只手臂一个规划器。提供正运动学、IK、头部 look-at、RRTConnect 与直线规划，只做自碰撞检查。
-- [controllers.py](../../table_1000/robots/controllers.py)：25 Hz 一个动作，每个动作覆盖 10 个物理步。动作组有底盘速度、升降与头部位置、手臂关节位置或 TCP 增量、夹爪间距，见[机器人规范](../designs/asset-pipeline/robots.md#机器人层运动学规划与控制)。
-- [table_1000/sim/env.py](../../table_1000/sim/env.py) 的 `Env.reset(layout)` / `Env.step(action)` 把控制器接到仿真后端，类似 gym 环境；检查、遥控和后续章节的专家脚本都通过它运行。Isaac 的调用都在后端 [table_1000/sim/isaac/backend.py](../../table_1000/sim/isaac/backend.py) 里，数组带环境维 N。目前只有 CPU 后端（N = 1），GPU 并行后端（Isaac Lab）待实现。
+- 仿真环境基于 Isaac Lab 的 `ManagerBasedEnv`：[table_1000/sim/isaaclab/env.py](../../table_1000/sim/isaaclab/env.py) 的 `RobotEnv(scene, spec, assets)` 由场景源码和 `SPEC` 生成 Isaac Lab 的场景、动作与观测配置；`reset(layout)` 写入物体摆放与机器人关节，`step(action)` 执行一个控制周期。检查、遥控和后续章节的专家脚本都通过它运行，数组带环境维 N。
+- 动作 25 Hz 一个，每个动作覆盖 10 个 4 ms 物理步（[actions.py](../../table_1000/sim/isaaclab/actions.py)）：底盘速度、升降与头部位置、手臂关节位置（或 Isaac Lab 的差分 IK 做 TCP 增量）、夹爪间距，见[机器人规范](../designs/asset-pipeline/robots.md#机器人层运动学规划与控制)。
+- 目前在 CPU PhysX 上验收（N = 1）；GPU 仿真只需把 `device` 换成 `cuda`，验证见 [issue #11](https://github.com/xucj98/table-1000/issues/11)。
 
-**感知接口**：`SPEC.cameras` 按真机相机报告的参数描述每一路图像（`CameraSpec`）：光学坐标系（URDF 中的 frame，OpenCV 约定 +Z 向前、+Y 向下）、分辨率、内参 `(fx, fy, cx, cy)`、OpenCV 镜头模型（`pinhole` 带径向和切向畸变，或 `fisheye`）、图像类型（`rgb` 或以米为单位的 `depth`）和帧率。名字与 robot-bridge 中 X1Pro 的视角一致：
+**感知接口**：`SPEC.cameras` 的每一路图像是一个 `CameraSpec`，由传感器参数（`Sensor`：分辨率、内参 `(fx, fy, cx, cy)`、OpenCV 镜头模型（`pinhole` 带径向和切向畸变，或 `fisheye`）、图像类型 `rgb` 或以米为单位的 `depth`）和安装位置组成。安装位置写 URDF 中的光学坐标系名（OpenCV 约定 +Z 向前、+Y 向下），或 `(link, xyz, rpy)` 直接装在某个连杆上，不必改 URDF。实验可以用 `override_cameras(cameras, config)` 改参数或增删相机，规则同 ManiSkill 的 `sensor_configs`：相机名下的设置只改这一路，其余键改全部相机，`resize=(w, h)` 按比例缩放内参。名字与 robot-bridge 中 X1Pro 的视角一致：
 
 | 名字 | 坐标系 | 图像 | 参数来源 |
 | --- | --- | --- | --- |
 | `face_view` | `camera_head_front_color_optical_frame` | RGB 1280×720，针孔加畸变 | 头部相机（Orbbec DaBai DCW2）出厂标定，2026-10-10 读取 |
-| `face_depth` | `camera_head_front_depth_optical_frame` | 深度 640×400，针孔无畸变，15 FPS | 同上；与 RGB 相距 12 mm |
+| `face_depth` | `camera_head_front_depth_optical_frame` | 深度 640×400，针孔无畸变 | 同上；与 RGB 相距 12 mm |
 | `left_wrist_view`、`right_wrist_view` | `<side>_arm_gripper_camera_color_frame` | RGB 640×480，鱼眼 | 分辨率为真机值；标定未知，暂用水平视场约 130° 的理想等距鱼眼代替，拿到 `camera_info` 后替换 |
 
-仿真用同一镜头模型渲染（RTX 的 OpenCV 针孔与鱼眼镜头），所以 `table_1000.robots.cameras.project` 按 `CameraSpec` 投影的像素就是仿真图像中的位置。`Env.images(names)` 在当前状态渲染这些相机，返回图像（RGB 为 uint8，深度为 float32 米，无返回处为 0）和光学坐标系的世界位姿（按实测关节由运动学算出，和真机的 TF 一样）；图像只在调用时渲染，控制步不渲染。
+仿真用同一镜头模型渲染（RTX 的 OpenCV 针孔与鱼眼镜头），所以 `table_1000.robots.cameras.project` 按 `Sensor` 投影的像素就是仿真图像中的位置。观测按 ManiSkill 的结构组织，只含真机也能测到的量：`agent`（关节位置与速度、底盘位姿、各手臂 TCP 位姿）和 `sensor_param`（每路相机的内参与光学坐标系的世界位姿）。`RobotEnv.images(names)` 在当前状态渲染相机，返回图像（RGB 为 uint8，深度为 float32 米，无返回处为 0）；图像只在调用时渲染，控制步不渲染。物体位姿、接触等仿真才有的量通过 `privileged()` 等方法取得，只给专家、验收和评测用。
 
 ## 6. 验收
 

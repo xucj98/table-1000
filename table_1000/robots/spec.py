@@ -13,7 +13,7 @@ where its scene places it. Arm targets are given in the world frame and
 converted with that pose.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -68,29 +68,73 @@ class BaseSpec:
 
 
 @dataclass(frozen=True)
-class CameraSpec:
-    """One image stream of a camera fixed to a robot body, as the real camera reports it.
+class Sensor:
+    """What one image stream of a camera delivers, as the real camera reports it.
 
-    ``frame`` is the stream's optical frame in the URDF (OpenCV convention: +Z
-    forward, +X right and +Y down in the image). ``intrinsics`` are
-    ``(fx, fy, cx, cy)`` in pixels for ``resolution`` ``(width, height)``.
-    ``model`` is OpenCV's ``'pinhole'`` (``distortion`` k1, k2, p1, p2[, k3]) or
-    ``'fisheye'`` (k1 to k4); :func:`table_1000.robots.cameras.project` maps
-    points to pixels with it. ``kind`` is ``'rgb'`` (uint8 images) or ``'depth'``
-    (metres along +Z, 0 where nothing is hit). The simulator renders the stream
-    with the same lens model, clipping closer than ``near`` (the camera's own
-    window). ``self_view`` bounds the share of pixels showing the robot itself
-    in the acceptance poses.
+    ``intrinsics`` are ``(fx, fy, cx, cy)`` in pixels for ``resolution``
+    ``(width, height)``. ``model`` is OpenCV's ``'pinhole'`` (``distortion``
+    k1, k2, p1, p2[, k3]) or ``'fisheye'`` (k1 to k4);
+    :func:`table_1000.robots.cameras.project` maps points to pixels with it.
+    ``kind`` is ``'rgb'`` (uint8 images) or ``'depth'`` (metres along +Z, 0
+    where nothing is hit). The simulator renders the stream with the same lens
+    model, clipping closer than ``near`` (the camera's own window).
     """
-    frame: str
     resolution: tuple
     intrinsics: tuple
     model: str = 'pinhole'
     distortion: tuple = ()
     kind: str = 'rgb'
-    fps: float = 30.
     near: float = .01
+
+    def resized(self, width, height):
+        """The same lens at another resolution: intrinsics scale with the image."""
+        sx, sy = width / self.resolution[0], height / self.resolution[1]
+        fx, fy, cx, cy = self.intrinsics
+        return replace(self, resolution=(width, height), intrinsics=(fx * sx, fy * sy, cx * sx, cy * sy))
+
+
+@dataclass(frozen=True)
+class CameraSpec:
+    """A :class:`Sensor` mounted on the robot.
+
+    ``mount`` is the stream's optical frame (OpenCV convention: +Z forward, +X
+    right and +Y down in the image): a fixed frame of the URDF by name, or
+    ``(link, xyz, rpy)`` placing it on a link without editing the URDF.
+    ``self_view`` bounds the share of pixels showing the robot itself in the
+    acceptance poses.
+    """
+    sensor: Sensor
+    mount: object
     self_view: float = .1
+
+
+def override_cameras(cameras, config):
+    """Cameras of a robot changed by ``config``, as ManiSkill's ``sensor_configs``.
+
+    Keys naming a camera apply to that camera only (``None`` drops it); other
+    keys apply to every camera. Values set :class:`Sensor` or
+    :class:`CameraSpec` fields; ``resize=(width, height)`` scales the intrinsics
+    with the image (:meth:`Sensor.resized`).
+    """
+    def apply(camera, changes):
+        changes = dict(changes)
+        sensor = camera.sensor
+        if 'resize' in changes:
+            sensor = sensor.resized(*changes.pop('resize'))
+        sensor_fields = {key: changes.pop(key) for key in list(changes) if key in Sensor.__dataclass_fields__}
+        unknown = set(changes) - set(CameraSpec.__dataclass_fields__)
+        if unknown:
+            raise KeyError(f'unknown camera settings {sorted(unknown)}')
+        return replace(camera, sensor=replace(sensor, **sensor_fields), **changes)
+
+    common = {key: value for key, value in config.items() if key not in cameras}
+    result = {}
+    for name, camera in cameras.items():
+        own = config.get(name, {})
+        if own is None:
+            continue
+        result[name] = apply(apply(camera, common), own)
+    return result
 
 
 @dataclass(frozen=True)
@@ -102,7 +146,7 @@ class RobotSpec:
     lift: tuple = ()               # prismatic torso joints
     head: tuple = ()               # head joints (yaw, pitch)
     keyframes: dict = field(default_factory=dict)   # name -> {joint: value}; 'zero' is implied
-    cameras: dict = field(default_factory=dict)     # name -> CameraSpec
+    cameras: dict = field(default_factory=dict)     # name -> CameraSpec (see override_cameras)
     # Body pairs whose collision hulls overlap at every configuration; never checked.
     seated: tuple = ()
     # Links whose planning hulls are not grown (they touch objects on purpose).

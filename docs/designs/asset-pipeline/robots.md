@@ -18,7 +18,7 @@ robot.py (SPEC) ──> 运动学与规划模型、控制器 ──robot_test.py
 | 位置 | 内容 | Git |
 | --- | --- | --- |
 | `asset_sources/robots/<name>/` | `robot.urdf`、`meshes/visual/`、`meshes/collision/`、`prepare.py`（转换选择）、`physics.py`（物理层）、`robot.py`（机器人描述 `SPEC`）、`robot_test.py`（验收设置）、`README.md`、`three_quarter.jpg` | 是 |
-| `table_1000/robots/` | 与具体机器人无关的工具：描述类型（`spec.py`）、转换、构建、预览、运动学与规划（`kinematics.py`、`planning_model.py`）、控制器（`controllers.py`）、验收用例库（`checks.py`）、遥控（`teleop.py`） | 是 |
+| `table_1000/robots/` | 与具体机器人无关的工具：描述类型（`spec.py`）、转换、构建、预览、运动学与规划（`kinematics.py`、`planning_model.py`）、相机安装与投影（`cameras.py`）、验收用例库（`checks.py`）、遥控（`teleop.py`）。仿真环境在 `table_1000/sim/isaaclab/` | 是 |
 | `scripts/robots/` | `prepare_robot.py`、`build_robot.py`、`check_robot.py`、`teleop.py` | 是 |
 | `tests/robots/` | 通用代码的单元测试（测试内生成的固定底座单臂）；`test_robot_sources.py` 对每台机器人检查描述、关键姿态、IK 与验收设置 | 是 |
 | `assets/robots/<name>/raw/` | 厂商原始包，原样保存 | 否；存档于数据集，版本记录在 `assets.lock.json` |
@@ -68,21 +68,21 @@ robot.py (SPEC) ──> 运动学与规划模型、控制器 ──robot_test.py
 
 ## 机器人层：运动学、规划与控制
 
-结构参照 ManiSkill3 的 agent 与 controller，与仿真器无关，同一套代码可接不同后端。
+机器人描述、运动学与规划与仿真器无关；仿真环境用 Isaac Lab（`ManagerBasedEnv`），不自己实现环境框架。观测与动作的组织参照 ManiSkill3。
 
 - **描述**：`robot.py` 的 `SPEC`（`RobotSpec`）列出各手臂（关节、TCP、手指、开合换算、安装连杆；第一只为主手臂），可选的升降、头部、移动底盘（虚拟关节、轮子、速度、加速度、推力上限），关键姿态与相机。零位（全部关节为 0）总是关键姿态之一，X1Pro 的零位也是真机最常用的起始姿态（躯干最低、两臂折叠、头平视）。有移动底盘时，底盘位姿即虚拟关节值，机器人 prim 留在原点；没有时，机器人 prim 放在场景给定的位姿（可带高度，如台座）。
-- **感知**：`SPEC.cameras` 的每个 `CameraSpec` 是一路图像，按真机相机报告的参数填写：URDF 中的光学坐标系（OpenCV 约定）、分辨率、内参、OpenCV 镜头模型（带畸变的 `pinhole` 或 `fisheye`）、`rgb` 或 `depth`（米，无返回为 0）、帧率；名字与 robot-bridge 的视角一致。仿真用同一镜头模型渲染，`table_1000.robots.cameras.project` 给出点在图像中的像素。`Env.images(names)` 按需渲染并返回图像与光学坐标系的世界位姿（按实测关节由运动学算出）。参数未标定的相机在 `robot.py` 中注明来源与替代值。
+- **感知**：`SPEC.cameras` 的每个 `CameraSpec` 是一路图像：传感器参数 `Sensor`（分辨率、内参、OpenCV 镜头模型——带畸变的 `pinhole` 或 `fisheye`、`rgb` 或 `depth`（米，无返回为 0）、近裁剪面），按真机相机报告的参数填写；安装位置为 URDF 中的光学坐标系（OpenCV 约定），或 `(link, xyz, rpy)`。名字与 robot-bridge 的视角一致。实验用 `override_cameras` 改参数或增删相机（规则同 ManiSkill 的 `sensor_configs`）。仿真用同一镜头模型渲染，`table_1000.robots.cameras.project` 给出点在图像中的像素；相机不设帧率，按需渲染。参数未标定的相机在 `robot.py` 中注明来源与替代值。
 - **运动学与规划**（`RobotModel`）：一个 MPlib/Pinocchio 模型包含全部身体关节，每只手臂一个规划器，升降保持不动。手臂规划同时检查躯干、头和另一只手臂当前的位置。提供正运动学、IK、头部朝向（look-at）、RRTConnect 与直线（screw）规划、路径碰撞检查。规划世界默认只有机器人本身（自碰撞），任务按需加入物体。
-- **控制**（`RobotController`）：25 Hz 一个动作，每个动作覆盖 10 个 4 ms 物理步。位置目标在物理步间线性插值，并给出对应速度作前馈。
+- **控制**（`table_1000/sim/isaaclab/actions.py`，Isaac Lab 的动作项）：25 Hz 一个动作，每个动作覆盖 10 个 4 ms 物理步。位置目标在物理步间线性插值，并给出对应速度作前馈；`ee_delta` 直接用 Isaac Lab 的差分 IK。
 
 | 动作组 | 内容 | 模式 |
 | --- | --- | --- |
 | `base` | 前进速度、偏航角速度 | 速度（限速、限加速度、防积分饱和） |
 | `lift`、`head` | 关节位置 | 绝对或增量 |
-| `<arm>` | 6 个关节位置，或 TCP 位姿增量（安装连杆坐标系，内部 IK） | `pos`、`delta`、`ee_delta` |
+| `<arm>` | 6 个关节位置，或 TCP 位姿增量（机器人根坐标系，有移动底盘时即世界系；Isaac Lab 差分 IK） | `pos`、`delta`、`ee_delta` |
 | `<arm>_gripper` | 两指间距 | 绝对 |
 
-**环境**（`table_1000/sim/env.py` 的 `Env`）把控制器接到仿真后端：`reset(layout)` 写入物体摆放与机器人关节（不重建舞台），`step(action)` 执行一个控制周期，返回全部关节位置与速度、底盘位姿、各手臂 TCP 位姿和时间。仿真器相关的调用只在后端里，所有数组带环境维 N。目前只有 Isaac Sim CPU 后端（`table_1000/sim/isaac/backend.py`，N = 1）。`table_1000/sim/isaac/` 也放 Isaac 的公共工具：启动（Kit 设置只在本次运行生效）、物理世界、舞台写入、相机与渲染设置，物体资产的物理测试同样使用它们；以后增加的后端并列放在 `table_1000/sim/<后端>/`。GPU 并行后端（Isaac Lab）待实现，多环境下的批量行为尚未验证。
+**环境**（`table_1000/sim/isaaclab/`）：由场景源码和 `SPEC` 生成 Isaac Lab 配置——场景（地面、灯光、桌子、机器人、简单形状、相机）、动作项、观测与复位事件，`RobotEnv` 包装成字典动作与 NumPy 观测，所有数组带环境维 N。`reset(layout)` 通过复位事件写入物体摆放与机器人关节，`step(action)` 执行一个控制周期。观测按 ManiSkill 的结构，只含真机能测到的量：`agent`（关节位置与速度、底盘位姿、各手臂 TCP 位姿）、`sensor_param`（相机内参与光学坐标系位姿）；图像按需渲染（`images`）；物体位姿、接触等特权信息另由 `privileged()` 等方法提供。全部实体在仿真开始前声明，运行中只通过 Isaac Lab 的状态与目标写入改变它们（验收用的标记球和隐藏机器人只改显示，不涉及物理），所以同一配置可在 CPU 与 GPU PhysX 上运行（`device`）；目前只验收了 CPU（N = 1），GPU 与多环境见 [issue #11](https://github.com/xucj98/table-1000/issues/11)。接触穿透深度由 PhysX 接触报告统计（Isaac Lab 的接触传感器只给力）。
 
 ## 验收
 

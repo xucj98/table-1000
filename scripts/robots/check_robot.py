@@ -36,26 +36,23 @@ def main(argv=None):
     args = parser.parse_args(argv)
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    from table_1000.sim.isaac.app import start_app
-    from table_1000.sim.isaac.render import RT2_ARGS
+    from table_1000.sim.isaaclab.app import start_app
+    from table_1000.sim.isaaclab.render import RT2_ARGS
     started = time.perf_counter()
     # Robot camera images (the sensors case) and videos render with RTX Real-Time 2.0.
-    app = start_app(gpu=args.gpu, workers=4, renderer='RaytracedLighting', disable_viewport_updates=True,
-                    extra_args=RT2_ARGS)
+    app = start_app(gpu=args.gpu, workers=4, extra_args=RT2_ARGS)
     report = {'robot': args.robot, 'startup_s': time.perf_counter() - started, 'cases': {}}
     checker = None
     try:
         from table_1000.robots import load_robot_test, load_spec
         from table_1000.robots.checks import Checker
-        from table_1000.robots.controllers import CONTROL_HZ
-        from table_1000.sim.isaac.cameras import Cameras, robot_view
-        from table_1000.sim.isaac.stage import ROBOT_PATH
+        from table_1000.sim.isaaclab import render
+        render.configure()
         root = args.root.resolve()
         spec = load_spec(args.robot, root)
         # The outside view and every robot camera, one video each.
-        views = {**VIEW, **{name: robot_view(root / spec.urdf, camera, ROBOT_PATH) for name, camera in spec.cameras.items()}}
-        cameras = (lambda stage: Cameras(stage, views, output / 'frames', fps=CONTROL_HZ)) if args.video else None
-        checker = Checker(spec, load_robot_test(args.robot, root), output, args.assets.resolve(), root, cameras)
+        checker = Checker(spec, load_robot_test(args.robot, root), output, args.assets.resolve(), root,
+                          views=VIEW if args.video else None, video=args.video)
         report['load_s'] = checker.load_s
         if args.benchmark:
             from table_1000.robots.checks import benchmark
@@ -73,15 +70,15 @@ def main(argv=None):
             (output / 'report.json').write_text(json.dumps(report, indent=1, default=float))
         if not args.no_metrics:
             report['metrics'] = checker.run('metrics')
-        if checker.backend.cameras:
-            report['video'] = checker.backend.cameras.encode(output)
+        if checker.video:
+            report['video'] = checker.video.encode(output)
     except Exception:
         report['error'] = traceback.format_exc()
     report['passed'] = sum(c.get('status') == 'PASS' for c in report['cases'].values())
     report['total_s'] = time.perf_counter() - started
     (output / 'report.json').write_text(json.dumps(report, indent=1, default=float))
     if checker is not None:
-        checker.backend.close()
+        checker.env.close()
     app.close()
 
 

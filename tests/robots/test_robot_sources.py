@@ -36,7 +36,8 @@ def test_description_and_settings(name):
     links = {link.get('name') for link in ET.parse(ROOT / spec.urdf).getroot().findall('link')}
     assert set(getattr(settings, 'DROP_LINKS', {}).values()) <= links
     for camera in spec.cameras.values():
-        assert camera.frame in links and camera.kind in ('rgb', 'depth') and camera.model in ('pinhole', 'fisheye')
+        mount = camera.mount if isinstance(camera.mount, str) else camera.mount[0]
+        assert mount in links and camera.sensor.kind in ('rgb', 'depth') and camera.sensor.model in ('pinhole', 'fisheye')
 
 
 def test_keyframes_free_of_self_collision(robot):
@@ -70,7 +71,7 @@ def test_cameras_and_look_at(robot):
     spec, model = robot
     if not (spec.head and spec.cameras):
         pytest.skip('no head camera')
-    camera = next(iter(spec.cameras.values())).frame
+    camera = next(camera.mount for camera in spec.cameras.values() if isinstance(camera.mount, str))
     model.set_state(spec.keyframe(spec.keyframe_names[-1]))
     point = model.tcp(spec.primary_arm, world=True)[:3, 3] - [0., 0., .4]
     frame = model.fk(camera, model.vector(model.look_at(point, camera)), world=True)

@@ -1,9 +1,10 @@
-"""Render settings shared by the asset physics tests and the task videos.
+"""Render settings of the robot environment's cameras (the asset physics tests keep their own).
 
 RTX Real-Time 2.0 (``RealTimePathTracing``) renders the assets' transmissive
 plastics; closed translucent walls need up to 12 transmission bounces. Its
 ray-tracing pipelines are built at startup, so RT2 is requested on the command
-line (``RT2_ARGS``) only by runs that record video. Lights are a dome plus a sun.
+line (``RT2_ARGS``) only by runs that render cameras. Lights are a dome plus a sun
+(:func:`light_cfgs`).
 
 RT2 denoises over time. With one render per captured frame, an object that
 moves quickly (a released pen) leaves a trail of its earlier position; rendering
@@ -33,9 +34,12 @@ def configure():
         settings.set(setting, False)
 
 
-def add_lights(stage):
-    from pxr import Gf, UsdGeom, UsdLux
-    UsdLux.DomeLight.Define(stage, '/World/Light').CreateIntensityAttr(DOME_INTENSITY)
-    sun = UsdLux.DistantLight.Define(stage, '/World/Sun')
-    sun.CreateIntensityAttr(SUN_INTENSITY)
-    UsdGeom.Xformable(sun).AddRotateXYZOp().Set(Gf.Vec3f(*SUN_ROTATE_XYZ))
+def light_cfgs():
+    """``{name: AssetBaseCfg}`` of the dome and the sun, for a scene configuration."""
+    import isaaclab.sim as sim_utils
+    from isaaclab.assets import AssetBaseCfg
+    from scipy.spatial.transform import Rotation
+    w = Rotation.from_euler('xyz', SUN_ROTATE_XYZ, degrees=True).as_quat()[[3, 0, 1, 2]]
+    return {'dome_light': AssetBaseCfg(prim_path='/World/Light', spawn=sim_utils.DomeLightCfg(intensity=DOME_INTENSITY)),
+            'sun': AssetBaseCfg(prim_path='/World/Sun', spawn=sim_utils.DistantLightCfg(intensity=SUN_INTENSITY),
+                                init_state=AssetBaseCfg.InitialStateCfg(rot=tuple(w)))}
