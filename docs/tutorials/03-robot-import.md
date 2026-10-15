@@ -15,13 +15,14 @@
 | **使用机器人**：场景、任务和其他资产的开发者 | 仓库中的 `asset_sources/robots/x1pro/` 与 `table_1000/`；不需要原始包，也不需要数据集权限 | 构建（第 4 节），之后按需运行验收与遥控（第 6 节） |
 | **开发机器人**：修改转换选择、重新生成网格、更新厂商数据 | 另需厂商原始包（Hugging Face 私有数据集） | 第 1–6 节全部 |
 
-使用机器人需要第二章的 Isaac Sim 5.1.0 环境（`ISAAC_PYTHON`、`OMNI_KIT_ACCEPT_EULA`），另需运动学与规划依赖。以下是已验证的版本，统一锁定的环境说明另行提供：
+使用机器人需要项目环境的 `sim` 与 `robots` 依赖组（版本见 [README](../../README.md#开发环境) 与 `uv.lock`），以及第二章的 `ISAAC_PYTHON`、`OMNI_KIT_ACCEPT_EULA`：
 
 ```bash
-uv pip install --python "$ISAAC_PYTHON" mplib==0.2.1 toppra==0.6.10 trimesh==4.5.1 rtree==1.3.0
+uv sync --locked --extra sim --extra robots
+export ISAAC_PYTHON=$PWD/.venv/bin/python
 ```
 
-MPlib 0.2.1 自带 Pinocchio（`pin` 2.7.0）；同一环境中 numpy 为 1.26.0，scipy 为 1.15.3。之后只需三条命令：
+之后只需三条命令：
 
 ```bash
 "$ISAAC_PYTHON" scripts/robots/build_robot.py x1pro --gpu 0
@@ -33,10 +34,10 @@ MPlib 0.2.1 自带 Pinocchio（`pin` 2.7.0）；同一环境中 numpy 为 1.26.0
 
 ## 1. 准备环境与原始包（开发机器人）
 
-在使用机器人的环境（见上一节）之外，开发机器人还需要 open3d 0.20.0、coacd 1.0.11、huggingface_hub 0.36.2，缩略图需要 Blender：
+开发机器人另需 `dev` 依赖组（open3d、coacd、huggingface_hub），缩略图需要 Blender：
 
 ```bash
-uv pip install --python "$ISAAC_PYTHON" open3d==0.20.0 coacd==1.0.11 huggingface_hub==0.36.2
+uv sync --locked --all-extras
 ```
 
 厂商原始包不进 Git，存档在 Hugging Face 私有数据集中，数据集名、固定版本和路径记录在仓库根目录的 [assets.lock.json](../../assets.lock.json)。首次使用先登录有访问权限的账号，再把原始包下载到 `assets/`：
