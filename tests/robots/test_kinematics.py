@@ -79,3 +79,22 @@ def test_screw_is_straight(arm_model):
 def test_look_at_needs_a_head(arm_model):
     with pytest.raises(Exception):
         arm_model.look_at(np.zeros(3), 'link6')
+
+
+def test_check_path_catches_a_collision_between_waypoints(arm_model):
+    """Two collision-free waypoints whose straight joint path sweeps the hand through an obstacle."""
+    from table_1000.planning.world import PlanningScene, box_object
+    middle = arm_model.vector(arm_model.spec.keyframe('ready'))
+    joint = arm_model.arm_indices('arm')[0]
+    start, end = middle.copy(), middle.copy()
+    start[joint], end[joint] = -1., 1.
+    scene = PlanningScene(arm_model.planners['arm'])
+    scene.add(*box_object('obstacle', (.025, .025, .025), arm_model.fk('link6', middle)))
+    try:
+        indices = arm_model.arm_indices('arm')
+        assert arm_model.check_path('arm', [start[indices]])[1] == []
+        assert arm_model.check_path('arm', [end[indices]])[1] == []
+        checks, pairs = arm_model.check_path('arm', [start[indices], end[indices]])
+        assert checks > 2 and any('obstacle' in pair for pair in pairs)
+    finally:
+        scene.clear()

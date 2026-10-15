@@ -2,8 +2,8 @@
 
 A robot's ``asset_sources/robots/<name>/robot.py`` fills a :class:`RobotSpec`:
 its arms (joints, TCP, two-finger gripper), and optionally a torso lift, a
-head and a mobile base, plus named keyframes and cameras. Kinematics, planning
-and controllers are built from the spec, so they work the same for every
+head and a mobile base, plus named keyframes and cameras. Kinematics, planning,
+controllers and camera images are built from the spec, so they work the same for every
 simulator backend and every such robot: a fixed single arm (a Franka on a
 stand) as well as a mobile dual-arm robot. Legged robots are not covered.
 
@@ -68,6 +68,32 @@ class BaseSpec:
 
 
 @dataclass(frozen=True)
+class CameraSpec:
+    """One image stream of a camera fixed to a robot body, as the real camera reports it.
+
+    ``frame`` is the stream's optical frame in the URDF (OpenCV convention: +Z
+    forward, +X right and +Y down in the image). ``intrinsics`` are
+    ``(fx, fy, cx, cy)`` in pixels for ``resolution`` ``(width, height)``.
+    ``model`` is OpenCV's ``'pinhole'`` (``distortion`` k1, k2, p1, p2[, k3]) or
+    ``'fisheye'`` (k1 to k4); :func:`table_1000.robots.cameras.project` maps
+    points to pixels with it. ``kind`` is ``'rgb'`` (uint8 images) or ``'depth'``
+    (metres along +Z, 0 where nothing is hit). The simulator renders the stream
+    with the same lens model, clipping closer than ``near`` (the camera's own
+    window). ``self_view`` bounds the share of pixels showing the robot itself
+    in the acceptance poses.
+    """
+    frame: str
+    resolution: tuple
+    intrinsics: tuple
+    model: str = 'pinhole'
+    distortion: tuple = ()
+    kind: str = 'rgb'
+    fps: float = 30.
+    near: float = .01
+    self_view: float = .1
+
+
+@dataclass(frozen=True)
 class RobotSpec:
     name: str
     urdf: str                      # robot source URDF, relative to the repository root
@@ -76,7 +102,7 @@ class RobotSpec:
     lift: tuple = ()               # prismatic torso joints
     head: tuple = ()               # head joints (yaw, pitch)
     keyframes: dict = field(default_factory=dict)   # name -> {joint: value}; 'zero' is implied
-    cameras: dict = field(default_factory=dict)     # name -> optical frame fixed to a robot body
+    cameras: dict = field(default_factory=dict)     # name -> CameraSpec
     # Body pairs whose collision hulls overlap at every configuration; never checked.
     seated: tuple = ()
     # Links whose planning hulls are not grown (they touch objects on purpose).

@@ -166,7 +166,8 @@ class Server:
 
 
 def run(env, layout, output, port, views, render_every=5):
-    """Teleoperate ``env`` until interrupted; renders every ``render_every`` control steps."""
+    """Teleoperate ``env`` until interrupted. Every ``render_every`` control steps the
+    page gets ``views``: the backend's video views, then robot cameras."""
     from table_1000.robots.controllers import CONTROL_HZ
     dt = 1 / CONTROL_HZ
     keys = Keys()
@@ -208,7 +209,9 @@ def run(env, layout, output, port, views, render_every=5):
                              *(1e3 * costs[k] / max(step, 1) for k in ('physics', 'render', 'total')))
                          + (f'  IK FAILED: {", ".join(failed)}' if failed else ''))
         if step % render_every == 0:
-            server.publish(env.backend.capture(save=False))
+            images = env.backend.capture(save=False)
+            images.update({name: image[0] for name, image in env.images(views[len(images):])['images'].items()})
+            server.publish(images)
         costs['physics'] = env.backend.timings['step_s'] - before['step_s']
         costs['render'] = env.backend.timings['render_s'] - before['render_s']
         costs['total'] += time.perf_counter() - started

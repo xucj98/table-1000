@@ -15,7 +15,13 @@
 | **使用机器人**：场景、任务和其他资产的开发者 | 仓库中的 `asset_sources/robots/x1pro/` 与 `table_1000/`；不需要原始包，也不需要数据集权限 | 构建（第 4 节），之后按需运行验收与遥控（第 6 节） |
 | **开发机器人**：修改转换选择、重新生成网格、更新厂商数据 | 另需厂商原始包（Hugging Face 私有数据集） | 第 1–6 节全部 |
 
-使用机器人只需三条命令（环境同第二章）：
+使用机器人需要第二章的 Isaac Sim 5.1.0 环境（`ISAAC_PYTHON`、`OMNI_KIT_ACCEPT_EULA`），另需运动学与规划依赖。以下是已验证的版本，统一锁定的环境说明另行提供：
+
+```bash
+uv pip install --python "$ISAAC_PYTHON" mplib==0.2.1 toppra==0.6.10 trimesh==4.5.1 rtree==1.3.0
+```
+
+MPlib 0.2.1 自带 Pinocchio（`pin` 2.7.0）；同一环境中 numpy 为 1.26.0，scipy 为 1.15.3。之后只需三条命令：
 
 ```bash
 "$ISAAC_PYTHON" scripts/robots/build_robot.py x1pro --gpu 0
@@ -27,7 +33,11 @@
 
 ## 1. 准备环境与原始包（开发机器人）
 
-环境同第二章（`ISAAC_PYTHON`、`OMNI_KIT_ACCEPT_EULA`）。该 Python 环境另需 trimesh、open3d、coacd、huggingface_hub，缩略图需要 Blender。
+在使用机器人的环境（见上一节）之外，开发机器人还需要 open3d 0.20.0、coacd 1.0.11、huggingface_hub 0.36.2，缩略图需要 Blender：
+
+```bash
+uv pip install --python "$ISAAC_PYTHON" open3d==0.20.0 coacd==1.0.11 huggingface_hub==0.36.2
+```
 
 厂商原始包不进 Git，存档在 Hugging Face 私有数据集中，数据集名、固定版本和路径记录在仓库根目录的 [assets.lock.json](../../assets.lock.json)。首次使用先登录有访问权限的账号，再把原始包下载到 `assets/`：
 
@@ -96,11 +106,21 @@
 
 ## 5. 机器人描述与控制接口
 
-机器人目录中的 [robot.py](../../asset_sources/robots/x1pro/robot.py) 的 `SPEC` 写这台机器人的关节分组：两只手臂（关节、TCP、手指、安装连杆；第一只右臂为主手臂）、升降、头部（偏航、俯仰）、差速底盘（轮距、轮半径、速度、加速度、推力上限）、关键姿态与头部相机。零位（全部关节为 0，真机最常用的起始姿态）总是关键姿态，另有 `ready`（躯干升起、两臂举在胸前）。升降、头部、底盘都是可选的：固定底座的单臂（如 Franka）只写手臂，机器人放在场景给定的位姿上。其余都是通用代码，结构参照 ManiSkill3：
+机器人目录中的 [robot.py](../../asset_sources/robots/x1pro/robot.py) 的 `SPEC` 写这台机器人的关节分组：两只手臂（关节、TCP、手指、安装连杆；第一只右臂为主手臂）、升降、头部（偏航、俯仰）、差速底盘（轮距、轮半径、速度、加速度、推力上限）、关键姿态与相机。零位（全部关节为 0，真机最常用的起始姿态）总是关键姿态，另有 `ready`（躯干升起、两臂举在胸前）。升降、头部、底盘都是可选的：固定底座的单臂（如 Franka）只写手臂，机器人放在场景给定的位姿上。其余都是通用代码，结构参照 ManiSkill3：
 
 - [kinematics.py](../../table_1000/robots/kinematics.py) 的 `RobotModel`：一个 MPlib 模型包含全部身体关节，每只手臂一个规划器。提供正运动学、IK、头部 look-at、RRTConnect 与直线规划，只做自碰撞检查。
 - [controllers.py](../../table_1000/robots/controllers.py)：25 Hz 一个动作，每个动作覆盖 10 个物理步。动作组有底盘速度、升降与头部位置、手臂关节位置或 TCP 增量、夹爪间距，见[机器人规范](../designs/asset-pipeline/robots.md#机器人层运动学规划与控制)。
 - [table_1000/sim/env.py](../../table_1000/sim/env.py) 的 `Env.reset(layout)` / `Env.step(action)` 把控制器接到仿真后端，类似 gym 环境；检查、遥控和后续章节的专家脚本都通过它运行。Isaac 的调用都在后端 [table_1000/sim/isaac/backend.py](../../table_1000/sim/isaac/backend.py) 里，数组带环境维 N。目前只有 CPU 后端（N = 1），GPU 并行后端（Isaac Lab）待实现。
+
+**感知接口**：`SPEC.cameras` 按真机相机报告的参数描述每一路图像（`CameraSpec`）：光学坐标系（URDF 中的 frame，OpenCV 约定 +Z 向前、+Y 向下）、分辨率、内参 `(fx, fy, cx, cy)`、OpenCV 镜头模型（`pinhole` 带径向和切向畸变，或 `fisheye`）、图像类型（`rgb` 或以米为单位的 `depth`）和帧率。名字与 robot-bridge 中 X1Pro 的视角一致：
+
+| 名字 | 坐标系 | 图像 | 参数来源 |
+| --- | --- | --- | --- |
+| `face_view` | `camera_head_front_color_optical_frame` | RGB 1280×720，针孔加畸变 | 头部相机（Orbbec DaBai DCW2）出厂标定，2026-10-10 读取 |
+| `face_depth` | `camera_head_front_depth_optical_frame` | 深度 640×400，针孔无畸变，15 FPS | 同上；与 RGB 相距 12 mm |
+| `left_wrist_view`、`right_wrist_view` | `<side>_arm_gripper_camera_color_frame` | RGB 640×480，鱼眼 | 分辨率为真机值；标定未知，暂用水平视场约 130° 的理想等距鱼眼代替，拿到 `camera_info` 后替换 |
+
+仿真用同一镜头模型渲染（RTX 的 OpenCV 针孔与鱼眼镜头），所以 `table_1000.robots.cameras.project` 按 `CameraSpec` 投影的像素就是仿真图像中的位置。`Env.images(names)` 在当前状态渲染这些相机，返回图像（RGB 为 uint8，深度为 float32 米，无返回处为 0）和光学坐标系的世界位姿（按实测关节由运动学算出，和真机的 TF 一样）；图像只在调用时渲染，控制步不渲染。
 
 ## 6. 验收
 
@@ -118,11 +138,12 @@
 | `prepare.json` | 最大误差 0.91 mm，22 个刚体 | 每个网格误差不超过 1 mm，刚体数与 README 一致 |
 | 缩略图 | 见本章开头 | 外观无破面、塌陷；碰撞覆盖完整，刚体划分合理 |
 
-**物理常识用例**：[check_robot.py](../../scripts/robots/check_robot.py) 在检查场景（机器人前方一张桌子，几个盒、球、圆柱）里依次运行下列用例。用例本身是通用的（[checks.py](../../table_1000/robots/checks.py)），这台机器人的设置写在 [robot_test.py](../../asset_sources/robots/x1pro/robot_test.py)：桌子、机器人摆放与起始姿态、桌面上主手臂前方的工作点（各用例的目标位姿相对它给出）、物体下落的目标连杆和要运行的用例，与物体资产各自的 `physics_test.py` 同理。需要升降或移动底盘的用例只用于有这些部件的机器人。每个用例从 `reset` 开始，结果写入 `report.json`，`--video` 时把全部用例录成一个视频。用例与判据见[机器人规范](../designs/asset-pipeline/robots.md#验收)。本例 10 个用例全部通过：
+**物理常识用例**：[check_robot.py](../../scripts/robots/check_robot.py) 在检查场景（机器人前方一张桌子，几个盒、球、圆柱）里依次运行下列用例。用例本身是通用的（[checks.py](../../table_1000/robots/checks.py)），这台机器人的设置写在 [robot_test.py](../../asset_sources/robots/x1pro/robot_test.py)：桌子、机器人摆放与起始姿态、桌面上主手臂前方的工作点（各用例的目标位姿相对它给出）、物体下落的目标连杆和要运行的用例，与物体资产各自的 `physics_test.py` 同理。需要升降或移动底盘的用例只用于有这些部件的机器人。每个用例从 `reset` 开始，结果写入 `report.json`，`--video` 时把全部用例录成一个视频。用例与判据见[机器人规范](../designs/asset-pipeline/robots.md#验收)。本例 11 个用例全部通过：
 
 | 用例 | 结果 | 要点 |
 | --- | --- | --- |
 | 关键姿态 | PASS | 零位与 `ready`：规划模型无碰撞对；仿真静置 1 s 无机器人内部接触，关节漂移 0 |
+| 传感器 | PASS | 四路图像在 `ready` 和头臂各转 0.2 rad 后：标记物中心与镜头模型预测相差最多 0.7 px（头部）、0.05 px（腕部）；深度误差最多 0.8 mm；画面中机器人自身占 0%（头部）、约 9%（腕部，夹爪） |
 | 手臂撞固定块 | PASS | 被挡住，最大穿透 0.1 mm，去趋势抖动 0.8 mrad；撤块后到达目标 |
 | 手臂推自由物 | PASS | 方块和圆柱被推开，仍在桌上，最大穿透 0.2 mm |
 | 物体落到机身上 | PASS | 停在底盘、头上的方块离外观表面 2.9 mm 和 0.2 mm；砸到躯干和头部时的冲击穿透 3.0–4.7 mm，在 10 mm 以内 |
@@ -142,13 +163,13 @@
 | 指标 | 本例 |
 | --- | --- |
 | 模型与仿真 TCP 一致性（30 个随机姿态） | 位置差 < 0.001 mm，角度差 < 2 µrad |
-| IK（100 个随机可达位姿/臂） | 成功率 100%，中位耗时约 0.05 s，精度 < 0.01 mm |
-| 自碰撞规划（20 组随机起止/臂） | 成功率 95%；耗时中位 6.5 s（右）、5.2 s（左），95 分位 11.2 s、14.1 s |
+| IK（100 个随机可达位姿/臂） | 成功率 99–100%，中位耗时约 0.05 s，精度 < 0.01 mm |
+| 自碰撞规划（20 组随机起止/臂） | 成功率 95–100%；耗时中位 6.5 s（右）、5.2–6.0 s（左），95 分位 10–19 s |
 | 关节轨迹跟踪 | 最大误差 0.5 mrad |
 | 底盘 | 0.4 m/s 指令实测 0.400 m/s；原地转向平移漂移可忽略；停车误差 < 0.01 mm |
-| 每物理步耗时 | 静止 2.6 ms，手臂运动 4.8 ms（检查场景） |
+| 每物理步耗时 | 静止 2.6–2.7 ms，手臂运动 4.8–5.0 ms（检查场景） |
 
-随机起止的规划耗时偏长。[碰撞方案研究](https://github.com/xucj98/table-1000/blob/7660d8c0c0763cee752152c25ddbbc255aef495a/docs/research/robot-collision.md)（ref `refs/research/robot-collision`，只含源码）比较了凸块块数、顶点上限和盒子与圆柱几种碰撞：碰撞形状几乎不影响仿真耗时；规划的大头是自碰撞检查，耗时取决于要检查的连杆对数而不是形状，提速应减少检查的对数。用例和指标一次约 12 分钟（含录像）。
+随机起止的规划耗时偏长。[碰撞方案研究](https://github.com/xucj98/table-1000/blob/7660d8c0c0763cee752152c25ddbbc255aef495a/docs/research/robot-collision.md)（ref `refs/research/robot-collision`，只含源码）比较了凸块块数、顶点上限和盒子与圆柱几种碰撞：碰撞形状几乎不影响仿真耗时；规划的大头是自碰撞检查，耗时取决于要检查的连杆对数而不是形状，提速应减少检查的对数。IK 和规划的指标在两次运行间有随机波动，表中为范围。用例和指标一次约 12 分钟（含录像）。
 
 **遥控**：在浏览器中用键盘操作，供人工验收和测试：
 
@@ -156,7 +177,7 @@
 "$ISAAC_PYTHON" scripts/robots/teleop.py x1pro --output outputs/robots/x1pro-teleop --gpu 0 --port 8765
 ```
 
-打开 `http://<服务器>:8765/`（或 `ssh -L 8765:localhost:8765 <服务器>` 后打开本机地址），点击页面后操作：W/S 前进后退，A/D 转向，R/F 升降，方向键转头，Tab 切换手臂，I/K、J/L、U/O 沿基座坐标系移动 TCP，Z/X、C/V、B/N 转动 TCP，空格开合夹爪，Backspace 复位，按住 Shift 加速。状态行显示 TCP、底盘位姿、IK 失败和实时倍率；会话动作写入 `actions.jsonl`，可用 `teleop.replay` 回放。服务器无界面运行，画面由渲染决定速度：两路 640×360 每 5 个控制周期一帧，在繁忙的 GPU 上约 0.3 倍实时。
+打开 `http://<服务器>:8765/`（或 `ssh -L 8765:localhost:8765 <服务器>` 后打开本机地址），页面显示外部视角和机器人自己的 RGB 相机（头部、两个腕部），点击页面后操作：W/S 前进后退，A/D 转向，R/F 升降，方向键转头，Tab 切换手臂，I/K、J/L、U/O 沿基座坐标系移动 TCP，Z/X、C/V、B/N 转动 TCP，空格开合夹爪，Backspace 复位，按住 Shift 加速。状态行显示 TCP、底盘位姿、IK 失败和实时倍率；会话动作写入 `actions.jsonl`，可用 `teleop.replay` 回放。服务器无界面运行，画面每 `--render-every` 个控制周期（默认 5）渲染一次，不保存图片，渲染决定运行速度。
 
 不通过时：外观或碰撞问题改 `prepare.py` 的选择（或转换工具）后重新生成；驱动、过滤、材料或夹爪问题改 `physics.py` 后重新构建。碰撞或物理参数变化后，依赖它的场景任务要重新批量验收。
 

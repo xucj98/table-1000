@@ -5,10 +5,11 @@ scene (a table in front of the robot and a few primitive shapes, see
 :func:`check_scene`) through:
 
 - **cases** with pass/fail criteria, each starting from a reset (:attr:`Checker.LIBRARY`):
-  ``keyframes``, ``arm_hits_block``, ``arm_pushes_objects``, ``drop_on_robot``,
-  ``lift_into_shelf``, ``self_collision``, ``grasp_and_shake``,
-  ``base_into_wall``, ``drive_holding``, ``joint_limits``. Cases needing a part
-  the robot lacks (a lift, a mobile base) do not apply to it;
+  ``keyframes``, ``sensors``, ``arm_hits_block``, ``arm_pushes_objects``,
+  ``drop_on_robot``, ``lift_into_shelf``, ``self_collision``,
+  ``grasp_and_shake``, ``base_into_wall``, ``drive_holding``, ``joint_limits``.
+  Cases needing a part the robot lacks (cameras, a lift, a mobile base) do not
+  apply to it;
 - **metrics** recorded for comparison only: model/simulator consistency, IK,
   self-collision planning, joint tracking, base tracking and step cost.
 
@@ -20,8 +21,8 @@ arm is the first arm of the robot description.
 
 Common criteria of every case: robot contacts penetrate at most
 ``PENETRATION_LIMIT``; no robot joint moves faster than its URDF velocity
-limit (with ``SPEED_MARGIN``) and no object faster than ``OBJECT_SPEED_LIMIT``
-(nothing is flung); blocked joints settle (``JITTER_LIMIT``). Unused
+limit (with ``SPEED_MARGIN``) and no object moves horizontally faster than
+``OBJECT_SPEED_LIMIT`` (nothing is flung; falling is not counted); blocked joints settle (``JITTER_LIMIT``). Unused
 primitives are parked off to the side.
 """
 
@@ -33,6 +34,7 @@ import xml.etree.ElementTree as ET
 import numpy as np
 from scipy.spatial.transform import Rotation
 
+from table_1000.robots.cameras import direction, project
 from table_1000.robots.controllers import CONTROL_HZ
 from table_1000.scenes import primitive_surface
 
@@ -43,10 +45,19 @@ IMPACT_PENETRATION_LIMIT = .01
 # Joint speed / URDF velocity limit. A finger knocked by an obstacle is back-driven
 # a little past its limit; flung bodies go far beyond.
 SPEED_MARGIN = 1.5
-OBJECT_SPEED_LIMIT = 2.      # m/s
+OBJECT_SPEED_LIMIT = 2.      # m/s, horizontal
 JITTER_LIMIT = 1e-3          # rad or m, oscillation std of a blocked joint over 0.5 s
 HOLD_DRIFT_LIMIT = .005      # m, held object relative to the TCP
 KEYFRAME_DRIFT_LIMIT = .01   # rad, joint drift while holding a keyframe
+# Robot cameras: markers in front of each camera, placed by its spec and the
+# measured joints, must show up where the lens model projects them.
+MARKER_DISTANCE = .4         # m, at most, and closer than 60 % of what is behind
+MARKER_PIXELS = 8            # marker radius in the image
+MARKER_GRID = (.2, .5, .8)   # image fractions of the 3 x 3 marker directions
+MARKERS_PLACED = 5           # of the 9; the rest are blocked by the robot itself
+PIXEL_LIMIT = 2.             # px, marker centre (rgb)
+DEPTH_LIMIT = .003           # m, marker surface along the optical axis (depth)
+CONTRAST_LIMIT = 5.          # grey-level standard deviation of a usable image
 DT = 1 / CONTROL_HZ
 
 # Primitives; a missing mass makes the shape kinematic (it stays where it is put).
@@ -82,10 +93,38 @@ def parked(index):
     return translation(-3., -2. + .6 * index, resting_height(spec))
 
 
-LIBRARY = ('keyframes', 'arm_hits_block', 'arm_pushes_objects', 'drop_on_robot', 'lift_into_shelf',
+LIBRARY = ('keyframes', 'sensors', 'arm_hits_block', 'arm_pushes_objects', 'drop_on_robot', 'lift_into_shelf',
            'self_collision', 'grasp_and_shake', 'base_into_wall', 'drive_holding', 'joint_limits')
 # Parts a case needs; it does not apply to a robot without them.
-NEEDS = {'lift_into_shelf': 'lift', 'base_into_wall': 'base', 'drive_holding': 'base'}
+NEEDS = {'sensors': 'cameras', 'lift_into_shelf': 'lift', 'base_into_wall': 'base', 'drive_holding': 'base'}
+
+
+def save_marked(path, outputs, pixels):
+    """The rgb image (else the depth image, white near, up to 2 m) with a cross at each pixel."""
+    from PIL import Image, ImageDraw
+    if 'rgb' in outputs:
+        image = Image.fromarray(outputs['rgb'][0])
+    else:
+        depth = outputs['depth'][0]
+        image = Image.fromarray(np.where(depth > 0, 255 - np.clip(depth / 2., 0, 1) * 200, 0).astype(np.uint8)).convert('RGB')
+    draw = ImageDraw.Draw(image)
+    for x, y in pixels:
+        draw.line((x - 12, y, x + 12, y), fill=(0, 255, 255))
+        draw.line((x, y - 12, x, y + 12), fill=(0, 255, 255))
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    image.save(path, quality=90)
+
+
+def marker_errors(seen, plain, expected):
+    """Pixel distance from each ``expected`` marker centre to the centroid of the nearest
+    region that came closer from depth image ``plain`` to ``seen``."""
+    from scipy import ndimage
+    closer = (seen > 0) & ((plain == 0) | (seen < plain - 1e-4))
+    labels, count = ndimage.label(closer)
+    if not count:
+        return [float('inf')] * len(expected)
+    centres = np.array(ndimage.center_of_mass(closer, labels, range(1, count + 1)))[:, ::-1] + .5
+    return [float(np.linalg.norm(centres - pixel, axis=1).min()) for pixel in expected]
 
 
 def select_cases(spec, settings):
@@ -174,6 +213,7 @@ class Checker:
         self.scene = check_scene(spec, settings)
         started = time.perf_counter()
         self.backend = IsaacBackend(self.scene, self.scene.placement(), assets, spec=spec, cameras=cameras,
+                                    sensors=tuple(spec.cameras), ground_truth=True,
                                     contact_objects=tuple(PRIMITIVES), contact_watch=('robot', *PRIMITIVES))
         self.model = RobotModel(spec, self.output / 'planning')
         self.env = Env(self.scene, self.backend, spec, [self.model])
@@ -185,15 +225,28 @@ class Checker:
                   for joint in joints if joint.find('limit') is not None}
         self.child_link = {joint.get('name'): joint.find('child').get('link') for joint in joints}
         self.speed_limits = np.array([limits[j] for j in self.body_joints])
-        self.case = ''
+        self.case, self.past = '', []
+        self.trace = {'joint_speed': 0., 'joint': None, 'object_speed': 0.}
         self.env.caption = lambda env: f'{self.case}  t={env.time:5.2f}s'
 
     # -- driving ---------------------------------------------------------------
+    def run(self, case):
+        """Run ``case``. Its common checks cover every reset within it (a case
+        may run several sub-cases, one per object or pose)."""
+        self.case = case
+        self.trace = {'joint_speed': 0., 'joint': None, 'object_speed': 0.}
+        self.past = []
+        return getattr(self, case)()
+
     def reset(self, robot=None, **poses):
         q = self.env.initial_robot_q()
         q.update(robot or {})
-        self.trace = {'joint_speed': 0., 'joint': None, 'object_speed': 0.}
+        self.past += self.backend.contacts.intervals()
         return self.env.reset(self.scene.placement(**poses), q)
+
+    def intervals(self):
+        """Contact intervals of the case so far, over all its resets."""
+        return self.past + self.backend.contacts.intervals()
 
     def step(self, action=None, count=1):
         for _ in range(count):
@@ -203,8 +256,9 @@ class Checker:
                 self.trace['joint_speed'], self.trace['joint'] = float(ratio.max()), self.body_joints[int(ratio.argmax())]
             velocities = self.backend.body_velocities()
             if velocities:
+                # Horizontal: falling off the robot or the table is no fling.
                 self.trace['object_speed'] = max(self.trace['object_speed'], max(
-                    float(np.linalg.norm(v[0, :3])) for v in velocities.values()))
+                    float(np.linalg.norm(v[0, :2])) for v in velocities.values()))
         return obs
 
     def q(self, joints):
@@ -249,27 +303,28 @@ class Checker:
                             'creep': dict(zip(joints, map(float, rows[-1] - rows[0])))}
         return float(residual.std(axis=0).max())
 
-    def penetration(self, robot_only=True):
-        """Deepest contact of the case (robot pairs only by default)."""
+    def penetration(self, robot_only=True, sub_case=False):
+        """Deepest contact of the case, or of the current sub-case since the last
+        reset (robot pairs only by default)."""
         depth = 0.
-        for entry in self.backend.contacts.intervals():
+        for entry in self.backend.contacts.intervals() if sub_case else self.intervals():
             if not robot_only or any(side.startswith('robot') for side in entry['pair']):
                 depth = max(depth, entry['max_penetration_m'])
         return depth
 
-    def common(self, result):
+    def common(self, result, penetration_limit=PENETRATION_LIMIT):
         result['max_penetration_m'] = self.penetration()
         result.update(max_joint_speed_ratio=self.trace['joint_speed'], fastest_joint=self.trace['joint'],
                       max_object_speed=self.trace['object_speed'])
         checks = result.setdefault('checks', {})
-        checks['penetration'] = result['max_penetration_m'] <= PENETRATION_LIMIT
+        checks['penetration'] = result['max_penetration_m'] <= penetration_limit
         checks['joint_speed'] = result['max_joint_speed_ratio'] <= SPEED_MARGIN
         checks['object_speed'] = result['max_object_speed'] <= OBJECT_SPEED_LIMIT
         checks = {key: bool(value) for key, value in checks.items()}
         result['checks'] = checks
         result['status'] = 'PASS' if all(checks.values()) else 'FAIL'
         deepest = {}
-        for entry in self.backend.contacts.intervals():
+        for entry in self.intervals():
             pair = ' / '.join(entry['pair'])
             deepest[pair] = max(deepest.get(pair, 0.), entry['max_penetration_m'])
         result['contacts'] = dict(sorted(deepest.items(), key=lambda item: -item[1]))
@@ -352,14 +407,12 @@ class Checker:
                 resting_on_robot = pose[2, 3] > .1 and speed < .02
                 gap = self.visual.distance(primitive_surface(PRIMITIVES[body], pose)) if resting_on_robot else None
                 results[f'{name}/{body}'] = {'link': link, 'resting_on_robot': bool(resting_on_robot),
-                                             'gap_to_visual_m': gap, 'penetration_m': self.penetration()}
+                                             'gap_to_visual_m': gap, 'penetration_m': self.penetration(sub_case=True)}
         gaps = [r['gap_to_visual_m'] for r in results.values() if r['gap_to_visual_m'] is not None]
         result = {'drops': results, 'max_gap_m': max(gaps, default=0.)}
-        result['checks'] = {'no_deep_drop_penetration': all(r['penetration_m'] <= IMPACT_PENETRATION_LIMIT
-                                                            for r in results.values()),
-                            # Resting more than 15 mm above the visible surface: the collision shell is too fat.
-                            'rests_on_visible_surface': result['max_gap_m'] <= .015}
-        return self.common(result)
+        # Resting more than 15 mm above the visible surface: the collision shell is too fat.
+        result['checks'] = {'rests_on_visible_surface': result['max_gap_m'] <= .015}
+        return self.common(result, IMPACT_PENETRATION_LIMIT)
 
     def lift_into_shelf(self):
         """The torso rises into a fixed shelf above its top (the head, if any): it stops there, then lowers again."""
@@ -459,7 +512,7 @@ class Checker:
             self.step({self.gripper: [[.08]]}, count=round(1.5 / DT))
             final = self.backend.body_poses()[f'{body}:body'][0][2, 3]
             results[body] = {'finger_gap_m': gap, 'drift_m': drift, 'falls_when_released': bool(final < held_z - .04),
-                             'penetration_m': self.penetration(), 'joint6': joint6}
+                             'penetration_m': self.penetration(sub_case=True), 'joint6': joint6}
         result = {'objects': results}
         result['checks'] = {'held_without_slip': all(r['drift_m'] <= HOLD_DRIFT_LIMIT for r in results.values()),
                             'released': all(r['falls_when_released'] for r in results.values())}
@@ -546,6 +599,90 @@ class Checker:
             result[name] = {'planning_pairs': pairs, 'robot_contacts': contacts, 'drift_rad': drift}
             checks[f'{name}_planning'] = not pairs
             checks[f'{name}_simulation'] = not contacts and drift <= KEYFRAME_DRIFT_LIMIT
+        result['checks'] = checks
+        return self.common(result)
+
+    def sensor_poses(self):
+        """The starting keyframe and the same with every head and arm joint turned by
+        0.2 rad (away from its nearer limit), which moves every camera."""
+        start = self.spec.keyframe(self.settings.ROBOT.get('keyframe', 'zero'))
+        moved = dict(start)
+        joints = [*self.spec.head, *(joint for arm in self.spec.arms.values() for joint in arm.joints)]
+        for joint in joints:
+            low, high = self.model.limits[self.model.index[joint]]
+            moved[joint] = start[joint] + (.2 if high - start[joint] > start[joint] - low else -.2)
+        return {'start': start, 'moved': moved}
+
+    def markers(self, name, depth):
+        """Marker centres in camera ``name``'s optical frame and their radius, aimed at a
+        3 x 3 grid of pixels and kept in front of what ``depth`` (rendered without
+        markers) shows there; directions blocked within a few centimetres are skipped."""
+        camera = self.spec.cameras[name]
+        width, height = camera.resolution
+        radius = MARKER_DISTANCE * MARKER_PIXELS / camera.intrinsics[0]
+        points = []
+        for u in MARKER_GRID:
+            for v in MARKER_GRID:
+                pixel = np.array([u * width, v * height])
+                window = 3 * MARKER_PIXELS
+                patch = depth[max(int(pixel[1]) - window, 0):int(pixel[1]) + window,
+                              max(int(pixel[0]) - window, 0):int(pixel[0]) + window]
+                behind = patch[patch > 0].min() if (patch > 0).any() else np.inf
+                distance = min(MARKER_DISTANCE, .6 * behind)
+                if distance > 4 * radius:
+                    points.append(direction(camera, pixel) * distance)
+        return np.array(points).reshape(-1, 3), radius
+
+    def sensors(self):
+        """Every robot camera, at the starting keyframe and with head and arms moved: the
+        image has contrast and shows little of the robot itself; markers placed in front
+        of the camera by its spec and the measured joints appear where its lens model
+        projects them (rgb), at the depth it predicts (depth).
+
+        Rendering does not advance physics, so images of one state differ only by what
+        was shown: pixels that come closer when the markers appear are marker pixels,
+        pixels that recede when the robot is hidden show the robot.
+        """
+        result, checks = {}, {}
+        for pose, q in self.sensor_poses().items():
+            self.reset(robot=q)
+            self.step(count=round(.5 / DT))
+            for name, camera in self.spec.cameras.items():
+                self.backend.set_markers([], 0.)
+                plain = self.backend.sense([name])[name]
+                points, radius = self.markers(name, plain['depth'][0])
+                frame = self.model.fk(camera.frame, world=True)
+                self.backend.set_markers((frame[:3, :3] @ points.T).T + frame[:3, 3], radius)
+                seen = self.backend.sense([name])[name]
+                expected = project(camera, points)
+                save_marked(self.output / 'sensors' / f'{name}_{pose}.jpg', seen, expected)
+                seen = seen['depth'][0]
+                entry = {'markers': len(points)}
+                if camera.kind == 'depth':
+                    pixels = np.clip(np.round(expected - .5).astype(int), 0, [camera.resolution[0] - 1, camera.resolution[1] - 1])
+                    # The ray through the centre meets the sphere radius short of it.
+                    surface = points[:, 2] * (1 - radius / np.linalg.norm(points, axis=1))
+                    errors = np.abs(seen[pixels[:, 1], pixels[:, 0]] - surface)
+                    entry.update(depth_error_m=[round(float(e), 6) for e in errors],
+                                 valid_pixels=float((plain['depth'][0] > 0).mean()))
+                    passed = bool(len(errors) >= MARKERS_PLACED and errors.max() <= DEPTH_LIMIT and entry['valid_pixels'] > .5)
+                else:
+                    self.backend.set_markers([], 0.)
+                    self.backend.show_robot(False)
+                    bare = self.backend.sense([name])[name]['depth'][0]
+                    self.backend.show_robot(True)
+                    depth = plain['depth'][0]
+                    robot = (depth > 0) & ((bare == 0) | (bare > depth + 1e-3))
+                    errors = marker_errors(seen, depth, expected)
+                    entry.update(self_view=float(robot.mean()), contrast=float(plain['rgb'][0].mean(axis=2).std()),
+                                 pixel_error=[round(e, 3) for e in errors])
+                    passed = bool(len(errors) >= MARKERS_PLACED and max(errors) <= PIXEL_LIMIT
+                                  and entry['self_view'] <= camera.self_view and entry['contrast'] >= CONTRAST_LIMIT)
+                result.setdefault(name, {})[pose] = entry
+                checks[f'{name}_{pose}'] = passed
+                if self.backend.cameras:
+                    self.backend.capture(f'{self.case} {name} {pose}')
+        self.backend.set_markers([], 0.)
         result['checks'] = checks
         return self.common(result)
 

@@ -12,6 +12,10 @@ Observation ``obs``:
   at the scene's placement for a robot without a mobile base)
 - ``tcp``: ``{arm: [N, 4, 4]}`` world TCP poses
 - ``time``: simulated seconds since the reset
+
+Camera images are rendered on request, not every step: :meth:`Env.images`
+returns the robot cameras' (``spec.cameras``) images with the pose of each
+optical frame; intrinsics and lens model are in the ``CameraSpec``.
 """
 
 import numpy as np
@@ -35,14 +39,15 @@ def scene_pose(scene):
 
 
 class Env:
-    def __init__(self, scene, backend, spec, models, modes=None):
-        """``models``: one :class:`RobotModel` per environment."""
+    def __init__(self, scene, backend, spec, models, modes=None, record=True):
+        """``models``: one :class:`RobotModel` per environment. ``record``: save a video
+        frame of the backend's video views after every step."""
         self.scene, self.backend, self.spec, self.models = scene, backend, spec, models
         self.num_envs = backend.num_envs
         self.controller = RobotController(spec, models, modes, physics_dt=backend.physics_dt)
         self.observers = []        # called as observer(env) after every control step
         self.caption = lambda env: f't={env.time:5.2f}s'
-        self.capture = backend.cameras is not None
+        self.capture = record and backend.cameras is not None
         self.steps = 0
 
     @property
@@ -102,6 +107,19 @@ class Env:
         if self.capture:
             self.backend.capture(self.caption(self))
         return obs, info
+
+    def images(self, names=None):
+        """Render robot cameras ``names`` (default: the backend's sensors) at the current state.
+
+        Returns ``{'images': {name: [N, H, W, 3] uint8 or [N, H, W] float32 metres},
+        'poses': {name: [N, 4, 4] world pose of the optical frame}}``; poses come from
+        the measured joints, as a real robot's transforms do.
+        """
+        rendered = self.backend.sense(names)
+        images = {name: outputs.get('rgb', outputs.get('depth')) for name, outputs in rendered.items()}
+        poses = {name: np.stack([model.fk(self.spec.cameras[name].frame, world=True) for model in self.models])
+                 for name in rendered}
+        return {'images': images, 'poses': poses}
 
     def targets(self, joints):
         """``[N, len(joints)]`` current position targets of the named robot joints."""

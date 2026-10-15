@@ -17,7 +17,9 @@
 
 真机夹爪由一个电机角 `*_arm_gripper`（0–5.717 rad）通过 mimic 带动两指，每指位移 = 0.00852694 m/rad × 电机角。这里把电机关节设为固定，左指按位移驱动，右指通过 PhysX mimic 关节跟随（右指 = −左指），控制时按上式换算。
 
-机器人描述（关节分组、TCP、夹爪、底盘、关键姿态、头部相机）在 `robot.py`，验收设置（检查场景、工作点、用例）在 `robot_test.py`。关键姿态：零位（全部关节为 0，真机最常用的起始姿态：躯干最低、两臂折叠、头平视）与 `ready`（躯干 0.40 m、头俯 0.30 rad、两臂 joint2 = 0.4、joint3 = −1.0）。
+机器人描述（关节分组、TCP、夹爪、底盘、关键姿态、相机）在 `robot.py`，验收设置（检查场景、工作点、用例）在 `robot_test.py`。关键姿态：零位（全部关节为 0，真机最常用的起始姿态：躯干最低、两臂折叠、头平视）与 `ready`（躯干 0.40 m、头俯 0.30 rad、两臂 joint2 = 0.4、joint3 = −1.0）。
+
+相机按 robot-bridge 的视角命名：`face_view`（头部 RGB 1280×720，带畸变针孔）与 `face_depth`（头部深度 640×400）用头部相机 Orbbec DaBai DCW2 的出厂标定（2026-10-10 读取）；`left_wrist_view`、`right_wrist_view` 是 640×480 无深度的腕部鱼眼，标定未知，暂用水平视场约 130° 的理想等距鱼眼，拿到真机 `camera_info` 后替换。
 
 指尖、相机等无质量坐标系在导入时并入所属刚体；需要时由 URDF 中对应固定关节的偏移计算，例如 `right_arm_gripper_left_tip_joint`。
 
@@ -53,5 +55,5 @@
 "$ISAAC_PYTHON" -m table_1000.robots.preview asset_sources/robots/x1pro --joints '{"lift_joint": 0.4, "head_pitch_joint": 0.3, "right_arm_joint2": 0.4, "right_arm_joint3": -1.0, "left_arm_joint2": 0.4, "left_arm_joint3": -1.0, "right_arm_gripper_left_joint": 0.03, "right_arm_gripper_right_joint": -0.03, "left_arm_gripper_left_joint": 0.03, "left_arm_gripper_right_joint": -0.03}'
 ```
 
-缩略图左侧为外观网格，右侧为碰撞凸块，每个刚体一种颜色。构建约 4 s。构建后为 22 个机器人刚体加 3 个虚拟底盘连杆，86 个碰撞形状。检查脚本的 10 个物理常识用例全部通过（含零位与 `ready` 无自碰撞）；检查场景中每物理步约 2.6 ms（静止）至 4.8 ms（手臂运动），关节跟踪误差小于 1 mrad。转换约 10 分钟，只检查用 `--check`，约 10 s。缩略图需要 Blender。
+缩略图左侧为外观网格，右侧为碰撞凸块，每个刚体一种颜色。构建约 4 s。构建后为 22 个机器人刚体加 3 个虚拟底盘连杆，86 个碰撞形状。检查脚本的 11 个用例全部通过（含零位与 `ready` 无自碰撞、四路相机与描述一致）；检查场景中每物理步约 2.6 ms（静止）至 4.8 ms（手臂运动），关节跟踪误差小于 1 mrad。转换约 10 分钟，只检查用 `--check`，约 10 s。缩略图需要 Blender。
 

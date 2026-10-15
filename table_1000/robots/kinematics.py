@@ -186,7 +186,8 @@ class RobotModel:
         return self._arm_path(arm, result)
 
     def check_path(self, arm, positions, step=.01):
-        """First collision along a path of ``arm`` joint rows, checked every ``step`` rad.
+        """First collision along a path of ``arm`` joint rows, interpolated so that no
+        joint moves more than ``step`` rad between checks.
 
         Returns ``(checks, pairs)``; ``pairs`` is empty when the path is free.
         Contacts present at the start (a hand just released next to an object)
@@ -194,21 +195,23 @@ class RobotModel:
         """
         world = self.planners[arm].planning_world
         lift = self.q[[self.index[name] for name in self.spec.lift]]
-        positions = np.asarray(positions)
+        positions = np.asarray(positions, dtype=float)
 
         def colliding(row):
             world.set_qpos_all(np.r_[lift, row])
             return {(c.link_name1, c.object_name2, c.link_name2) for c in world.check_collision()}
 
-        checks, last = 0, None
-        leaving = colliding(positions[0])
+        rows = [positions[0]]
+        for start, end in zip(positions[:-1], positions[1:]):
+            count = max(1, int(np.ceil(np.abs(end - start).max() / step)))
+            rows += [start + (end - start) * k / count for k in range(1, count + 1)]
+        checks, leaving = 0, None
         try:
-            for index, row in enumerate(positions):
-                if last is not None and np.abs(row - last).max() < step and index < len(positions) - 1:
-                    continue
-                last = row
+            for row in rows:
                 checks += 1
                 pairs = colliding(row)
+                if leaving is None:
+                    leaving = pairs
                 if not pairs:
                     leaving = set()
                 elif not (leaving and pairs <= leaving):

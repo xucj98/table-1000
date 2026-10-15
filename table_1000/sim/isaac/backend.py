@@ -13,7 +13,9 @@ and everything above it see only this interface:
   ``joint_state(joints)``
 - ``body_poses()``, ``center_of_mass(prefix)``, ``object_joints(name)``,
   ``link_pose(link)``
-- ``reset(layout, robot_q)``, ``contacts``, ``capture(caption)``, ``close()``
+- ``reset(layout, robot_q)``, ``contacts``, ``capture(caption)`` (video views),
+  ``sense(names)`` (robot cameras), ``set_markers(points, radius)``, ``show_robot(visible)``,
+  ``close()``
 """
 
 import time
@@ -21,11 +23,14 @@ import time
 import numpy as np
 from scipy.spatial.transform import Rotation
 
+from table_1000.robots import ROOT
 from table_1000.sim.isaac.app import DT, new_world
+from table_1000.sim.isaac.cameras import Cameras, robot_view
 from table_1000.sim.isaac import stage as scene_stage
 from table_1000.sim.isaac.contacts import Contacts
 
 GROUND_PATH = '/World/defaultGroundPlane'
+MARKERS_PATH = '/World/Markers'
 
 
 def matrix(position, quaternion_wxyz):
@@ -43,8 +48,13 @@ class IsaacBackend:
     num_envs = 1
     physics_dt = DT
 
-    def __init__(self, scene, layout, assets, *, spec=None, cameras=None, contact_watch=('robot',), contact_objects=()):
+    def __init__(self, scene, layout, assets, *, spec=None, cameras=None, sensors=(), ground_truth=False,
+                 contact_watch=('robot',), contact_objects=()):
         """``layout`` is the scene's placement used to build the stage.
+
+        ``cameras`` builds the video :class:`Cameras` from the stage. ``sensors``
+        names the robot cameras (``spec.cameras``) that :meth:`sense` renders;
+        ``ground_truth`` adds depth to their rgb streams.
 
         Contact reports come from the robot and the bodies of ``contact_objects``
         (object names); pairs are kept when a side starts with ``contact_watch``.
@@ -86,6 +96,12 @@ class IsaacBackend:
                           if self.stage.GetPrimAtPath(path).GetAttribute('physics:kinematicEnabled').Get()}
         self.views = RigidPrim([self.bodies[key] for key in self.keys], name='bodies', reset_xform_properties=False)
         self.cameras = cameras(self.stage) if cameras else None
+        self.sensors = None
+        if sensors:
+            views = {name: robot_view(ROOT / spec.urdf, spec.cameras[name], scene_stage.ROBOT_PATH, ground_truth)
+                     for name in sensors}
+            self.sensors = Cameras(self.stage, views, None, fps=None)
+        self.markers = 0
         self.world.reset()
         self.views.initialize()
         self.robot_joints = list(self.robot.dof_names)
@@ -226,14 +242,53 @@ class IsaacBackend:
         return np.array(UsdGeom.XformCache().GetLocalToWorldTransform(prim)).T[None]
 
     def capture(self, caption='', save=True):
+        """Render the video views; ``{view: HxWx3}``, frames saved unless ``save`` is False."""
         if not self.cameras:
             return {}
         started = time.perf_counter()
+        if self.sensors:
+            self.sensors.pause()
         images = self.cameras.capture(caption, save)
         self.timings['render_s'] += time.perf_counter() - started
         return images
 
+    def sense(self, names=None):
+        """Render robot cameras (default: every sensor): ``{name: {output: [N, ...]}}`` with
+        ``rgb`` [N, H, W, 3] uint8 and/or ``depth`` [N, H, W] metres."""
+        started = time.perf_counter()
+        if self.cameras:
+            self.cameras.pause()
+        out = {}
+        for name in self.sensors.render(names):
+            out[name] = {kind: value[None] for kind, value in self.sensors.read(name).items()}
+        self.timings['render_s'] += time.perf_counter() - started
+        return out
+
+    def show_robot(self, visible=True):
+        """Show or hide the robot in rendered images (physics is unchanged)."""
+        from pxr import UsdGeom
+        robot = UsdGeom.Imageable(self.stage.GetPrimAtPath(scene_stage.ROBOT_PATH))
+        robot.MakeVisible() if visible else robot.MakeInvisible()
+
+    def set_markers(self, points, radius):
+        """Show visual-only spheres (no collision, no mass) at world ``points``; earlier
+        markers beyond them are hidden. Their prims are ``MARKERS_PATH/marker<i>``."""
+        from pxr import Gf, UsdGeom
+        for i, point in enumerate(points):
+            sphere = UsdGeom.Sphere.Define(self.stage, f'{MARKERS_PATH}/marker{i}')
+            if i >= self.markers:
+                sphere.CreateRadiusAttr(radius)
+                sphere.CreateDisplayColorAttr([Gf.Vec3f(.9, .2, .1)])
+                UsdGeom.Xformable(sphere).AddTranslateOp()
+            sphere.GetRadiusAttr().Set(float(radius))
+            UsdGeom.Xformable(sphere).GetOrderedXformOps()[0].Set(Gf.Vec3d(*map(float, point)))
+            UsdGeom.Imageable(sphere).MakeVisible()
+        for i in range(len(points), self.markers):
+            UsdGeom.Imageable(self.stage.GetPrimAtPath(f'{MARKERS_PATH}/marker{i}')).MakeInvisible()
+        self.markers = max(self.markers, len(points))
+
     def close(self):
         self.contacts.close()
-        if self.cameras:
-            self.cameras.close()
+        for cameras in (self.cameras, self.sensors):
+            if cameras:
+                cameras.close()

@@ -38,8 +38,9 @@ def main(argv=None):
     from table_1000.sim.isaac.app import start_app
     from table_1000.sim.isaac.render import RT2_ARGS
     started = time.perf_counter()
+    # Robot camera images (the sensors case) and videos render with RTX Real-Time 2.0.
     app = start_app(gpu=args.gpu, workers=4, renderer='RaytracedLighting', disable_viewport_updates=True,
-                    extra_args=RT2_ARGS if args.video else ())
+                    extra_args=RT2_ARGS)
     report = {'robot': args.robot, 'startup_s': time.perf_counter() - started, 'cases': {}}
     checker = None
     try:
@@ -57,10 +58,9 @@ def main(argv=None):
             report['benchmark'] = benchmark(checker)
             args.cases, args.no_metrics = [], True
         for name in (checker.cases() if args.cases is None else args.cases):
-            checker.case = name
             case_started = time.perf_counter()
             try:
-                result = getattr(checker, name)()
+                result = checker.run(name)
             except Exception:
                 result = {'status': 'ERROR', 'error': traceback.format_exc()}
             result['wall_s'] = time.perf_counter() - case_started
@@ -68,8 +68,7 @@ def main(argv=None):
             print(name, result['status'], flush=True)
             (output / 'report.json').write_text(json.dumps(report, indent=1, default=float))
         if not args.no_metrics:
-            checker.case = 'metrics'
-            report['metrics'] = checker.metrics()
+            report['metrics'] = checker.run('metrics')
         if checker.backend.cameras:
             report['video'] = checker.backend.cameras.encode(output)
     except Exception:

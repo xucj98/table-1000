@@ -9,7 +9,7 @@ Fingers are driven in metres: the left finger at ``+gap/2`` and the right at
 ``-gap/2`` gives a pad gap of ``gap`` (0 to 0.0975 m).
 """
 
-from table_1000.robots.spec import ArmSpec, BaseSpec, RobotSpec
+from table_1000.robots.spec import ArmSpec, BaseSpec, CameraSpec, RobotSpec
 
 TCP_OFFSET = (.145, 0., 0.)
 MAX_GAP = .0975
@@ -48,6 +48,26 @@ READY = {'lift_joint': .40, 'head_pitch_joint': .30,
          **{f'{side}_arm_joint{i}': value for side in ('left', 'right')
             for i, value in zip((2, 3), (.4, -1.))}}
 
+# Cameras, named as robot-bridge names the X1Pro views. The head camera (Orbbec
+# DaBai DCW2) uses its factory calibration as the robot reported it on
+# 2026-10-10 (camera_info of /camera_head_front/color and /depth): RGB with
+# OpenCV radial-tangential distortion (k3-k6 are zero), depth with none, both in
+# their own optical frames 12 mm apart. The wrist cameras are 640 x 480 RGB
+# fisheyes without depth whose calibration is not known yet: an ideal
+# equidistant fisheye with about 130 degrees horizontal field of view stands in
+# for it. Replace it with the measured camera_info when available.
+CAMERAS = {
+    'face_view': CameraSpec(
+        'camera_head_front_color_optical_frame', (1280, 720), (722.9255, 722.6870, 643.3176, 366.9483),
+        distortion=(-.020391770, .003390382, .000575986, -.0000411227)),
+    'face_depth': CameraSpec(
+        'camera_head_front_depth_optical_frame', (640, 400), (306.3446, 306.3446, 316.8373, 196.2885),
+        kind='depth', fps=15.),
+    **{f'{side}_wrist_view': CameraSpec(
+        f'{side}_arm_gripper_camera_color_frame', (640, 480), (280., 280., 320., 240.), 'fisheye', (0., 0., 0., 0.),
+        self_view=.35) for side in ('left', 'right')},
+}
+
 SPEC = RobotSpec(
     name='x1pro', urdf='asset_sources/robots/x1pro/robot.urdf',
     arms={'right': _arm('right'), 'left': _arm('left')},
@@ -58,7 +78,7 @@ SPEC = RobotSpec(
                   max_speed=(.5, 1.), max_acceleration=(1., 2.), max_force=(116., 28.)),
     lift=('lift_joint',), head=('head_yaw_joint', 'head_pitch_joint'),
     keyframes={'ready': READY},
-    cameras={'head': 'camera_head_front_color_optical_frame'},
+    cameras=CAMERAS,
     seated=tuple(SEATED),
     unpadded=tuple(f'{side}_arm_gripper_{finger}_link' for side in ('left', 'right') for finger in ('left', 'right')),
     planning_padding=PLANNING_PADDING)
