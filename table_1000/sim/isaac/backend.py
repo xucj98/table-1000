@@ -100,7 +100,7 @@ class IsaacBackend:
         if sensors:
             views = {name: robot_view(ROOT / spec.urdf, spec.cameras[name], scene_stage.ROBOT_PATH, ground_truth)
                      for name in sensors}
-            self.sensors = Cameras(self.stage, views, None, fps=None)
+            self.sensors = Cameras(self.stage, views, None, fps=None, root='/World/Sensors')
         self.markers = 0
         self.world.reset()
         self.views.initialize()

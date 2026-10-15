@@ -43,6 +43,12 @@ def robot_view(urdf, camera, robot_path, ground_truth=False):
             'lens': {'model': camera.model, 'intrinsics': tuple(camera.intrinsics), 'distortion': tuple(camera.distortion)}}
 
 
+def depth_image(depth, far=2.):
+    """Grey HxWx3 uint8 picture of a depth image: white near, dark at ``far`` metres, black where nothing is hit."""
+    grey = np.where(depth > 0, 255 - np.clip(depth / far, 0, 1) * 200, 0).astype(np.uint8)
+    return np.repeat(grey[:, :, None], 3, axis=2)
+
+
 class Cameras:
     """One camera, render product and annotators per view, rendered together.
 
@@ -61,8 +67,9 @@ class Cameras:
 
     SUBFRAMES = 1
 
-    def __init__(self, stage, views, output, fps, subframes=SUBFRAMES, settle=True):
-        """``output``: directory for the saved frames (None: frames are only returned).
+    def __init__(self, stage, views, output, fps, subframes=SUBFRAMES, settle=True, root='/World/Cameras'):
+        """``output``: directory for the saved frames (None: frames are only returned);
+        the camera prims are ``<root>/<view>``.
         ``settle`` runs three app updates so Replicator's orchestrator exists before
         the first capture; with a playing timeline each update also steps physics."""
         import omni.replicator.core as rep
@@ -78,9 +85,9 @@ class Cameras:
         self.paused = set()
         for name, view in views.items():
             outputs = view.get('outputs', ('rgb',))
-            if self.output and 'rgb' in outputs:
+            if self.output:
                 (self.output / name).mkdir(parents=True, exist_ok=True)
-            camera = UsdGeom.Camera.Define(stage, f'/World/Cameras/{name}')
+            camera = UsdGeom.Camera.Define(stage, f'{root}/{name}')
             camera.CreateClippingRangeAttr(Gf.Vec2f(view.get('near', .001), 100))
             if 'lens' in view:
                 self.apply_lens(camera.GetPrim(), view['lens'], view['resolution'])
@@ -159,14 +166,14 @@ class Cameras:
         return out
 
     def capture(self, caption='', save=True, names=None):
-        """Render ``names`` (default: every view); returns ``{view: HxWx3 uint8}`` of the
-        rgb views. Frames are saved (with ``caption`` drawn on top) unless ``save`` is False."""
+        """Render ``names`` (default: every view); returns ``{view: HxWx3 uint8}``, a depth-only
+        view as :func:`depth_image`. Frames are saved (with ``caption`` drawn on top) unless
+        ``save`` is False."""
         from PIL import Image, ImageDraw
         images = {}
         for name in self.render(names):
-            if 'rgb' not in self.annotators[name]:
-                continue
-            images[name] = self.read(name)['rgb']
+            outputs = self.read(name)
+            images[name] = outputs['rgb'] if 'rgb' in outputs else depth_image(outputs['depth'])
             if not save or not self.output:
                 continue
             image = Image.fromarray(images[name])

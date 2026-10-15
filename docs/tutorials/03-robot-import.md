@@ -138,7 +138,7 @@ uv pip install --python "$ISAAC_PYTHON" open3d==0.20.0 coacd==1.0.11 huggingface
 | `prepare.json` | 最大误差 0.91 mm，22 个刚体 | 每个网格误差不超过 1 mm，刚体数与 README 一致 |
 | 缩略图 | 见本章开头 | 外观无破面、塌陷；碰撞覆盖完整，刚体划分合理 |
 
-**物理常识用例**：[check_robot.py](../../scripts/robots/check_robot.py) 在检查场景（机器人前方一张桌子，几个盒、球、圆柱）里依次运行下列用例。用例本身是通用的（[checks.py](../../table_1000/robots/checks.py)），这台机器人的设置写在 [robot_test.py](../../asset_sources/robots/x1pro/robot_test.py)：桌子、机器人摆放与起始姿态、桌面上主手臂前方的工作点（各用例的目标位姿相对它给出）、物体下落的目标连杆和要运行的用例，与物体资产各自的 `physics_test.py` 同理。需要升降或移动底盘的用例只用于有这些部件的机器人。每个用例从 `reset` 开始，结果写入 `report.json`，`--video` 时把全部用例录成一个视频。用例与判据见[机器人规范](../designs/asset-pipeline/robots.md#验收)。本例 11 个用例全部通过：
+**物理常识用例**：[check_robot.py](../../scripts/robots/check_robot.py) 在检查场景（机器人前方一张桌子，几个盒、球、圆柱）里依次运行下列用例。用例本身是通用的（[checks.py](../../table_1000/robots/checks.py)），这台机器人的设置写在 [robot_test.py](../../asset_sources/robots/x1pro/robot_test.py)：桌子、机器人摆放与起始姿态、桌面上主手臂前方的工作点（各用例的目标位姿相对它给出）、物体下落的目标连杆和要运行的用例，与物体资产各自的 `physics_test.py` 同理。需要升降或移动底盘的用例只用于有这些部件的机器人。每个用例从 `reset` 开始，结果写入 `report.json`。`--video` 时每个视角把全部用例录成一个视频：外部视角 `wide.mp4`，以及机器人每路相机一个（`face_view.mp4`、`face_depth.mp4` 以灰度表示深度、`left_wrist_view.mp4`、`right_wrist_view.mp4`），用相机描述中的分辨率和镜头渲染。用例与判据见[机器人规范](../designs/asset-pipeline/robots.md#验收)。本例 11 个用例全部通过：
 
 | 用例 | 结果 | 要点 |
 | --- | --- | --- |

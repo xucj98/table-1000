@@ -2,7 +2,8 @@
 
 ``"$ISAAC_PYTHON" scripts/robots/check_robot.py x1pro --output outputs/robots/x1pro-check --gpu 1 [--video]``
 writes ``report.json`` (every case with its checks, then the metrics) and, with
-``--video``, ``video.mp4`` of all cases. The robot's settings and cases come from
+``--video``, one video of all cases per view: ``wide.mp4`` from outside and
+``<camera>.mp4`` for every robot camera (depth as grey, white near). The robot's settings and cases come from
 ``asset_sources/robots/<name>/robot_test.py``; ``--cases a b`` runs only those
 cases, ``--no-metrics`` skips the metrics. See ``table_1000/robots/checks.py``.
 """
@@ -47,11 +48,14 @@ def main(argv=None):
         from table_1000.robots import load_robot_test, load_spec
         from table_1000.robots.checks import Checker
         from table_1000.robots.controllers import CONTROL_HZ
-        from table_1000.sim.isaac.cameras import Cameras
-        cameras = (lambda stage: Cameras(stage, VIEW, output / 'frames', fps=CONTROL_HZ)) if args.video else None
+        from table_1000.sim.isaac.cameras import Cameras, robot_view
+        from table_1000.sim.isaac.stage import ROBOT_PATH
         root = args.root.resolve()
-        checker = Checker(load_spec(args.robot, root), load_robot_test(args.robot, root), output, args.assets.resolve(),
-                          root, cameras)
+        spec = load_spec(args.robot, root)
+        # The outside view and every robot camera, one video each.
+        views = {**VIEW, **{name: robot_view(root / spec.urdf, camera, ROBOT_PATH) for name, camera in spec.cameras.items()}}
+        cameras = (lambda stage: Cameras(stage, views, output / 'frames', fps=CONTROL_HZ)) if args.video else None
+        checker = Checker(spec, load_robot_test(args.robot, root), output, args.assets.resolve(), root, cameras)
         report['load_s'] = checker.load_s
         if args.benchmark:
             from table_1000.robots.checks import benchmark

@@ -102,11 +102,8 @@ NEEDS = {'sensors': 'cameras', 'lift_into_shelf': 'lift', 'base_into_wall': 'bas
 def save_marked(path, outputs, pixels):
     """The rgb image (else the depth image, white near, up to 2 m) with a cross at each pixel."""
     from PIL import Image, ImageDraw
-    if 'rgb' in outputs:
-        image = Image.fromarray(outputs['rgb'][0])
-    else:
-        depth = outputs['depth'][0]
-        image = Image.fromarray(np.where(depth > 0, 255 - np.clip(depth / 2., 0, 1) * 200, 0).astype(np.uint8)).convert('RGB')
+    from table_1000.sim.isaac.cameras import depth_image
+    image = Image.fromarray(outputs['rgb'][0] if 'rgb' in outputs else depth_image(outputs['depth'][0]))
     draw = ImageDraw.Draw(image)
     for x, y in pixels:
         draw.line((x - 12, y, x + 12, y), fill=(0, 255, 255))
