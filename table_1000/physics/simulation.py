@@ -4,8 +4,6 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from table_1000.assets import usd_entry
-
 
 def rotation(quaternion):
     w, x, y, z = quaternion
@@ -151,7 +149,7 @@ class PhysicsStep:
         from pxr import Gf, UsdGeom
         asset = Path(asset).resolve()
         if asset.is_dir():
-            asset = usd_entry(asset)
+            asset = asset / ('object.usda' if (asset / 'object.usda').exists() else 'object.usdz')
         path = '/World/Assets/' + name
         prim = UsdGeom.Xform.Define(self.stage, path)
         prim.GetPrim().GetReferences().AddReference(str(asset))

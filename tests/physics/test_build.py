@@ -1,7 +1,9 @@
 """The build entry uses the author hook and preserves its source snapshot."""
 
 from pathlib import Path
+import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, call, patch
 
@@ -38,13 +40,13 @@ class PhysicsBatchTest(unittest.TestCase):
                     arguments += ['--assets', *selected]
                     references = selected
                 app = Mock()
-                start_app = Mock(return_value=app)
-                with self.subTest(selected=selected), patch('table_1000.sim.isaac.app.start_app', start_app), \
+                simulation_app = Mock(return_value=app)
+                with self.subTest(selected=selected), patch.dict(sys.modules, {'isaacsim': SimpleNamespace(SimulationApp=simulation_app)}), \
                         patch('table_1000.physics.build.build') as build:
                     main(arguments)
                     self.assertEqual(build.call_args_list, [call(output/ref, source/ref, output/ref) for ref in references])
-                    start_app.assert_called_once()
-                    self.assertEqual(start_app.call_args.kwargs['gpu'], 3)
+                    simulation_app.assert_called_once()
+                    self.assertEqual(simulation_app.call_args.args[0]['active_gpu'], 3)
                     app.close.assert_called_once_with(wait_for_replicator=False)
 
 

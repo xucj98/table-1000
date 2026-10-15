@@ -1,8 +1,6 @@
 """Synchronous multi-camera capture: video frames, and robot camera images.
 
-Capturing renders without advancing physics; the asset physics tests use one
-fixed view (``table_1000.physics.video``). A view is either fixed
-(``position``, ``target`` and optionally ``up``) or follows a prim (``parent``
+Capturing renders without advancing physics. A view is either fixed (``position``, ``target`` and optionally ``up``) or follows a prim (``parent``
 and a ``local`` 4x4 in the USD camera convention: -Z forward, +Y up). A view
 uses ``focal_length_mm`` (35 mm film aperture) or a ``lens`` from a robot
 camera's :class:`~table_1000.robots.spec.CameraSpec` (see :func:`robot_view`).
