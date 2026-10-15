@@ -8,10 +8,11 @@
 
 ## 1. 准备环境
 
-使用已安装 Isaac Sim 5.1 的独立 Python 环境，另需 Blender、FFmpeg，以及该 Python 环境中的 NumPy、SciPy、Pillow、Matplotlib、threadpoolctl。命令均在仓库根目录执行，将解释器路径替换为实际位置：
+仿真环境是项目 uv 环境的 `sim` 依赖组（Isaac Sim 5.1，见 [README](../../README.md#开发环境)），另需 Blender 和 FFmpeg。命令均在仓库根目录执行：
 
 ```bash
-export ISAAC_PYTHON=/absolute/path/to/isaac-environment/bin/python
+uv sync --locked --extra sim
+export ISAAC_PYTHON=$PWD/.venv/bin/python
 export OMNI_KIT_ACCEPT_EULA=YES
 export OMP_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
