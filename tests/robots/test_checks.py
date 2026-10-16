@@ -14,6 +14,9 @@ class Contacts:
     def intervals(self):
         return list(self.entries)
 
+    def clear(self):
+        self.entries.clear()
+
 
 def checker():
     """A checker whose environment reset clears the backend's contacts, as the simulator does."""
@@ -51,3 +54,22 @@ def test_common_checks_cover_every_sub_case():
     assert result['max_penetration_m'] == .02
     assert not any(result['checks'].values()) and result['status'] == 'FAIL'
     assert 'robot:finger / box:body' in result['contacts']
+
+
+def test_cases_do_not_inherit_contacts():
+    """Contacts left by one case (no reset after it) are not reported by the next."""
+    check, contacts = checker()
+
+    def impact():
+        check.reset()
+        contacts.entries.append({'pair': ('cube', 'robot.head_pitch_link'), 'max_penetration_m': .004})
+        return check.common({}, penetration_limit=.01)
+
+    def untouched():
+        check.reset()
+        return check.common({})
+
+    check.impact, check.untouched = impact, untouched
+    assert check.run('impact')['status'] == 'PASS'
+    result = check.run('untouched')
+    assert result['max_penetration_m'] == 0. and result['contacts'] == {} and result['status'] == 'PASS'

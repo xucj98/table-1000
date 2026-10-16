@@ -150,7 +150,9 @@ class BaseVelocityAction(ActionTerm):
     than ``max_acceleration``; the virtual joints follow the integrated pose, so
     the base does not drift while it stands still. Before each command the
     integrated pose is kept within ``max_lag`` of the measured one, so a base
-    blocked by an obstacle does not wind up a target far beyond it.
+    blocked by an obstacle does not wind up a target far beyond it. The wheels
+    only get speed targets: their drives are pure dampers, and a turning joint's
+    position target is bounded (PhysX: ``[-2 pi, 2 pi]``).
     """
 
     def __init__(self, cfg, env):
@@ -163,7 +165,6 @@ class BaseVelocityAction(ActionTerm):
         self.command = torch.zeros(self.num_envs, 2, device=self.device)
         self.speed = torch.zeros_like(self.command)
         self.pose = self._asset.data.joint_pos[:, self.joint_ids].clone()
-        self.wheels = torch.zeros(self.num_envs, len(self.wheel_ids), device=self.device)
 
     @property
     def action_dim(self):
@@ -194,12 +195,12 @@ class BaseVelocityAction(ActionTerm):
         dt = self._env.physics_dt
         self.pose, self.speed, velocity = control.base_substep(self.pose, self.speed, self.command,
                                                                self.max_acceleration, dt)
-        self._asset.set_joint_position_target(self.pose, joint_ids=self.joint_ids)
+        target = self.pose.clone()
+        target[:, 2] = control.near_angle(target[:, 2], self._asset.data.joint_pos[:, self.joint_ids[2]])
+        self._asset.set_joint_position_target(target, joint_ids=self.joint_ids)
         self._asset.set_joint_velocity_target(velocity, joint_ids=self.joint_ids)
         if len(self.wheel_ids) == 2:
             wheel_speed = control.wheel_speeds(self.speed, self.cfg.base.track, self.cfg.base.wheel_radius)
-            self.wheels = self.wheels + wheel_speed * dt
-            self._asset.set_joint_position_target(self.wheels, joint_ids=self.wheel_ids)
             self._asset.set_joint_velocity_target(wheel_speed, joint_ids=self.wheel_ids)
 
     def reset(self, env_ids=None):

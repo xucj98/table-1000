@@ -95,3 +95,23 @@ def test_blocked_base_target_stays_near_the_measured_pose():
     base.drive([.5, 0.], 2., measured=[0., 0., 0.])      # against a wall at x = 0
     pose = control.clamp_lag(base.pose, tensor([[0., 0., 0.]]), tensor(BASE.max_lag))
     assert pose[0, 0] == pytest.approx(BASE.max_lag[0])
+
+
+def test_yaw_compares_across_turns():
+    """PhysX reports a turning joint in (-2 pi, 2 pi]: one heading has two values there."""
+    # Integrated yaw just past pi, measured the same heading written 2 pi lower.
+    pose = control.clamp_lag(tensor([[0., 0., 3.2]]), tensor([[0., 0., 3.19 - 2 * np.pi]]), tensor(BASE.max_lag))
+    assert float(control.wrap_angle(pose[0, 2] - 3.2)) == pytest.approx(0., abs=1e-9)
+    # The drive target goes in the measured value's representation, inside [-2 pi, 2 pi].
+    assert float(control.near_angle(tensor(.03), tensor(-6.25))) == pytest.approx(.03 - 2 * np.pi)
+    assert float(control.near_angle(tensor(-3.13), tensor(3.15))) == pytest.approx(2 * np.pi - 3.13)
+    assert float(control.near_angle(tensor(.02), tensor(6.27))) == pytest.approx(2 * np.pi)
+
+
+def test_base_turns_through_whole_turns():
+    base = Base(BASE, [0., 0., 3.])
+    position, velocity = base.drive([0., 1.], 8.)
+    assert velocity[2] == pytest.approx(1.)
+    assert -np.pi <= position[2] < np.pi
+    # 2 rad/s^2: the 0.5 s ramp loses 0.25 rad (less a step-integration rest).
+    assert float(control.wrap_angle(tensor(position[2] - (3. + 8. - .25)))) == pytest.approx(0., abs=5e-3)

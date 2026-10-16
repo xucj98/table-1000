@@ -43,18 +43,22 @@ def start_app(*, gpu, workers=4, device='cpu', cameras=True, extra_args=()):
     launcher = AppLauncher(headless=True, enable_cameras=cameras, device='cpu' if device == 'cpu' else 'cuda:0',
                            kit_args=' '.join(kit_args))
     app = launcher.app
-    # app.close() may end the process before atexit handlers run, so the
-    # (empty) directory goes first. Isaac Lab's simulation context renders until
-    # the timeline plays again once it stops (for an interactive window); closing
-    # stops the timeline, so that handler is turned off first.
+    # app.close() ends the process (with Kit's return code, 0 unless posted)
+    # before atexit handlers run, so the (empty) directory goes first. Isaac
+    # Lab's simulation context renders until the timeline plays again once it
+    # stops (for an interactive window); closing stops the timeline, so that
+    # handler is turned off first.
     close = app.close
 
-    def close_and_clean(*args, **kwargs):
+    def close_and_clean(*args, exit_code=0, **kwargs):
+        import omni.kit.app
         from isaaclab.sim import SimulationContext
         context = SimulationContext.instance()
         if context is not None:
             context._disable_app_control_on_stop_handle = True
         shutil.rmtree(portable, ignore_errors=True)
+        if exit_code:
+            omni.kit.app.get_app().post_quit(exit_code)
         return close(*args, **kwargs)
 
     app.close = close_and_clean

@@ -14,4 +14,5 @@ WORK = (.45, -.15)
 DROP_LINKS = {'base': 'base_link', 'torso': 'lift_link', 'arm': 'right_arm_link3', 'head': 'head_pitch_link'}
 # Every case of the library applies to this robot.
 CASES = ('keyframes', 'sensors', 'arm_hits_block', 'arm_pushes_objects', 'drop_on_robot', 'lift_into_shelf',
-         'self_collision', 'grasp_and_shake', 'base_into_wall', 'drive_holding', 'joint_limits')
+         'self_collision', 'grasp_and_shake', 'base_into_wall', 'base_full_turn', 'drive_holding',
+         'joint_limits')

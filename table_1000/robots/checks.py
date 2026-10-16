@@ -7,7 +7,7 @@ scene (a table in front of the robot and a few primitive shapes, see
 - **cases** with pass/fail criteria, each starting from a reset (:attr:`Checker.LIBRARY`):
   ``keyframes``, ``sensors``, ``arm_hits_block``, ``arm_pushes_objects``,
   ``drop_on_robot``, ``lift_into_shelf``, ``self_collision``,
-  ``grasp_and_shake``, ``base_into_wall``, ``drive_holding``, ``joint_limits``.
+  ``grasp_and_shake``, ``base_into_wall``, ``base_full_turn``, ``drive_holding``, ``joint_limits``.
   Cases needing a part the robot lacks (cameras, a lift, a mobile base) do not
   apply to it;
 - **metrics** recorded for comparison only: model/simulator consistency, IK,
@@ -48,6 +48,8 @@ SPEED_MARGIN = 1.5
 OBJECT_SPEED_LIMIT = 2.      # m/s, horizontal
 JITTER_LIMIT = 1e-3          # rad or m, oscillation std of a blocked joint over 0.5 s
 HOLD_DRIFT_LIMIT = .005      # m, held object relative to the TCP
+TURN_RATE_MARGIN = 1.05      # measured yaw rate over the commanded one, through whole turns
+TURN_ERROR_LIMIT = .02       # rad, turned angle against the command; m, translation while turning
 KEYFRAME_DRIFT_LIMIT = .01   # rad, joint drift while holding a keyframe
 # Robot cameras: markers in front of each camera, placed by its spec and the
 # measured joints, must show up where the lens model projects them.
@@ -94,9 +96,10 @@ def parked(index):
 
 
 LIBRARY = ('keyframes', 'sensors', 'arm_hits_block', 'arm_pushes_objects', 'drop_on_robot', 'lift_into_shelf',
-           'self_collision', 'grasp_and_shake', 'base_into_wall', 'drive_holding', 'joint_limits')
+           'self_collision', 'grasp_and_shake', 'base_into_wall', 'base_full_turn', 'drive_holding', 'joint_limits')
 # Parts a case needs; it does not apply to a robot without them.
-NEEDS = {'sensors': 'cameras', 'lift_into_shelf': 'lift', 'base_into_wall': 'base', 'drive_holding': 'base'}
+NEEDS = {'sensors': 'cameras', 'lift_into_shelf': 'lift', 'base_into_wall': 'base', 'base_full_turn': 'base',
+         'drive_holding': 'base'}
 
 
 def save_marked(path, outputs, pixels):
@@ -232,6 +235,7 @@ class Checker:
         self.case = case
         self.trace = {'joint_speed': 0., 'joint': None, 'object_speed': 0.}
         self.past = []
+        self.env.contacts.clear()    # the previous case's contacts are not this case's
         return getattr(self, case)()
 
     def reset(self, robot=None, **poses):
@@ -546,6 +550,34 @@ class Checker:
                             'drives_away': result['base_x_after_m'] > x_blocked + .2}
         return self.common(result)
 
+    def base_full_turn(self):
+        """Turn in place at the full yaw rate for 1.25 turns, past every wrap of the yaw angle:
+        the rate stays the commanded one and the base turns by the commanded angle."""
+        self.reset()
+        self.step({'base': [[-.4, 0.]]}, count=round(2. / DT))    # away from the table
+        self.step({'base': [[0., 0.]]}, count=round(1. / DT))
+        start = self.env.obs['agent']['base_pose'][0].copy()
+        rate = self.spec.base.max_speed[1]
+        ramp = rate / self.spec.base.max_acceleration[1]
+        seconds = 2.5 * np.pi / rate
+        yaw = self.env.joints.index(self.spec.base.virtual_joints[2])
+        turned, fastest, previous = 0., 0., start[2]
+        for _ in range(round(seconds / DT)):
+            obs = self.step({'base': [[0., rate]]})
+            fastest = max(fastest, abs(float(obs['agent']['qvel'][0, yaw])))
+            current = obs['agent']['base_pose'][0, 2]
+            turned += float(np.angle(np.exp(1j * (current - previous))))
+            previous = current
+        # Ramping up to the rate takes `ramp` s and loses half of it.
+        expected = rate * (round(seconds / DT) * DT - ramp / 2)
+        end = self.env.obs['agent']['base_pose'][0]
+        result = {'turned_rad': turned, 'commanded_rad': expected, 'max_yaw_rate_rad_s': fastest,
+                  'translation_m': float(np.linalg.norm(end[:2] - start[:2]))}
+        result['checks'] = {'rate_kept': fastest <= rate * TURN_RATE_MARGIN,
+                            'turned_as_commanded': abs(turned - expected) <= TURN_ERROR_LIMIT,
+                            'turned_in_place': result['translation_m'] <= TURN_ERROR_LIMIT}
+        return self.common(result)
+
     def drive_holding(self):
         """Hold a box, drive at full speed and stop: the box stays in the hand."""
         self._grasp('box', self.on_work(0., 0., .08), .08)
@@ -802,7 +834,7 @@ class Checker:
         target = self.env.terms['base'].pose[0].cpu().numpy()
         return {'speed_at_0.4_m_s': speed, 'turn_translation_drift_m': float(np.linalg.norm(turned[:2] - start[:2])),
                 'pose_error_after_stop_m': float(np.linalg.norm(turned[:2] - target[:2])),
-                'yaw_error_after_stop_rad': float(abs(turned[2] - target[2]))}
+                'yaw_error_after_stop_rad': float(abs(np.angle(np.exp(1j * (turned[2] - target[2])))))}
 
     def step_cost(self):
         """Physics ms per step: robot holding still, and moving its arm."""

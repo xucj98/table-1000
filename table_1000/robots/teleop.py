@@ -80,8 +80,10 @@ class Keys:
 
 
 def action_from_keys(keys, arm, gap, dt, yaw=0.):
-    """One control step's action dict from the held keys. TCP keys move along the base's axes
-    (heading ``yaw``); the arm's ``ee_delta`` action takes deltas in the world."""
+    """One control step's action dict from the held keys. TCP keys move along the base's axes;
+    the arm's ``ee_delta`` action takes deltas in the articulation's root frame, which is the
+    world for a mobile base (its virtual joints start at the origin), so ``yaw`` is the base's
+    heading there and 0 for a fixed robot (its root is the base)."""
     k = keys.fast()
     action = {'base': [[BASE_SPEED * k * keys.axis('KeyW', 'KeyS'), ANGULAR * k * keys.axis('KeyA', 'KeyD')]]}
     lift = LIFT_SPEED * k * keys.axis('KeyR', 'KeyF') * dt
@@ -194,8 +196,8 @@ def run(env, layout, output, port, views, render_every=5):
                 wall = time.perf_counter()
                 log.write(json.dumps({'reset': True}) + '\n')
         # Keys for parts the robot lacks (a mobile base, a lift, a head) are ignored.
-        base = obs['agent']['base_pose'][0]
-        action = {group: value for group, value in action_from_keys(keys, arm, gaps[arm], dt, base[2]).items()
+        yaw = obs['agent']['base_pose'][0, 2] if env.spec.base else 0.
+        action = {group: value for group, value in action_from_keys(keys, arm, gaps[arm], dt, yaw).items()
                   if group in env.terms}
         obs = env.step(action)
         log.write(json.dumps(action) + '\n')

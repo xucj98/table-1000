@@ -40,7 +40,7 @@ from table_1000.sim.isaaclab import scene as lab_scene
 from table_1000.sim.isaaclab.actions import actions_cfg
 from table_1000.sim.isaaclab.contacts import Contacts
 
-from table_1000.sim import PHYSICS_DT as DT, SUBSTEPS as DECIMATION
+from table_1000.sim import PHYSICS_DT as DT, SUBSTEPS as DECIMATION, control
 MARKERS_PATH = '/World/Markers'
 
 
@@ -77,10 +77,12 @@ def joint_velocities(env, asset_cfg):
 
 
 def base_pose(env, asset_cfg, fixed):
-    """World (x, y, yaw) of the root link: the virtual base joints, or the fixed placement."""
+    """World (x, y, yaw) of the root link, yaw in ``[-pi, pi)``: the virtual base joints, or the fixed placement."""
     if fixed is not None:
         return torch.tensor(fixed, dtype=torch.float32, device=env.device).repeat(env.num_envs, 1)
-    return env.scene[asset_cfg.name].data.joint_pos[:, asset_cfg.joint_ids]
+    pose = env.scene[asset_cfg.name].data.joint_pos[:, asset_cfg.joint_ids].clone()
+    pose[:, 2] = control.wrap_angle(pose[:, 2])
+    return pose
 
 
 def body_frame(env, asset_cfg, offset):

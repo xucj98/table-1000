@@ -5,7 +5,8 @@ writes ``report.json`` (every case with its checks, then the metrics) and, with
 ``--video``, one video of all cases per view: ``wide.mp4`` from outside and
 ``<camera>.mp4`` for every robot camera (depth as grey, white near). The robot's settings and cases come from
 ``asset_sources/robots/<name>/robot_test.py``; ``--cases a b`` runs only those
-cases, ``--no-metrics`` skips the metrics. See ``table_1000/robots/checks.py``.
+cases, ``--no-metrics`` skips the metrics. The exit status is 1 when a case does not pass
+or the run fails. See ``table_1000/robots/checks.py``.
 """
 
 import argparse
@@ -79,7 +80,9 @@ def main(argv=None):
     (output / 'report.json').write_text(json.dumps(report, indent=1, default=float))
     if checker is not None:
         checker.env.close()
-    app.close()
+    # Closing ends the process: a failed case or run exits with status 1.
+    failed = 'error' in report or any(case.get('status') != 'PASS' for case in report['cases'].values())
+    app.close(exit_code=int(failed))
 
 
 if __name__ == '__main__':
