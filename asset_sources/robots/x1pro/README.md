@@ -42,17 +42,17 @@
 使用这台机器人只需本目录：构建出 `assets/robots/x1pro/robot.usda` 后即可在场景中引用，验收与遥控同样不需要原始包。
 
 ```bash
-"$ISAAC_PYTHON" scripts/robots/build_robot.py x1pro --gpu 0
-"$ISAAC_PYTHON" scripts/robots/check_robot.py x1pro --output outputs/robots/x1pro-check --gpu 0
-"$ISAAC_PYTHON" scripts/robots/teleop.py x1pro --output outputs/robots/x1pro-teleop --gpu 0 --port 8765
+uv run python scripts/robots/build_robot.py x1pro --gpu 0
+uv run python scripts/robots/check_robot.py x1pro --output outputs/robots/x1pro-check --gpu 0
+uv run python scripts/robots/teleop.py x1pro --output outputs/robots/x1pro-teleop --gpu 0 --port 8765
 ```
 
 修改机器人时才需要原始包：`prepare.py` 写明所用的 URDF 配置、每个连杆的凸块数和关节改动，转换工具据此从原始包重新生成 `robot.urdf` 与 `meshes/`，再检查碰撞覆盖与目录大小；之后重新构建、验收并更新缩略图。
 
 ```bash
-"$ISAAC_PYTHON" scripts/assets/remote.py pull robots/x1pro/raw/ex001_render
-"$ISAAC_PYTHON" scripts/robots/prepare_robot.py x1pro
-"$ISAAC_PYTHON" -m table_1000.robots.preview asset_sources/robots/x1pro --joints '{"lift_joint": 0.4, "head_pitch_joint": 0.3, "right_arm_joint2": 0.4, "right_arm_joint3": -1.0, "left_arm_joint2": 0.4, "left_arm_joint3": -1.0, "right_arm_gripper_left_joint": 0.03, "right_arm_gripper_right_joint": -0.03, "left_arm_gripper_left_joint": 0.03, "left_arm_gripper_right_joint": -0.03}'
+uv run python scripts/assets/remote.py pull robots/x1pro/raw/ex001_render
+uv run python scripts/robots/prepare_robot.py x1pro
+uv run python -m table_1000.robots.preview asset_sources/robots/x1pro --joints '{"lift_joint": 0.4, "head_pitch_joint": 0.3, "right_arm_joint2": 0.4, "right_arm_joint3": -1.0, "left_arm_joint2": 0.4, "left_arm_joint3": -1.0, "right_arm_gripper_left_joint": 0.03, "right_arm_gripper_right_joint": -0.03, "left_arm_gripper_left_joint": 0.03, "left_arm_gripper_right_joint": -0.03}'
 ```
 
 缩略图左侧为外观网格，右侧为碰撞凸块，每个刚体一种颜色。构建约 4 s。构建后为 22 个机器人刚体加 3 个虚拟底盘连杆，86 个碰撞形状。检查脚本的 11 个用例全部通过（含零位与 `ready` 无自碰撞、四路相机与描述一致）；检查场景中每物理步约 2.6 ms（静止）至 4.8 ms（手臂运动），关节跟踪误差小于 1 mrad。转换约 10 分钟，只检查用 `--check`，约 10 s。缩略图需要 Blender。

@@ -1,6 +1,6 @@
 """Robot acceptance in Isaac Sim: physical-sense cases and comparison metrics.
 
-``"$ISAAC_PYTHON" scripts/robots/check_robot.py x1pro --output outputs/robots/x1pro-check --gpu 1 [--video]``
+``uv run python scripts/robots/check_robot.py x1pro --output outputs/robots/x1pro-check --gpu 1 [--video]``
 writes ``report.json`` (every case with its checks, then the metrics) and, with
 ``--video``, one video of all cases per view: ``wide.mp4`` from outside and
 ``<camera>.mp4`` for every robot camera (depth as grey, white near). The robot's settings and cases come from

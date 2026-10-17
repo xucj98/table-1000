@@ -41,7 +41,7 @@ TESTS = {"pull": pull}
 执行器通过共享 Isaac Lab `start_app()` 启动隔离用户配置的应用，物理上下文使用 `SimulationContext`。`--physics cpu|gpu` 选择 CPU 或 CUDA PhysX，默认 `cpu`；`--gpu` 选择物理显卡编号，CUDA 逻辑设备为 `cuda:0`。CPU/GPU 必须分别输出结果，不能把渲染显卡编号当作物理后端。
 
 ```bash
-"$ISAAC_PYTHON" scripts/assets/physics_test.py assets/objects/pen/000002 --script asset_sources/objects/pen/000002/physics_test.py --physics gpu --gpu 0 --output outputs/physics/pen-gpu
+uv run python scripts/assets/physics_test.py assets/objects/pen/000002 --script asset_sources/objects/pen/000002/physics_test.py --physics gpu --gpu 0 --output outputs/physics/pen-gpu
 ```
 
 每个测试开始时，仅加载默认实例 `ctx.asset`，名称为 `asset`，恢复资产保存的初态，时间为零。不同测试以及计时重复之间不残留上一次的实例、约束或行为状态。
