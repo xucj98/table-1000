@@ -217,6 +217,8 @@ def main(argv=None):
     gpu={'physical_index':args.gpu,'before_process_start':subprocess.run(
         ['nvidia-smi','--query-gpu=index,name,driver_version,memory.used,utilization.gpu','--format=csv'],
         check=True,capture_output=True,text=True).stdout.strip()}
+    from table_1000.common.path import configure_isaac_paths
+    configure_isaac_paths()
     from isaacsim import SimulationApp
     app=SimulationApp({'headless':True,'create_new_stage':False,'active_gpu':args.gpu,'physics_gpu':0 if os.getenv('CUDA_VISIBLE_DEVICES') == str(args.gpu) else args.gpu,'multi_gpu':False,
          'disable_viewport_updates':True,'limit_cpu_threads':4,'renderer':'RaytracedLighting','width':960,'height':480,
