@@ -202,7 +202,7 @@ class VisualModel:
 
 
 class Checker:
-    def __init__(self, spec, settings, output, assets, root, views=None, video=False):
+    def __init__(self, spec, settings, output, assets, root, views=None, video=False, device='cpu'):
         """``views``: fixed views for videos; ``video`` records them and every robot camera."""
         from table_1000.robots.kinematics import RobotModel
         from table_1000.sim.isaaclab.env import RobotEnv
@@ -214,7 +214,7 @@ class Checker:
         self.scene = check_scene(spec, settings)
         started = time.perf_counter()
         self.env = RobotEnv(self.scene, spec, assets, cameras=spec.cameras, depth=True, views=views or {}, root=root,
-                            contact_watch=('robot', *PRIMITIVES))
+                            contact_watch=('robot', *PRIMITIVES), device=device)
         self.video = Video(self.env, [*(views or {}), *spec.cameras], self.output / 'frames', CONTROL_HZ) if video else None
         self.model = RobotModel(spec, self.output / 'planning')
         self.visual = VisualModel(spec, self.model, root)

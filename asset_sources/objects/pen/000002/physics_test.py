@@ -1,7 +1,7 @@
 """Native detent acceptance through the standard asset test interface.
 
 Four scenes exercise the frozen Claude native-contact mechanism. Fixtures
-are collision-free kinematic hands coupled by native D6 drives; they never
+are collision-free six-axis articulations with native drives; they never
 write dynamic asset poses or supply a hidden pen/cap connection. Springs and
 masses are uncalibrated engineering proxies. Impact tests report outcomes.
 """
@@ -25,44 +25,9 @@ def fit(body, cap):
             'axis_cos':b['rotation'][:,0] @ c['rotation'][:,0]}
 
 
-class Hand:
-    """Native compliant grasp, with SI gains and explicit release."""
-    def __init__(self,ctx,body,name):
-        from pxr import Gf, UsdGeom, UsdPhysics, PhysxSchema
-        ctx.ensure_initialized()
-        self.ctx,self.body = ctx,body
-        self.position = body.state['position'].copy()
-        self.quaternion = body.state['quaternion'].copy()
-        self.path = '/World/Fixtures/'+name
-        hand = UsdGeom.Xform.Define(ctx.session.stage,self.path)
-        self.ops = [hand.AddTranslateOp(),hand.AddOrientOp()]
-        UsdPhysics.RigidBodyAPI.Apply(hand.GetPrim()).CreateKinematicEnabledAttr(True)
-        PhysxSchema.PhysxRigidBodyAPI.Apply(hand.GetPrim()).CreateEnableCCDAttr(False)
-        self.joint = UsdPhysics.Joint.Define(ctx.session.stage,self.path+'/grip')
-        self.joint.CreateBody0Rel().SetTargets([self.path]);self.joint.CreateBody1Rel().SetTargets([body.path])
-        for i,axis in enumerate(['transX','transY','transZ','rotX','rotY','rotZ']):
-            drive=UsdPhysics.DriveAPI.Apply(self.joint.GetPrim(),axis)
-            factor=1 if i<3 else pi/180
-            drive.CreateTypeAttr('force');drive.CreateTargetPositionAttr(0)
-            drive.CreateStiffnessAttr((2000 if i<3 else 20)*factor)
-            drive.CreateDampingAttr((40 if i<3 else .4)*factor)
-            drive.CreateMaxForceAttr(30 if i<3 else 1)
-        self.move()
-
-    def move(self,position=None,quaternion=None):
-        from pxr import Gf
-        if position is not None:self.position=np.asarray(position,dtype=float)
-        if quaternion is not None:self.quaternion=np.asarray(quaternion,dtype=float)
-        self.ops[0].Set(Gf.Vec3d(*self.position))
-        self.ops[1].Set(Gf.Quatf(float(self.quaternion[0]),Gf.Vec3f(*map(float,self.quaternion[1:]))))
-
-    def axial(self,stiffness=0,damping=0):
-        from pxr import UsdPhysics
-        drive=UsdPhysics.DriveAPI(self.joint.GetPrim(),'transX')
-        drive.GetStiffnessAttr().Set(stiffness);drive.GetDampingAttr().Set(damping)
-
-    def release(self,released=True):
-        self.joint.GetJointEnabledAttr().Set(not released)
+def Hand(ctx, body, name):
+    from table_1000.sim.isaaclab.fixtures import Grip
+    return Grip(ctx, body, name=name)
 
 
 def setup(ctx,height=0,ground=False,pose=(1,0,0,0)):
@@ -87,28 +52,30 @@ def setup(ctx,height=0,ground=False,pose=(1,0,0,0)):
     ctx.observe('phase',lambda:ctx.input_state['phase'],unit='1')
     ctx.experiment_details={'mechanism':'native radial prismatic force drives and real ball/ridge contacts; no body/cap retention script or fixture',
         'asset_pose_writes_during_experiment':False,'force_direction':'world -X removes the cap; world +X closes it','ball_mass_note':'1 g per 0.8 mm ball is an inertia proxy, approximately 60x steel sphere mass',
-        'external_substeps_per_step':1,'TGS_internal_position_iterations':32}
+        'external_substeps_per_step':1,'asset_position_iterations':32}
     return ctx.asset.body('body'),ctx.asset.body('cap')
 
 
 def observe(ctx,instances=None):
     from pxr import PhysxSchema
-    from isaacsim.core.prims import RigidPrim
+    import carb
+    from isaacsim.core.simulation_manager import SimulationManager
+    carb.settings.get_settings().set_bool('/physics/disableContactProcessing', False)
     instances=instances or [ctx.asset]
     for instance in instances:
         for name in instance.body_names:
             PhysxSchema.PhysxContactReportAPI.Apply(ctx.session.stage.GetPrimAtPath(instance.paths[name])).CreateThresholdAttr(0)
             ctx.observe_body(instance.body(name))
-    ctx.ensure_initialized()
     paths=[instance.paths[name] for instance in instances for name in instance.body_names]
     filters=paths+[str(p.GetPath()) for p in ctx.session.stage.Traverse() if p.GetName()=='Ground']
-    contacts=RigidPrim(paths,name='contacts',reset_xform_properties=False,track_contact_forces=True,
-                       contact_filter_prim_paths_expr=[filters for _ in paths],max_contact_count=8192)
-    contacts.initialize()
-    cache={'time':None}
+    cache={'time':None, 'view':None}
     def contact_values():
+        if cache['time'] is None:
+            cache['view']=SimulationManager.get_physics_sim_view().create_rigid_contact_view(
+                paths, [filters for _ in paths], max_contact_data_count=8192)
         if cache['time']!=ctx.session.time:
-            forces,points,normals,distances,counts,starts=contacts.get_contact_force_data(dt=ctx.dt)
+            forces,points,normals,distances,counts,starts=(value.detach().cpu().numpy()
+                for value in cache['view'].get_contact_data(dt=ctx.dt))
             active=np.concatenate([np.arange(int(start),int(start+count)) for start,count in zip(starts.ravel(),counts.ravel()) if count]) if np.any(counts) else []
             cache.update(time=ctx.session.time,force=float(np.max(np.abs(forces[active]))) if len(active) else 0,
                          separation=float(np.min(distances[active])) if len(active) else 0)
@@ -193,7 +160,7 @@ def pull_comparison(ctx):
         for hand in hands:hand.release()
         ctx.input_state['phase']=4;ctx.run(.8)
     ctx.experiment_details.update(pulls=dict(zip(['tight','loose'],records)),loose_initial_opening_m=LOOSE_OPENING,
-        cap_guide='native D6 lateral/rotational drives; axial stiffness and damping zero throughout force measurement, 2000 N/m and 40 N s/m only after complete separation',
+        cap_guide='native articulation lateral/rotational drives; axial stiffness and damping zero throughout force measurement, 2000 N/m and 40 N s/m only after complete separation',
         separation_geometry={'body_tip_local_x_m':BODY_TIP_X,'cap_mouth_local_x_m':0,'required_axial_gap_m':.002},
         placed_cap_positions_m=[c.state['position'].tolist() for c in caps])
 
@@ -228,7 +195,7 @@ def close(ctx):
         assert abs(final['opening'])<.001 and np.linalg.norm(cap.state['velocity'][:3])<.01,'cap did not remain seated after force removal'
     ctx.experiment_details.update(light_push_N=.3,light_push_final_fit=weak,light_push_final_vx_m_s=vx,
         light_push_last_0_4s_x_drift_m=drift,light_push_pose_velocity_m_s=pose_v,seating_push_N=seated_force,final_fit=final,
-        closing_guide='native D6 lateral/rotational guide; zero axial stiffness and 40 N s/m axial damping to limit closing speed; no static axial holding force; fully released after seating')
+        closing_guide='tensor articulation lateral/rotational guide; zero axial stiffness and 40 N s/m axial damping to limit closing speed; no static axial holding force; fully released after seating')
 
 
 def collision_min_z(ctx,pose):
@@ -248,6 +215,11 @@ def collision_min_z(ctx,pose):
 def drop_heights(ctx):
     pose=quaternion(35*pi/180,(.3,1,.2))
     setup(ctx,ground=True,pose=pose)
+    # GPU TGS injects energy into the tiny maximal-coordinate ball constraints
+    # on impact. PGS retains the original materials, joints and 4 ms step.
+    ctx.simulation(gpu_solver='PGS')
+    if ctx.physics == 'gpu':
+        ctx.experiment_details['gpu_solver'] = 'PGS'
     low=collision_min_z(ctx,pose);heights=[.2,.5,1.];positions=[-.25,0,.25]
     pens=[ctx.asset,ctx.spawn(ctx.asset_path,name='drop_0_5m'),ctx.spawn(ctx.asset_path,name='drop_1m')]
     for p,h,x in zip(pens,heights,positions):initial_pen(ctx,p,(x,0,h-low),pose)

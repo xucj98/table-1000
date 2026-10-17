@@ -32,7 +32,8 @@ class Body:
 class Asset:
     def __init__(self, session, path, name):
         from pxr import Usd, UsdPhysics
-        from isaacsim.core.prims import RigidPrim
+        from isaacsim.core.simulation_manager import SimulationManager
+        from table_1000.sim.isaaclab.asset_views import RigidView
         self.session, self.path, self.name = session, path, name
         self.paths = {prim.GetCustomDataByKey('table1000:name'): str(prim.GetPath())
                       for prim in Usd.PrimRange(session.stage.GetPrimAtPath(path)) if prim.GetCustomDataByKey('table1000:name')}
@@ -41,7 +42,8 @@ class Asset:
         self.joint_names = [prim.GetCustomDataByKey('table1000:name') for prim in Usd.PrimRange(session.stage.GetPrimAtPath(path))
                             if prim.IsA(UsdPhysics.Joint)]
         self.indices = {name: i for i, name in enumerate(self.body_names)}
-        self.view = RigidPrim([self.paths[name] for name in self.body_names], name=name, reset_xform_properties=False)
+        self.view = RigidView([self.paths[name] for name in self.body_names],
+                              SimulationManager.get_physics_sim_device())
         roots = [prim for prim in Usd.PrimRange(session.stage.GetPrimAtPath(path))
                  if prim.HasAPI(UsdPhysics.ArticulationRootAPI)]
         self.articulation_root = str(roots[0].GetPath()) if roots else None
@@ -66,9 +68,12 @@ class Asset:
         return next(iter(ScriptManager.get_instance()._prim_to_scripts[self.path].values()))
 
     def initialize(self):
-        if self.articulation_root:
+        if self.articulation_root or getattr(self, "fixture_root", None):
             from isaacsim.core.simulation_manager import SimulationManager
-            self.articulation = SimulationManager.get_physics_sim_view().create_articulation_view(self.articulation_root)
+            from table_1000.sim.isaaclab.asset_views import TensorView
+            self.articulation = TensorView(
+                SimulationManager.get_physics_sim_view().create_articulation_view(getattr(self, "fixture_root", self.articulation_root)),
+                self.view.device)
         self.view.initialize()
         self.local_com = np.asarray(self.view.get_coms()[0]).reshape(-1, 3)
         self.local_inertia = np.asarray(self.view.get_inertias()).reshape(-1, 3, 3)
@@ -77,18 +82,26 @@ class Asset:
     def restore_body_poses(self, positions, quaternions):
         if self.articulation:
             # Reduced coordinates forbid writes to non-root link transforms.
+            if getattr(self, "fixture_root", None):
+                return
             i = self.root_index
             transforms = np.c_[positions[i:i+1], quaternions[i:i+1, [1, 2, 3, 0]]].astype(np.float32)
             self.articulation.set_root_transforms(transforms, np.array([0], dtype=np.int32))
         else:
-            self.view.set_world_poses(positions, quaternions)
+            indices = np.array([i for i, name in enumerate(self.body_names)
+                                if name not in getattr(self, "fixture_bodies", ())], dtype=np.int32)
+            self.view.set_world_poses(positions[indices], quaternions[indices], indices=indices)
 
     def restore_body_velocities(self, velocities):
         if self.articulation:
+            if getattr(self, "fixture_root", None):
+                return
             i = self.root_index
             self.articulation.set_root_velocities(velocities[i:i+1], np.array([0], dtype=np.int32))
         else:
-            self.view.set_velocities(velocities)
+            indices = np.array([i for i, name in enumerate(self.body_names)
+                                if name not in getattr(self, "fixture_bodies", ())], dtype=np.int32)
+            self.view.set_velocities(velocities, indices=indices)
 
     def snapshot(self):
         state = (*self.view.get_world_poses(), self.view.get_velocities())
@@ -125,6 +138,7 @@ class PhysicsStep:
         from omni.physx import get_physx_interface
         self.stage, self.key = stage, key
         self.instances, self.states = {}, {}
+        self.fixtures = []
         self.actions = None
         self.time, self.steps = 0., 0
         self.callback_steps = 0
@@ -203,6 +217,12 @@ class PhysicsStep:
                         state['inverse_mass'] = 0
                         state['inverse_inertia'] = np.zeros((3,3))
                         state['gravity_acceleration'] = np.zeros(3)
+        for fixture in self.fixtures:
+            if fixture.locked and not fixture.released:
+                state = self.states[fixture.body.key]
+                state['inverse_mass'] = 0
+                state['inverse_inertia'] = np.zeros((3, 3))
+                state['gravity_acceleration'] = np.zeros(3)
 
     def force(self, body, force, point=None, torque=None, external=True):
         key = body.key

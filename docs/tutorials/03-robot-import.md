@@ -112,7 +112,7 @@ uv sync --locked --all-extras
 - [kinematics.py](../../table_1000/robots/kinematics.py) 的 `RobotModel`：一个 MPlib 模型包含全部身体关节，每只手臂一个规划器。提供正运动学、IK、头部 look-at、RRTConnect 与直线规划，只做自碰撞检查。
 - 仿真环境基于 Isaac Lab 的 `ManagerBasedEnv`：[table_1000/sim/isaaclab/env.py](../../table_1000/sim/isaaclab/env.py) 的 `RobotEnv(scene, spec, assets)` 由场景源码和 `SPEC` 生成 Isaac Lab 的场景、动作与观测配置；`reset(layout)` 写入物体摆放与机器人关节，`step(action)` 执行一个控制周期。检查、遥控和后续章节的专家脚本都通过它运行，数组带环境维 N。
 - 动作 25 Hz 一个，每个动作覆盖 10 个 4 ms 物理步（[actions.py](../../table_1000/sim/isaaclab/actions.py)）：底盘速度、升降与头部位置、手臂关节位置（或 Isaac Lab 的差分 IK 做 TCP 增量）、夹爪间距，见[机器人规范](../designs/asset-pipeline/robots.md#机器人层运动学规划与控制)。
-- 目前在 CPU PhysX 上验收（N = 1）；GPU 仿真只需把 `device` 换成 `cuda`，验证见 [issue #11](https://github.com/xucj98/table-1000/issues/11)。
+- 验收入口用 `--physics cpu|gpu` 选择物理后端（默认 CPU），`--gpu` 选择显卡。GPU 与多环境结果须独立验收，不能由 CPU 的通过结果推断。
 
 **感知接口**：`SPEC.cameras` 的每一路图像是一个 `CameraSpec`，由传感器参数（`Sensor`：分辨率、内参 `(fx, fy, cx, cy)`、OpenCV 镜头模型（`pinhole` 带径向和切向畸变，或 `fisheye`）、图像类型 `rgb` 或以米为单位的 `depth`）和安装位置组成。安装位置写 URDF 中的光学坐标系名（OpenCV 约定 +Z 向前、+Y 向下），或 `(link, xyz, rpy)` 直接装在某个连杆上，不必改 URDF。实验可以用 `override_cameras(cameras, config)` 改参数或增删相机，规则同 ManiSkill 的 `sensor_configs`：相机名下的设置只改这一路，其余键改全部相机，`resize=(w, h)` 按比例缩放内参。名字与 robot-bridge 中 X1Pro 的视角一致：
 
@@ -196,3 +196,14 @@ uv sync --locked --all-extras
 | `outputs/robots/x1pro-check/` | 检查报告与视频 | 本地；结论写入任务报告 |
 
 README 写明原始包和所选配置、关节表、对厂商数据的全部改动、几何与碰撞的实测数据和物理取值。
+
+GPU 与多环境检查分别执行：
+
+```bash
+"$ISAAC_PYTHON" scripts/robots/check_robot.py x1pro --physics gpu --gpu 0 --output outputs/robots/x1pro-gpu
+"$ISAAC_PYTHON" scripts/robots/check_parallel.py x1pro --num-envs 4 --gpu 0 --output outputs/robots/x1pro-parallel
+```
+
+多环境检查比较 N=1 与 N=4 的相同输入结果、不同输入的独立跟踪，以及单环境复位后其他环境的状态和目标保持不变；同时检查运动学物体复位在后续物理步中保持生效。`report.json` 与非零失败退出码供自动验收使用。
+
+GPU PhysX 不支持 CCD，GPU 配置关闭 CCD；碰撞验收通过详细接触张量读取穿透深度，CPU 继续使用接触事件。两种后端均保留原有验收阈值。

@@ -7,8 +7,9 @@ config in a temporary directory (removed when the app closes), requests the
 PhysX worker count on the command line and reads it back. Shader and texture caches stay
 shared: they only speed up start-up.
 
-The process sees only the requested GPU (``CUDA_VISIBLE_DEVICES``), so rendering
-and GPU physics both run on it as device 0. ``isaaclab.sim``, ``isaaclab.envs``
+The process sees only the requested GPU (``CUDA_VISIBLE_DEVICES``). CUDA uses
+logical device 0, while the Vulkan renderer uses the physical index.
+``isaaclab.sim``, ``isaaclab.envs``
 and the rest import only after :func:`start_app`.
 """
 
@@ -39,12 +40,29 @@ def start_app(*, gpu, workers=4, device='cpu', cameras=True, extra_args=()):
 
     portable = Path(tempfile.mkdtemp(prefix='kit-'))
     user_config = portable / 'user.config.json'
+    # Vulkan renderer indices remain physical when CUDA_VISIBLE_DEVICES masks
+    # CUDA. AppLauncher otherwise uses logical device zero for both APIs.
     kit_args = [f'--portable-root={portable}', f'--/app/userConfigPath={user_config}',
+                f'--/renderer/activeGpu={gpu}',
                 f'--{PHYSICS_WORKERS}={int(workers)}', *(arg for name in EXTENSIONS for arg in ('--enable', name)),
                 *extra_args]
-    launcher = AppLauncher(headless=True, enable_cameras=cameras, device='cpu' if device == 'cpu' else 'cuda:0',
+    launcher = AppLauncher(headless=True, enable_cameras=cameras, multi_gpu=False,
+                           device='cpu' if device == 'cpu' else 'cuda:0',
                            kit_args=' '.join(kit_args))
     app = launcher.app
+    # Batch runs own their simulation lifecycle, including repeated contexts.
+    # Lab's interactive STOP callback otherwise waits forever for a user to
+    # press Play, even during construction of a subsequent context.
+    import omni.timeline
+    from isaaclab.sim import SimulationContext
+
+    def disable_interactive_stop(event):
+        context = SimulationContext.instance()
+        if context is not None:
+            context._disable_app_control_on_stop_handle = True
+
+    app._batch_stop_subscription = omni.timeline.get_timeline_interface().get_timeline_event_stream().create_subscription_to_pop_by_type(
+        int(omni.timeline.TimelineEventType.STOP), disable_interactive_stop, order=0)
     # app.close() ends the process (with Kit's return code, 0 unless posted)
     # before atexit handlers run, so the (empty) directory goes first. Isaac
     # Lab's simulation context renders until the timeline plays again once it
@@ -68,6 +86,6 @@ def start_app(*, gpu, workers=4, device='cpu', cameras=True, extra_args=()):
     settings = carb.settings.get_settings()
     readback = {'physics_workers': settings.get(PHYSICS_WORKERS), 'user_config_path': settings.get('/app/userConfigPath')}
     if readback['physics_workers'] != int(workers) or Path(readback['user_config_path'] or '') != user_config:
-        app.close()
+        app.close(exit_code=1)
         raise RuntimeError(f'Kit settings differ from the request ({workers} workers, {user_config}): {readback}')
     return app

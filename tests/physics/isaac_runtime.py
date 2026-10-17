@@ -14,9 +14,9 @@ def main():
     portable=args.output/'relocated_asset';portable.mkdir(exist_ok=True)
     for name in ['object.usda','object.usdz','behavior.py','physics_test.py']:
         shutil.copyfile(args.asset/name,portable/name)
-    from isaacsim import SimulationApp
-    app=SimulationApp({'headless':True,'create_new_stage':False,'active_gpu':args.gpu,'physics_gpu':args.gpu,
-                       'multi_gpu':False,'disable_viewport_updates':True,'limit_cpu_threads':4})
+    from table_1000.sim.isaaclab.app import start_app
+    app=start_app(gpu=args.gpu, cameras=False)
+    failed=False
     try:
         import numpy as np
         from table_1000.physics.simulation import enable_scripting
@@ -24,10 +24,11 @@ def main():
         enable_scripting();ctx=TestContext(portable,name='runtime',app=app);ctx.simulation(gravity=(0,0,0))
         ctx.initial(position=(0,-.1,.15))
         b=ctx.spawn(portable,name='pen_b',position=(0,.1,.15))
-        ctx.run(.04);a=ctx.asset
-        assert a.behavior().male is a.behavior() and b.behavior().male is b.behavior()
-        baseline=b.behavior().observations()['opening']
+        a=ctx.asset
         with ctx.fixed(a.body('body')):
+            ctx.run(.04)
+            assert a.behavior().male is a.behavior() and b.behavior().male is b.behavior()
+            baseline=b.behavior().observations()['opening']
             ctx.force('weak_pull',a.body('cap'),keyframes=[{'time':.04,'force':(-.5,0,0)},{'time':.12,'force':(0,0,0)}])
             ctx.run(.12)
         error=abs(b.behavior().observations()['opening']-baseline);assert error<1e-6
@@ -53,10 +54,11 @@ def main():
                 'unload_removed_instance_and_subscription':True,'remaining_instance_continued':True,
                 'GUI':'not verified; headless official component only'}
         ctx.close();(args.output/'runtime.json').write_text(json.dumps(result,indent=2)+'\n');print('OFFICIAL_RUNTIME_CHECK_COMPLETED',flush=True)
-    except Exception:
+    except BaseException:
+        failed=True
         import traceback
         (args.output/'error.txt').write_text(traceback.format_exc());raise
-    finally:app.close()
+    finally:app.close(exit_code=int(failed))
 
 
 if __name__=='__main__':main()

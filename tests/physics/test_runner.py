@@ -3,12 +3,24 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from table_1000.physics.test import run_case
+from table_1000.physics.test import main, run_case
 
 
 class CaseResultsTests(unittest.TestCase):
+    def test_definition_import_failure_closes_kit_with_nonzero_status(self):
+        # Kit's close() normally terminates the process before Python can
+        # propagate an exception. It must receive the failure explicitly.
+        with tempfile.TemporaryDirectory() as temporary:
+            app = Mock()
+            with patch('table_1000.sim.isaaclab.app.start_app', return_value=app), \
+                 patch('table_1000.physics.test.subprocess.run', return_value=Mock(stdout='GPU')), \
+                 patch('table_1000.physics.test.load_tests', side_effect=ImportError('broken definition')):
+                with self.assertRaisesRegex(ImportError, 'broken definition'):
+                    main([temporary, '--output', temporary])
+            app.close.assert_called_once_with(exit_code=1)
+
     def test_benchmark_failure_removes_old_case_results(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
