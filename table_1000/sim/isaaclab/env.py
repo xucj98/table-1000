@@ -20,7 +20,8 @@ Observation (ManiSkill's layout; only what the real robot measures):
 Camera images are rendered on request (:meth:`RobotEnv.images`), not every step.
 Simulator-only state -- object poses and velocities, contacts, rendering aids --
 is reached through :meth:`RobotEnv.privileged` and the other methods, for experts,
-checks and evaluation, never for a policy.
+checks and evaluation, never for a policy. ``recorders`` (Isaac Lab's
+``RecorderManagerBaseCfg``, see :mod:`.recording`) record episodes to datasets.
 """
 
 from pathlib import Path
@@ -97,21 +98,43 @@ def intrinsic(env, matrix):
 
 # -- reset event ---------------------------------------------------------------------
 def apply_layout(env, env_ids):
-    """Write the pending layout and robot joints (:meth:`RobotEnv.reset`) into the reset environments."""
-    layout, robot_q = env.pending_reset
-    robot = env.scene['robot']
-    q = robot.data.default_joint_pos[env_ids].clone()
-    for name, value in robot_q.items():
-        q[:, robot.joint_names.index(name)] = float(value)
-    robot.write_joint_state_to_sim(q, torch.zeros_like(q), env_ids=env_ids)
-    robot.set_joint_position_target(q, env_ids=env_ids)
-    robot.set_joint_velocity_target(torch.zeros_like(q), env_ids=env_ids)
+    """Write the pending layout, object joints and robot joints (:meth:`RobotEnv.reset`) into the
+    reset environments, everything at rest."""
+    layout, robot_q, object_q = env.pending_reset
+    set_joints(env.scene['robot'], robot_q, env_ids)
     origins = env.scene.env_origins[env_ids]
-    for name, transform in layout.items():
-        shape = env.scene[name]
+
+    def world(transform):
         pose = pose_tensor(transform, env.device).repeat(len(env_ids), 1)
         pose[:, :3] += origins
-        place(env, shape, pose, env_ids)
+        return pose
+
+    for name, transform in layout.items():
+        structure = env.object_structures.get(name)
+        if structure is None:
+            place(env, env.scene[name], world(transform), env_ids)
+        elif structure.articulated:
+            # The articulation's root pose is its root body's.
+            articulation = env.scene[name]
+            articulation.write_root_pose_to_sim(world(transform @ structure.rest[structure.root]), env_ids=env_ids)
+            articulation.write_root_velocity_to_sim(torch.zeros(len(env_ids), 6, device=env.device), env_ids=env_ids)
+            set_joints(articulation, object_q.get(name, {}), env_ids)
+        else:
+            for body in structure.paths:
+                rigid = env.scene[lab_scene.body_entity(name, body)]
+                rigid.write_root_pose_to_sim(world(transform @ structure.rest[body]), env_ids=env_ids)
+                rigid.write_root_velocity_to_sim(torch.zeros(len(env_ids), 6, device=env.device), env_ids=env_ids)
+
+
+def set_joints(articulation, values, env_ids):
+    """Joints of ``articulation`` at ``values`` (``{name: value}``; others at their defaults), at
+    rest, with matching drive targets."""
+    q = articulation.data.default_joint_pos[env_ids].clone()
+    for name, value in values.items():
+        q[:, articulation.joint_names.index(name)] = float(value)
+    articulation.write_joint_state_to_sim(q, torch.zeros_like(q), env_ids=env_ids)
+    articulation.set_joint_position_target(q, env_ids=env_ids)
+    articulation.set_joint_velocity_target(torch.zeros_like(q), env_ids=env_ids)
 
 
 def kinematic(shape):
@@ -144,7 +167,7 @@ def place(env, shape, pose, env_ids):
 
 
 def env_cfg(scene, spec, assets, *, modes=None, cameras=None, depth=False, views=None, num_envs=1,
-            device='cpu', root=None):
+            device='cpu', root=None, recorders=None):
     """``ManagerBasedEnvCfg`` of ``spec`` in ``scene``. ``cameras``: robot cameras to render
     (``{name: CameraSpec}``, see :func:`~table_1000.robots.spec.override_cameras`); ``views``:
     fixed video views; ``modes``: arm, lift and head control modes (:func:`.actions.actions_cfg`)."""
@@ -205,6 +228,8 @@ def env_cfg(scene, spec, assets, *, modes=None, cameras=None, depth=False, views
     cfg = Cfg(scene=lab_scene.scene_cfg(scene, spec, assets, robot_q, num_envs=num_envs, cameras=cameras,
                                         depth=depth, views=views, root=root),
               observations=observations, actions=actions_cfg(spec, modes), events=EventsCfg())
+    if recorders is not None:
+        cfg.recorders = recorders
     cfg.sim = sim_utils.SimulationCfg(device=device, dt=DT, physx=sim_utils.PhysxCfg(solver_type=1, enable_ccd=True),
                                       # Cameras render on request (RobotEnv.images), not inside steps.
                                       render_interval=10 ** 9, use_fabric=device != 'cpu')
@@ -237,6 +262,8 @@ class RobotEnv:
         self.env = ManagerBasedEnv(env_cfg(scene, spec, assets, cameras=self.camera_specs, views=views, depth=depth,
                                            **kwargs))
         self.env.shape_views = {}       # USD views of kinematic shapes, by prim path (see place)
+        self.objects = lab_scene.object_structures(scene, assets)
+        self.env.object_structures = self.objects
         # The first physics step after the simulation starts restores kinematic bodies to their
         # authored poses, undoing the first reset's placement; it is taken here instead.
         self.env.sim.step(render=False)
@@ -249,6 +276,9 @@ class RobotEnv:
         prefix = '/World/envs/env_0'
         labels = {f'{prefix}/Robot': 'robot', f'{prefix}/Table': 'table', lab_scene.GROUND_PATH: 'ground'}
         labels.update({f'{prefix}/{lab_scene.SHAPE_PREFIX}{name}': f'{name}:body' for name in self.shapes})
+        # Object parts are labelled <object>:<body>.<part prim>, e.g. cabinet:cabinet.drawer3.handle.
+        labels.update({f'{prefix}/{lab_scene.OBJECT_PREFIX}{name}{path}': f'{name}:{body}'
+                       for name, structure in self.objects.items() for body, path in structure.paths.items()})
         self.contacts = Contacts(labels, contact_watch, DT)
         self.markers = None
         self.steps = 0
@@ -269,9 +299,11 @@ class RobotEnv:
         q.update(self.scene_source.ROBOT['joints'])
         return q
 
-    def reset(self, layout, robot_q=None):
-        """Place the shapes of ``layout`` and set the robot's joints (``{name: value}``, base included)."""
-        self.env.pending_reset = (layout, robot_q or self.initial_robot_q())
+    def reset(self, layout, robot_q=None, object_q=None):
+        """Place the shapes and objects of ``layout`` (``{name: 4x4 world pose}``; an object's pose is
+        its asset frame's), set the robot's joints (``{name: value}``, base included) and the objects'
+        (``{object: {joint: value}}``; unlisted joints at their defaults)."""
+        self.env.pending_reset = (layout, robot_q or self.initial_robot_q(), object_q or {})
         self.env.reset()
         self.steps = 0
         self.contacts.clear()
@@ -292,6 +324,15 @@ class RobotEnv:
     def qpos(self, joints):
         """``[N, len(joints)]`` measured positions of the named joints."""
         return self.obs['agent']['qpos'][:, [self.joints.index(name) for name in joints]]
+
+    @property
+    def action_layout(self):
+        """``{group: (start, stop)}`` of each action group in the flat action."""
+        layout, start = {}, 0
+        for name, term in self.terms.items():
+            layout[name] = (start, start + term.action_dim)
+            start += term.action_dim
+        return layout
 
     def action(self, action):
         """The flat Isaac Lab action of a dict action; missing groups hold."""
@@ -320,15 +361,57 @@ class RobotEnv:
 
     # -- privileged state (experts, checks, evaluation) ---------------------------------
     def privileged(self):
-        """``{'poses': {shape: [N, 4, 4]}, 'velocities': {shape: [N, 6]}}`` of the scene's shapes (world)."""
-        poses, velocities = {}, {}
+        """World state of the scene's shapes and object bodies, NumPy with the environment axis:
+
+        - ``poses``, ``velocities``: ``{key: [N, 4, 4]}``, ``{key: [N, 6]}`` (linear and angular
+          velocity of the centre of mass); a shape's key is its name, an object body's
+          ``<object>:<body>`` (e.g. ``cabinet:cabinet.drawer3``)
+        - ``joints``: ``{object: {joint: [N]}}`` of articulated objects
+        """
+        origins = self.env.scene.env_origins
+        poses, velocities, joints = {}, {}, {}
+
+        def add(key, pose, velocity):
+            pose = pose.clone()
+            pose[:, :3] -= origins
+            poses[key] = transforms(pose).cpu().numpy()
+            velocities[key] = velocity.cpu().numpy()
+
         for name in self.shapes:
             data = self.env.scene[name].data
-            pose = data.root_link_pose_w.clone()
-            pose[:, :3] -= self.env.scene.env_origins
-            poses[name] = transforms(pose).cpu().numpy()
-            velocities[name] = data.root_com_vel_w.cpu().numpy()
-        return {'poses': poses, 'velocities': velocities}
+            add(name, data.root_link_pose_w, data.root_com_vel_w)
+        for name, structure in self.objects.items():
+            if structure.articulated:
+                articulation = self.env.scene[name]
+                data = articulation.data
+                for body, path in structure.paths.items():
+                    index = articulation.body_names.index(path.rsplit('/', 1)[-1])
+                    add(f'{name}:{body}', data.body_link_pose_w[:, index], data.body_com_vel_w[:, index])
+                joints[name] = dict(zip(articulation.joint_names, data.joint_pos.T.cpu().numpy()))
+            else:
+                for body in structure.paths:
+                    data = self.env.scene[lab_scene.body_entity(name, body)].data
+                    add(f'{name}:{body}', data.root_link_pose_w, data.root_com_vel_w)
+        return {'poses': poses, 'velocities': velocities, 'joints': joints}
+
+    def object_pose(self, name):
+        """``[N, 4, 4]`` world pose of asset object ``name``'s frame (from its root or first body)."""
+        structure = self.objects[name]
+        body = structure.root or next(iter(structure.paths))
+        pose = self.privileged()['poses'][f'{name}:{body}']
+        return pose @ np.linalg.inv(structure.rest[body])
+
+    def center_of_mass(self, key):
+        """``[N, 3]`` world centre of mass of an object body (``<object>:<body>``)."""
+        name, body = key.split(':', 1)
+        structure = self.objects[name]
+        if structure.articulated:
+            articulation = self.env.scene[name]
+            index = articulation.body_names.index(structure.paths[body].rsplit('/', 1)[-1])
+            position = articulation.data.body_com_pos_w[:, index]
+        else:
+            position = self.env.scene[lab_scene.body_entity(name, body)].data.root_com_pos_w
+        return (position - self.env.scene.env_origins).cpu().numpy()
 
     def set_shape_pose(self, name, transform):
         """Teleport a shape to world ``transform`` (every environment) and stop it."""

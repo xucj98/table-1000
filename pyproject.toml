@@ -19,7 +19,10 @@ sim = [
 # Using robots: kinematics, planning and time parameterization.
 robots = ["mplib==0.2.1", "toppra==0.6.10", "trimesh==4.5.1", "rtree==1.3.0"]
 # Developing assets and robots: mesh processing, convex decomposition, the asset store.
-dev = ["open3d==0.20.0", "coacd==1.0.11", "huggingface_hub==0.36.2", "pytest"]
+dev = ["open3d==0.20.0", "coacd==1.0.11", "huggingface_hub==0.35.3", "pytest"]
+# Converting trajectories to LeRobot v3.0 datasets. Pinned to what runs next to Isaac Sim:
+# torchcodec 0.5 is the release for torch 2.7, pyarrow 21 the last with NumPy 1.x.
+data = ["lerobot==0.4.4", "h5py==3.14.0", "torchcodec==0.5", "pyarrow==21.0.0"]
 
 [build-system]
 requires = ["uv_build>=0.12.5,<0.13"]
@@ -33,6 +36,12 @@ module-root = ""
 environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
 # Isaac Sim and Isaac Lab wheels are on NVIDIA's index; their dependencies on PyPI.
 index-strategy = "unsafe-best-match"
+# LeRobot against Isaac Sim: Isaac Sim pins packaging 23.0 (Isaac Lab <24), LeRobot needs
+# >=24.2; 24.2 runs both. LeRobot's rerun-sdk (visualization only, needs NumPy 2) is dropped.
+override-dependencies = [
+    "packaging==24.2",
+    "rerun-sdk; sys_platform == 'never'",
+]
 
 [[tool.uv.index]]
 name = "nvidia"

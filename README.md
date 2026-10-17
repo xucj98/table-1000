@@ -28,10 +28,13 @@ uv run python -c "import table_1000; print(table_1000.__file__)"
 | `sim` | 仿真与资产物理测试 | Isaac Sim 5.1.0、Isaac Lab 2.3.2.post1、PyTorch 2.7.0（CUDA 12.8） |
 | `robots` | 机器人运动学与规划 | MPlib、toppra、trimesh、rtree |
 | `dev` | 资产与机器人开发 | Open3D、CoACD、huggingface_hub、pytest |
+| `data` | 导出 LeRobot 数据集 | LeRobot 0.4.4 |
 
 ```bash
 uv sync --locked --all-extras        # 或 --extra sim 等只装需要的组
 ```
+
+LeRobot 与 Isaac Sim 原本有两处版本冲突，`pyproject.toml` 用 `override-dependencies` 统一：Isaac Sim 锁定 `packaging==23.0`、LeRobot 要求 `>=24.2`，统一用 24.2；LeRobot 依赖的 `rerun-sdk`（只用于可视化，要求 NumPy 2）不安装。另把 `pyarrow` 固定在 21（最后支持 NumPy 1.x 的版本），`torchcodec` 固定在 0.5（对应 PyTorch 2.7）。
 
 `sim` 组约 19 GB，安装后 `.venv/bin/python` 即仿真解释器。Blender 使用其自带的 Python；策略使用各自的环境。
 
