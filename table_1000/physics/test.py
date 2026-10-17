@@ -58,25 +58,38 @@ def ground_clearance(model, rows, instance_names, ground_z):
             'method':'collision hull vertices and analytic sphere extents transformed by recorded rigid poses; geometric overlap excludes contact margins'}
 
 
-def benchmark(asset,name,test,app):
+def benchmark(asset,name,test,app,physics="cpu"):
     from table_1000.physics.testing import TestContext
+    # Warm a disposable scene: restoring poses alone cannot restore the
+    # contact solver's internal state. Every measured repeat starts fresh.
+    warm = TestContext(asset, name=name, app=app, physics=physics)
+    start = time.perf_counter()
+    try:
+        test(warm)
+        assert warm.session.time >= 1., 'RTF warmup requires at least one simulated second'
+        warmup = time.perf_counter()-start
+    finally:
+        warm.close()
     rounds=[]
     for _ in range(3):
-        seconds=wall=prepare=warmup=0.
+        seconds=wall=prepare=0.
         finals=[]
         while seconds < 10-1e-8:
             start=time.perf_counter()
-            ctx=TestContext(asset,name=name,app=app,warmup=True)
+            ctx=TestContext(asset,name=name,app=app,physics=physics)
             construction=time.perf_counter()-start
-            test(ctx)
-            seconds+=ctx.session.time;wall+=time.perf_counter()-ctx.experiment_started
-            prepare+=construction+ctx.preparation_seconds;warmup+=ctx.warmup_seconds
-            finals.append(ctx.rows[-1])
-            ctx.close()
+            try:
+                test(ctx)
+                seconds+=ctx.session.time;wall+=time.perf_counter()-ctx.experiment_started
+                prepare+=construction+ctx.preparation_seconds
+                finals.append(ctx.rows[-1])
+            finally:
+                ctx.close()
         rounds.append({'simulated_seconds':seconds,'wall_seconds':wall,'RTF':seconds/wall,
-                       'independent_repeats':len(finals),'preparation_reset_seconds':prepare,'warmup_seconds':warmup,
+                       'independent_repeats':len(finals),'preparation_reset_seconds':prepare,
                        'final_states':finals})
-    return {'rounds':rounds,'median_RTF':statistics.median(r['RTF'] for r in rounds),
+    return {'warmup':{'wall_seconds':warmup,'method':'one complete experiment in a disposable scene before measured rounds'},
+            'rounds':rounds,'median_RTF':statistics.median(r['RTF'] for r in rounds),
             'includes':'physical steps, official behavior, test actions, state reading and in-memory sampling; no camera or rendering'}
 
 
@@ -88,6 +101,7 @@ def conditions(ctx):
     from isaacsim.core.simulation_manager import SimulationManager
     from isaacsim.core.version import get_version
     from threadpoolctl import threadpool_info
+    from table_1000.sim.isaaclab.fixtures import LINK_MASS, LINK_INERTIA
     settings=carb.settings.get_settings()
     engine={}
     for instance in ctx.session.instances.values():
@@ -97,9 +111,9 @@ def conditions(ctx):
             # One-body views report only that body's actual collision shapes.
             tensor=SimulationManager.get_physics_sim_view().create_rigid_body_view(instance.paths[name])
             shapes[name]={'count':tensor.max_shapes,
-                'materials_static_dynamic_restitution':np.unique(np.asarray(tensor.get_material_properties()).reshape(-1,3),axis=0).tolist(),
-                'contact_offsets_m':np.unique(np.asarray(tensor.get_contact_offsets())).tolist(),
-                'rest_offsets_m':np.unique(np.asarray(tensor.get_rest_offsets())).tolist()}
+                'materials_static_dynamic_restitution':np.unique(np.asarray(tensor.get_material_properties().cpu()).reshape(-1,3),axis=0).tolist(),
+                'contact_offsets_m':np.unique(np.asarray(tensor.get_contact_offsets().cpu())).tolist(),
+                'rest_offsets_m':np.unique(np.asarray(tensor.get_rest_offsets().cpu())).tolist()}
         engine[instance.name]={'mass_kg':instance.mass.tolist(),'center_of_mass_m':instance.local_com.tolist(),
               'inertia_kg_m2':instance.local_inertia.tolist(),
               'collision_shapes':shapes,
@@ -115,8 +129,15 @@ def conditions(ctx):
                 'dampings':instance.articulation.get_dof_dampings().tolist()}
     cpu=next(line.split(':',1)[1].strip() for line in Path('/proc/cpuinfo').read_text().splitlines() if line.startswith('model name'))
     scene=next(p for p in ctx.session.stage.Traverse() if p.IsA(UsdPhysics.Scene))
-    scene_ccd=PhysxSchema.PhysxSceneAPI(scene).GetEnableCCDAttr().Get()
-    return {'engine':'Isaac Sim / CPU PhysX','isaac_version':get_version(),'dt':ctx.dt,'solver':'TGS','gpu_dynamics':False,'scene_CCD':scene_ccd,
+    scene_api=PhysxSchema.PhysxSceneAPI(scene)
+    scene_ccd=scene_api.GetEnableCCDAttr().Get()
+    return {'engine':'Isaac Lab / Isaac Sim / '+ctx.physics.upper()+' PhysX','isaac_version':get_version(),'dt':ctx.dt,'solver':scene_api.GetSolverTypeAttr().Get(),'gpu_dynamics':scene_api.GetEnableGPUDynamicsAttr().Get(),'device':ctx.world.device,'scene_CCD':scene_ccd,
+            'solver_configuration':ctx.world.cfg.physx.to_dict(),
+            'fixtures':[({'body':f.body.path,'kind':'fixed articulation root','locked':True}
+                         if not hasattr(f, 'stiffness') else {'body':f.body.path,'kind':'six-axis tensor articulation','locked':f.locked,
+                         'virtual_link_mass_kg':LINK_MASS,'virtual_link_inertia_kg_m2':LINK_INERTIA,
+                         'virtual_links':6,'stiffness':f.stiffness.tolist(),'damping':f.damping.tolist()})
+                        for f in ctx.fixtures],
             'instances':len(ctx.session.instances),'gravity':ctx.gravity,'ground':getattr(ctx,'ground_config',None),
             'physics_values_from_engine':engine,'cpu':cpu,
             'load_average':list(os.getloadavg()),'environment_threads':{key:os.getenv(key) for key in ['OMP_NUM_THREADS','OPENBLAS_NUM_THREADS','MKL_NUM_THREADS','NUMEXPR_NUM_THREADS']},
@@ -130,6 +151,7 @@ def conditions(ctx):
                 '/rtx/directLighting/domeLight/denoisingTechnique','/rtx/shadows/sampleCount','/rtx/shadows/denoiser/enable',
                 '/rtx/reflections/sampledLighting/samplesPerPixel','/rtx/reflections/denoiser/enabled','/rtx/post/taa/samples']},
             'camera':ctx.camera_config,
+            'render_passes_per_capture':2 if ctx.camera_instance else 0,
             'lighting':{'dome_intensity':ctx.session.stage.GetPrimAtPath('/World/Light').GetAttribute('inputs:intensity').Get(),
                         'sun_intensity':ctx.session.stage.GetPrimAtPath('/World/Sun').GetAttribute('inputs:intensity').Get(),
                         'sun_rotation_xyz_degrees':list(ctx.session.stage.GetPrimAtPath('/World/Sun').GetAttribute('xformOp:rotateXYZ').Get())}
@@ -137,12 +159,12 @@ def conditions(ctx):
             'standard_dt':ctx.dt==.004}
 
 
-def run_video(asset,name,test,output,app,startup,rtf,gpu):
+def run_video(asset,name,test,output,app,startup,rtf,gpu,physics="cpu"):
     from table_1000.physics.testing import TestContext
     from table_1000.physics.plots import plots
     directory=output/name
     started=time.perf_counter()
-    ctx=TestContext(asset,name=name,render=True,app=app,warmup=True)
+    ctx=TestContext(asset,name=name,render=True,app=app,physics=physics)
     construction=time.perf_counter()-started
     try:
         test(ctx)
@@ -162,9 +184,9 @@ def run_video(asset,name,test,output,app,startup,rtf,gpu):
         result={'test':name,'execution_status':'completed','review_status':'pending','asset':str(asset),
             'conditions':{**conditions(ctx),'gpu':gpu},'columns':ctx.units,'plots':ctx.plot_columns,
             'steps':ctx.session.steps,'frames':len(ctx.images),'sampling':'state after integration at t; action columns are the force applied over [t-dt,t); initial t=0 has zero actions',
-            'physics_callbacks':'actions/state priority -100; official BehaviorScript priority 0 when present; batched force flush priority 100; one external physical step; TGS position iterations internally subdivide solver work',
+            'physics_callbacks':'actions/state priority -100; official BehaviorScript priority 0 when present; batched force flush priority 100; one external physical step; actual solver and iterations in conditions',
             'performance':{'no_render':rtf,'video_end_to_end':{'simulated_seconds':ctx.session.time,'wall_seconds':wall,'RTF':ctx.session.time/wall},
-                 'preparation':{'process_startup_seconds':startup,'construction_seconds':construction,'initialization_render_warmup_reset_seconds':ctx.preparation_seconds,'physical_warmup_seconds':ctx.warmup_seconds},
+                 'preparation':{'process_startup_seconds':startup,'construction_seconds':construction,'initialization_render_warmup_reset_seconds':ctx.preparation_seconds},
                  'independent_no_render_vs_video_final_max_scalar_error':max(errors)},
             'reaction_forces':'not sampled; recorded test forces are not contact or fixture reaction forces'}
         if getattr(ctx, 'experiment_details', None):
@@ -179,14 +201,14 @@ def run_video(asset,name,test,output,app,startup,rtf,gpu):
         ctx.close()
 
 
-def run_case(asset,name,test,output,app,startup,gpu):
+def run_case(asset,name,test,output,app,startup,gpu,physics="cpu"):
     directory=output/name
     if directory.exists():shutil.rmtree(directory)
     (output/(name+'.mp4')).unlink(missing_ok=True)
     directory.mkdir(parents=True)
     try:
-        rtf=benchmark(asset,name,test,app)
-        return run_video(asset,name,test,output,app,startup,rtf,gpu)
+        rtf=benchmark(asset,name,test,app,physics=physics)
+        return run_video(asset,name,test,output,app,startup,rtf,gpu,physics=physics)
     except Exception:
         (directory/'result.json').write_text(json.dumps({'test':name,'execution_status':'failed',
             'review_status':'pending','error':traceback.format_exc()},indent=2)+'\n')
@@ -200,14 +222,16 @@ def main(argv=None):
     parser.add_argument('--output',type=Path)
     parser.add_argument('--tests',nargs='+')
     parser.add_argument('--gpu',type=int,default=0)
+    parser.add_argument('--physics',choices=('cpu','gpu'),default='cpu',help='physics backend; --gpu selects the physical device')
     parser.add_argument('--plots-only',action='store_true')
     args=parser.parse_args(argv)
     asset=args.asset.resolve()
     if asset.is_dir():asset=asset/('object.usda' if (asset/'object.usda').exists() else 'object.usdz')
-    tests=load_tests(args.script or asset.parent/'physics_test.py')
-    if args.tests:tests={name:tests[name] for name in args.tests}
+    script=args.script or asset.parent/'physics_test.py'
     output=(args.output or asset.parent/'physics_test').resolve();output.mkdir(parents=True,exist_ok=True)
     if args.plots_only:
+        tests=load_tests(script)
+        if args.tests:tests={name:tests[name] for name in args.tests}
         from table_1000.physics.plots import plot_trace
         for name in tests:
             result=json.loads((output/name/'result.json').read_text())
@@ -217,26 +241,31 @@ def main(argv=None):
     gpu={'physical_index':args.gpu,'before_process_start':subprocess.run(
         ['nvidia-smi','--query-gpu=index,name,driver_version,memory.used,utilization.gpu','--format=csv'],
         check=True,capture_output=True,text=True).stdout.strip()}
-    from table_1000.common.path import configure_isaac_paths
-    configure_isaac_paths()
-    from isaacsim import SimulationApp
-    app=SimulationApp({'headless':True,'create_new_stage':False,'active_gpu':args.gpu,'physics_gpu':0 if os.getenv('CUDA_VISIBLE_DEVICES') == str(args.gpu) else args.gpu,'multi_gpu':False,
-         'disable_viewport_updates':True,'limit_cpu_threads':4,'renderer':'RaytracedLighting','width':960,'height':480,
-         'extra_args':['--/persistent/physics/numThreads=4','--/rtx/post/motionblur/enabled=False',
-                       '--/persistent/rtx/modes/rt2/enabled=true']})
+    from table_1000.sim.isaaclab.app import start_app
+    from table_1000.sim.isaaclab.render import RT2_ARGS
+    app=start_app(gpu=args.gpu, device='cpu' if args.physics=='cpu' else 'cuda:0',
+                  extra_args=(*RT2_ARGS,'--/rtx/post/motionblur/enabled=False'))
     startup=time.perf_counter()-started
+    failed=False
     try:
+        tests=load_tests(script)
+        if args.tests:tests={name:tests[name] for name in args.tests}
         import carb
         from threadpoolctl import threadpool_limits
         from table_1000.physics.simulation import enable_scripting
         enable_scripting()
+        # Complete extension startup before replacing the launcher stage.
+        for _ in range(5):
+            app.update()
         carb.settings.get_settings().set('/persistent/physics/numThreads',4)
         carb.settings.get_settings().set('/rtx/post/motionblur/enabled',False)
-        with threadpool_limits(limits=1):
+        # OpenMP is set before startup; changing it after Kit starts can stall RTX.
+        with threadpool_limits(limits=1, user_api='blas'):
             for name,test in tests.items():
-                run_case(asset,name,test,output,app,startup,gpu)
-    except Exception:
+                run_case(asset,name,test,output,app,startup,gpu,physics=args.physics)
+    except BaseException:
+        failed=True
         traceback.print_exc()
         raise
     finally:
-        app.close()
+        app.close(exit_code=int(failed))

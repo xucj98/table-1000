@@ -6,7 +6,7 @@ action term per robot group (:mod:`.actions`), robot-observable observations and
 a reset event that applies a layout. :class:`RobotEnv` wraps the resulting
 environment with dict actions and NumPy observations; every array has a leading
 environment axis. ``device='cpu'`` runs CPU PhysX; GPU PhysX needs only
-``device='cuda:0'`` (not yet validated).
+``device='cuda:0'``. Acceptance scripts record backend-specific results.
 
 Observation (ManiSkill's layout; only what the real robot measures):
 
@@ -133,6 +133,10 @@ def place(env, shape, pose, env_ids):
     if not kinematic(shape):
         shape.write_root_velocity_to_sim(torch.zeros(len(env_ids), 6, device=env.device), env_ids=env_ids)
         return
+    if env.device != 'cpu':
+        # PhysX 5.1's GPU rigid view has no set_kinematic_targets implementation.
+        # A reset teleports the body through set_transforms instead.
+        return
     target = pose.clone()
     target[:, 3:] = convert_quat(target[:, 3:], to='xyzw')
     indices = torch.as_tensor(env_ids, dtype=torch.int32, device=env.device)
@@ -205,7 +209,8 @@ def env_cfg(scene, spec, assets, *, modes=None, cameras=None, depth=False, views
     cfg = Cfg(scene=lab_scene.scene_cfg(scene, spec, assets, robot_q, num_envs=num_envs, cameras=cameras,
                                         depth=depth, views=views, root=root),
               observations=observations, actions=actions_cfg(spec, modes), events=EventsCfg())
-    cfg.sim = sim_utils.SimulationCfg(device=device, dt=DT, physx=sim_utils.PhysxCfg(solver_type=1, enable_ccd=True),
+    cfg.sim = sim_utils.SimulationCfg(device=device, dt=DT,
+                                      physx=sim_utils.PhysxCfg(solver_type=1, enable_ccd=device == 'cpu'),
                                       # Cameras render on request (RobotEnv.images), not inside steps.
                                       render_interval=10 ** 9, use_fabric=device != 'cpu')
     cfg.ui_window_class_type = None
@@ -237,6 +242,15 @@ class RobotEnv:
         self.env = ManagerBasedEnv(env_cfg(scene, spec, assets, cameras=self.camera_specs, views=views, depth=depth,
                                            **kwargs))
         self.env.shape_views = {}       # USD views of kinematic shapes, by prim path (see place)
+        if self.env.device != 'cpu':
+            self.env.sim.forward()
+            for camera in self.env.scene.sensors.values():
+                if hasattr(camera, '_view'):
+                    # Lab 2.3's first Xform read calls Kit.update() and copies
+                    # stale USD poses over GPU Fabric. Physics already owns the
+                    # transforms; initialize the view against that Fabric state.
+                    camera._view._initialize_fabric()
+                    camera._view._fabric_usd_sync_done = True
         # The first physics step after the simulation starts restores kinematic bodies to their
         # authored poses, undoing the first reset's placement; it is taken here instead.
         self.env.sim.step(render=False)
@@ -249,7 +263,7 @@ class RobotEnv:
         prefix = '/World/envs/env_0'
         labels = {f'{prefix}/Robot': 'robot', f'{prefix}/Table': 'table', lab_scene.GROUND_PATH: 'ground'}
         labels.update({f'{prefix}/{lab_scene.SHAPE_PREFIX}{name}': f'{name}:body' for name in self.shapes})
-        self.contacts = Contacts(labels, contact_watch, DT)
+        self.contacts = Contacts(labels, contact_watch, DT, device=self.env.device)
         self.markers = None
         self.steps = 0
         self.timings = {'step_s': 0., 'render_s': 0.}
@@ -273,6 +287,7 @@ class RobotEnv:
         """Place the shapes of ``layout`` and set the robot's joints (``{name: value}``, base included)."""
         self.env.pending_reset = (layout, robot_q or self.initial_robot_q())
         self.env.reset()
+        self.env.sim.forward()
         self.steps = 0
         self.contacts.clear()
         return self.observe()
@@ -350,6 +365,9 @@ class RobotEnv:
         import time
         started = time.perf_counter()
         self.env.sim.render()
+        if self.env.device != 'cpu':
+            # Flush newly authored visual geometry before reading annotators.
+            self.env.sim.render()
         out = {}
         for name in names:
             camera = self.env.scene[name]

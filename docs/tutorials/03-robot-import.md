@@ -15,19 +15,19 @@
 | **使用机器人**：场景、任务和其他资产的开发者 | 仓库中的 `asset_sources/robots/x1pro/` 与 `table_1000/`；不需要原始包，也不需要数据集权限 | 构建（第 4 节），之后按需运行验收与遥控（第 6 节） |
 | **开发机器人**：修改转换选择、重新生成网格、更新厂商数据 | 另需厂商原始包（Hugging Face 私有数据集） | 第 1–6 节全部 |
 
-使用机器人需要项目环境的 `sim` 与 `robots` 依赖组（版本见 [README](../../README.md#开发环境) 与 `uv.lock`），以及第二章的 `ISAAC_PYTHON`、`OMNI_KIT_ACCEPT_EULA`：
+使用机器人需要项目环境的 `sim` 与 `robots` 依赖组（版本见 [README](../../README.md#开发环境) 与 `uv.lock`）。Isaac Sim 已包含在项目环境中，直接用 `uv run python` 运行，无需另外指定解释器；首次准备环境时执行（已有依赖可跳过 `uv sync`）：
 
 ```bash
 uv sync --locked --extra sim --extra robots
-export ISAAC_PYTHON=$PWD/.venv/bin/python
+export OMNI_KIT_ACCEPT_EULA=YES
 ```
 
 之后只需三条命令：
 
 ```bash
-"$ISAAC_PYTHON" scripts/robots/build_robot.py x1pro --gpu 0
-"$ISAAC_PYTHON" scripts/robots/check_robot.py x1pro --output outputs/robots/x1pro-check --gpu 0
-"$ISAAC_PYTHON" scripts/robots/teleop.py x1pro --output outputs/robots/x1pro-teleop --gpu 0 --port 8765
+uv run python scripts/robots/build_robot.py x1pro --gpu 0
+uv run python scripts/robots/check_robot.py x1pro --output outputs/robots/x1pro-check --gpu 0
+uv run python scripts/robots/teleop.py x1pro --output outputs/robots/x1pro-teleop --gpu 0 --port 8765
 ```
 
 构建把 `assets/robots/x1pro/robot.usda` 写到已忽略的 `assets/` 下，场景按 `robots/x1pro` 引用它；代码里用 `table_1000.robots.load_spec('x1pro')` 取机器人描述，`RobotModel` 做运动学与规划，`RobotEnv` 控制仿真中的机器人（第 5 节）。构建、源码检查、验收和遥控都只读源码目录；只有第 3 节的重新生成需要原始包。
@@ -43,8 +43,8 @@ uv sync --locked --all-extras
 厂商原始包不进 Git，存档在 Hugging Face 私有数据集中，数据集名、固定版本和路径记录在仓库根目录的 [assets.lock.json](../../assets.lock.json)。首次使用先登录有访问权限的账号，再把原始包下载到 `assets/`：
 
 ```bash
-"$(dirname "$ISAAC_PYTHON")/hf" auth login
-"$ISAAC_PYTHON" scripts/assets/remote.py pull robots/x1pro/raw/ex001_render
+uv run hf auth login
+uv run python scripts/assets/remote.py pull robots/x1pro/raw/ex001_render
 ```
 
 原始包落在 `assets/robots/x1pro/raw/ex001_render/`。`remote.py list` 显示清单；`remote.py push <assets 下的目录> -m "说明"` 上传一个目录并把新版本写入清单，随后提交清单。
@@ -65,7 +65,7 @@ uv sync --locked --all-extras
 ## 3. 生成机器人源码（开发机器人）
 
 ```bash
-"$ISAAC_PYTHON" scripts/robots/prepare_robot.py x1pro
+uv run python scripts/robots/prepare_robot.py x1pro
 ```
 
 约 10 分钟，重写 `robot.urdf` 和 `meshes/`，README、`prepare.py`、`physics.py` 与缩略图保持不变：
@@ -78,7 +78,7 @@ uv sync --locked --all-extras
 转换结束后自动检查，也可单独运行（约 10 s，只读源码，不需要原始包）：
 
 ```bash
-"$ISAAC_PYTHON" scripts/robots/prepare_robot.py x1pro --check
+uv run python scripts/robots/prepare_robot.py x1pro --check
 ```
 
 `assets/robots/x1pro/prepare.json` 记录每个网格的原面数、简化后面数与误差；`check.json` 记录每个外观网格越出其碰撞凸块的最大距离和目录大小。本例：44 个外观网格共约 37 万面，最大误差 0.91 mm（轮子）；64 个凸块文件，越出最多 0.19 mm（夹爪座）；目录 8.5 MB。
@@ -100,7 +100,7 @@ uv sync --locked --all-extras
 构建 USD：
 
 ```bash
-"$ISAAC_PYTHON" scripts/robots/build_robot.py x1pro --gpu 0
+uv run python scripts/robots/build_robot.py x1pro --gpu 0
 ```
 
 约 40 s（含 Isaac 启动）。移动机器人先写 `mobile.urdf`：在 `base_link` 前加世界 x、y、偏航三个虚拟关节，仿真通过它们移动底盘，机器人 prim 留在原点。构建在 `assets/robots/x1pro/` 写入 `mobile.urdf`、`import/`（URDF 导入器输出）、`robot.usda`（加载入口）、`robot.urdf` 与 `physics.py` 快照和 `build.json`。构建只删除并重建 `import/`，不触及 `raw/`。
@@ -112,7 +112,7 @@ uv sync --locked --all-extras
 - [kinematics.py](../../table_1000/robots/kinematics.py) 的 `RobotModel`：一个 MPlib 模型包含全部身体关节，每只手臂一个规划器。提供正运动学、IK、头部 look-at、RRTConnect 与直线规划，只做自碰撞检查。
 - 仿真环境基于 Isaac Lab 的 `ManagerBasedEnv`：[table_1000/sim/isaaclab/env.py](../../table_1000/sim/isaaclab/env.py) 的 `RobotEnv(scene, spec, assets)` 由场景源码和 `SPEC` 生成 Isaac Lab 的场景、动作与观测配置；`reset(layout)` 写入物体摆放与机器人关节，`step(action)` 执行一个控制周期。检查、遥控和后续章节的专家脚本都通过它运行，数组带环境维 N。
 - 动作 25 Hz 一个，每个动作覆盖 10 个 4 ms 物理步（[actions.py](../../table_1000/sim/isaaclab/actions.py)）：底盘速度、升降与头部位置、手臂关节位置（或 Isaac Lab 的差分 IK 做 TCP 增量）、夹爪间距，见[机器人规范](../designs/asset-pipeline/robots.md#机器人层运动学规划与控制)。
-- 目前在 CPU PhysX 上验收（N = 1）；GPU 仿真只需把 `device` 换成 `cuda`，验证见 [issue #11](https://github.com/xucj98/table-1000/issues/11)。
+- 验收入口用 `--physics cpu|gpu` 选择物理后端（默认 CPU），`--gpu` 选择显卡。GPU 与多环境结果须独立验收，不能由 CPU 的通过结果推断。
 
 **感知接口**：`SPEC.cameras` 的每一路图像是一个 `CameraSpec`，由传感器参数（`Sensor`：分辨率、内参 `(fx, fy, cx, cy)`、OpenCV 镜头模型（`pinhole` 带径向和切向畸变，或 `fisheye`）、图像类型 `rgb` 或以米为单位的 `depth`）和安装位置组成。安装位置写 URDF 中的光学坐标系名（OpenCV 约定 +Z 向前、+Y 向下），或 `(link, xyz, rpy)` 直接装在某个连杆上，不必改 URDF。实验可以用 `override_cameras(cameras, config)` 改参数或增删相机，规则同 ManiSkill 的 `sensor_configs`：相机名下的设置只改这一路，其余键改全部相机，`resize=(w, h)` 按比例缩放内参。名字与 robot-bridge 中 X1Pro 的视角一致：
 
@@ -127,10 +127,23 @@ uv sync --locked --all-extras
 ## 6. 验收
 
 ```bash
-"$ISAAC_PYTHON" scripts/robots/prepare_robot.py x1pro --check
-"$ISAAC_PYTHON" scripts/robots/check_robot.py x1pro --output outputs/robots/x1pro-check --gpu 0 --video
-"$ISAAC_PYTHON" -m table_1000.robots.preview asset_sources/robots/x1pro --joints '{"lift_joint": 0.4, "head_pitch_joint": 0.3, "right_arm_joint2": 0.4, "right_arm_joint3": -1.0, "left_arm_joint2": 0.4, "left_arm_joint3": -1.0, "right_arm_gripper_left_joint": 0.03, "right_arm_gripper_right_joint": -0.03, "left_arm_gripper_left_joint": 0.03, "left_arm_gripper_right_joint": -0.03}'
+uv run python scripts/robots/prepare_robot.py x1pro --check
+uv run python scripts/robots/check_robot.py x1pro --output outputs/robots/x1pro-check --gpu 0 --video
+uv run python -m table_1000.robots.preview asset_sources/robots/x1pro --joints '{"lift_joint": 0.4, "head_pitch_joint": 0.3, "right_arm_joint2": 0.4, "right_arm_joint3": -1.0, "left_arm_joint2": 0.4, "left_arm_joint3": -1.0, "right_arm_gripper_left_joint": 0.03, "right_arm_gripper_right_joint": -0.03, "left_arm_gripper_left_joint": 0.03, "left_arm_gripper_right_joint": -0.03}'
 ```
+
+GPU 与单卡多环境检查分别执行（`check_parallel.py` 固定使用 GPU 物理后端）：
+
+```bash
+uv run python scripts/robots/check_robot.py x1pro --physics gpu --gpu 0 --output outputs/robots/x1pro-gpu
+uv run python scripts/robots/check_parallel.py x1pro --num-envs 4 --gpu 0 --output outputs/robots/x1pro-parallel
+```
+
+多环境检查比较 N=1 与 N=4 的相同输入结果、不同输入的独立跟踪，以及单环境复位后其他环境的状态和目标保持不变；同时检查运动学物体复位在后续物理步中保持生效。`report.json` 与非零失败退出码供自动验收使用。
+
+GPU PhysX 不支持 CCD，GPU 配置关闭 CCD；碰撞验收通过详细接触张量读取穿透深度，CPU 继续使用接触事件。两种后端均保留原有验收阈值。
+
+当前每个进程使用 `--gpu` 指定的一张显卡。`--num-envs 4` 表示单卡内并行 4 个环境，检查 N=1/N=4 对照、独立动作与局部重置；它不测量多环境 RTF。多卡可分别启动独立进程、指定不同 `--gpu` 与输出目录；当前没有单进程跨卡分配环境的接口。
 
 **资产检查**
 
@@ -177,7 +190,7 @@ uv sync --locked --all-extras
 **遥控**：在浏览器中用键盘操作，供人工验收和测试：
 
 ```bash
-"$ISAAC_PYTHON" scripts/robots/teleop.py x1pro --output outputs/robots/x1pro-teleop --gpu 0 --port 8765
+uv run python scripts/robots/teleop.py x1pro --output outputs/robots/x1pro-teleop --gpu 0 --port 8765
 ```
 
 打开 `http://<服务器>:8765/`（或 `ssh -L 8765:localhost:8765 <服务器>` 后打开本机地址），页面显示外部视角和机器人自己的 RGB 相机（头部、两个腕部），点击页面后操作：W/S 前进后退，A/D 转向，R/F 升降，方向键转头，Tab 切换手臂，I/K、J/L、U/O 沿基座坐标系移动 TCP，Z/X、C/V、B/N 转动 TCP，空格开合夹爪，Backspace 复位，按住 Shift 加速。状态行显示 TCP、底盘位姿、IK 失败和实时倍率；会话动作写入 `actions.jsonl`，可用 `teleop.replay` 回放。服务器无界面运行，画面每 `--render-every` 个控制周期（默认 5）渲染一次，不保存图片，渲染决定运行速度。
