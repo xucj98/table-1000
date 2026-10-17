@@ -82,6 +82,9 @@ class Generator:
             return self.save(report, started)
         init_s = time.perf_counter() - started
         self.recording.begin(self.env)
+        # MPlib's IK restarts and RRTConnect draw from its own generator.
+        import mplib.pymp
+        mplib.pymp.set_global_seed(seed + 1)   # OMPL rejects 0
         ctx = Context(self.env, self.model, self.scene, self.assets,
                       np.random.default_rng([seed, report['initial']['attempt'], 1]))
         try:

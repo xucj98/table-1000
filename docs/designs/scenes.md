@@ -61,7 +61,7 @@
 | 状态与几何查询 | `ctx.pose(物体, 刚体)`、`ctx.joint(物体, 关节)`、`ctx.center_of_mass`、`ctx.part_box`（部件在刚体坐标系中的包围盒）、`ctx.geometry[物体]`（部件包围盒、关节轴）、`ctx.tcp()` |
 | 抓取几何 | `table_1000.experts.grasps`：`build_grasp_pose`、`compute_grasp_info_by_obb`（ManiSkill 的同名函数）、`standoff`、`translated` |
 | 子任务 | `with ctx.subtask('put the pen into the drawer'):` 标记这段步数属于哪条英文指令 |
-| 随机 | `ctx.rng`：需要变化的选择（抓取位置、顺序）用它，轨迹可由 seed 复现 |
+| 随机 | `ctx.rng`：需要变化的选择（抓取位置、顺序）用它，不用其他随机源 |
 
 要求：
 
@@ -113,3 +113,4 @@
 - 初始化的几何检查按资产静止构型（关节为 0）；用 `set_joint` 打开的部件不参与采样时的穿透检查，由复位后的静置检查兜底。
 - 支撑面只有桌面和物体碰撞包围盒的顶面；碗内底、抽屉内底等支撑面以后按需加入几何查询。
 - 笔的帽与钢珠一直有微米级抖动，不休眠（不影响任务）。
+- 初态由 seed 完全确定。专家轨迹：MPlib 的随机数按 seed 设置，实测同一 seed 重跑动作逐位相同；但 RRTConnect 有规划时限，负载不同时仍可能不同。复现轨迹以录制文件为准。

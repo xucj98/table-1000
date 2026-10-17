@@ -10,8 +10,8 @@ is done. ``ctx`` offers
   :class:`~table_1000.scenes.geometry.AssetGeometry`, the TCP;
 - **subtasks** -- ``with ctx.subtask('open the bottom drawer of the cabinet'):``
   marks the steps of one English instruction;
-- ``ctx.rng`` -- the episode's random generator, for choices that vary the
-  trajectory (the episode is reproducible from its seed).
+- ``ctx.rng`` -- the episode's random generator (from the seed), for choices that
+  vary the trajectory.
 
 Failures raise :class:`ExpertFailed` with the subtask and a reason; nothing is
 retried unless the expert does it.
