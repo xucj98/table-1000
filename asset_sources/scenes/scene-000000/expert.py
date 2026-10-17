@@ -29,6 +29,9 @@ HANDLE_HELD_GAP = (.035, .06)
 # The drawer is pulled in segments; after each it must have followed the hand
 # within SLIP_TOLERANCE, else the hand regrasps (at most MAX_REGRASPS times).
 SEGMENTS, SLIP_TOLERANCE, MAX_REGRASPS = 3, .015, 2
+# A drawer that jams (a pen not lying flat catches on the housing) makes the
+# hand push the whole cabinet instead; stop once it has moved this much.
+CABINET_MOVE_LIMIT = .01
 # Pen grasp: top-down across the barrel at the centre of mass, kept within
 # PEN_BARREL along its axis, fingertips PEN_TIP_CLEARANCE above the table.
 PEN_BARREL = (-.024, .078)
@@ -121,6 +124,7 @@ class Expert:
         self.arm = arm = ctx.solver('right')
         self.cabinet = Cabinet(ctx.geometry['cabinet'])
         self.table_height = ctx.scene.TABLE['height']
+        self.cabinet_xy = ctx.pose('cabinet')[:2, 3]
         self.regrasps = 0
         arm.add_table()
         # Cabinet: one planning object per body, the handles apart (fingers may touch them).
@@ -171,6 +175,9 @@ class Expert:
             finally:
                 arm.release(carried, contacts)
             moved = self.ctx.joint('cabinet', SLIDE) - start
+            shift = float(np.linalg.norm(self.ctx.pose('cabinet')[:2, 3] - self.cabinet_xy))
+            if shift > CABINET_MOVE_LIMIT:
+                self.ctx.fail('cabinet moved instead of the drawer', cabinet_shift=shift, moved=moved)
             segments = max(1, segments - 1)
             if abs(moved - step) > SLIP_TOLERANCE:
                 if self.regrasps >= MAX_REGRASPS:
