@@ -211,6 +211,8 @@ def main(argv=None):
     source, output = args.source.resolve(), args.output.resolve()
     references = args.assets if args.assets is not None else sorted(
         path.parent.relative_to(source) for path in source.rglob('physics.py'))
+    from table_1000.common.path import configure_isaac_paths
+    configure_isaac_paths()
     from isaacsim import SimulationApp
     app = SimulationApp({'headless': True, 'active_gpu': args.gpu, 'physics_gpu': 0 if os.getenv('CUDA_VISIBLE_DEVICES') == str(args.gpu) else args.gpu,
                          'multi_gpu': False, 'create_new_stage': False,

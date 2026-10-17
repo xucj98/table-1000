@@ -35,6 +35,8 @@ uv sync --locked --all-extras        # 或 --extra sim 等只装需要的组
 
 `sim` 组约 19 GB，安装后 `.venv/bin/python` 即仿真解释器。Blender 使用其自带的 Python；策略使用各自的环境。
 
+共享 uv 缓存时可在上述安装命令中添加 `--link-mode symlink`，避免复制环境中的大型依赖。物体构建、物理测试和机器人入口会自动从当前 Python 环境定位 Isaac Sim 资源，无需手动设置资源路径；显式设置的 `ISAAC_PATH`、`EXP_PATH`、`CARB_APP_PATH` 仍优先使用。
+
 需要安装到已有的兼容 Python 环境时，可使用 `uv pip install -e .`。发行包名为 `table-1000`，导入名为 `table_1000`。
 
 ## 目录

@@ -42,8 +42,10 @@ class PhysicsBatchTest(unittest.TestCase):
                 app = Mock()
                 simulation_app = Mock(return_value=app)
                 with self.subTest(selected=selected), patch.dict(sys.modules, {'isaacsim': SimpleNamespace(SimulationApp=simulation_app)}), \
+                        patch('table_1000.common.path.configure_isaac_paths') as configure_paths, \
                         patch('table_1000.physics.build.build') as build:
                     main(arguments)
+                    configure_paths.assert_called_once_with()
                     self.assertEqual(build.call_args_list, [call(output/ref, source/ref, output/ref) for ref in references])
                     simulation_app.assert_called_once()
                     self.assertEqual(simulation_app.call_args.args[0]['active_gpu'], 3)

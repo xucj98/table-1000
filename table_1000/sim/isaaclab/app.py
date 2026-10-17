@@ -33,6 +33,8 @@ def start_app(*, gpu, workers=4, device='cpu', cameras=True, extra_args=()):
     if visible not in (None, str(gpu)):
         raise RuntimeError(f'CUDA_VISIBLE_DEVICES={visible} conflicts with gpu={gpu}')
     os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu)
+    from table_1000.common.path import configure_isaac_paths
+    configure_isaac_paths()
     from isaaclab.app import AppLauncher
 
     portable = Path(tempfile.mkdtemp(prefix='kit-'))
