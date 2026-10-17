@@ -28,10 +28,14 @@ uv run python -c "import table_1000; print(table_1000.__file__)"
 | `sim` | 仿真与资产物理测试 | Isaac Sim 5.1.0、Isaac Lab 2.3.2.post1、PyTorch 2.7.0（CUDA 12.8） |
 | `robots` | 机器人运动学与规划 | MPlib、toppra、trimesh、rtree |
 | `dev` | 资产与机器人开发 | Open3D、CoACD、huggingface_hub、pytest |
+| `data` | 导出 LeRobot 数据集 | LeRobot 0.4.4；与前三组冲突，单独装在 `.venv-data` |
 
 ```bash
-uv sync --locked --all-extras        # 或 --extra sim 等只装需要的组
+uv sync --locked --extra sim --extra robots --extra dev     # 或只装需要的组
+UV_PROJECT_ENVIRONMENT=.venv-data uv sync --locked --extra data
 ```
+
+LeRobot 要求的包版本（如 `packaging>=24.2`）与 Isaac Lab 冲突，`pyproject.toml` 把 `data` 声明为与其他组互斥，所以不能用 `--all-extras`。
 
 `sim` 组约 19 GB，安装后 `.venv/bin/python` 即仿真解释器。Blender 使用其自带的 Python；策略使用各自的环境。
 

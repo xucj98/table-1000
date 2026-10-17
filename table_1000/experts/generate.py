@@ -5,8 +5,9 @@ another (each from a reset). A seed whose initial state cannot be made is
 reported and skipped; an expert failure is recorded as a failed episode
 (``trajectories_failed.hdf5``) with the subtask and reason, so the success rate
 is a metric, not a requirement. Each seed also gets ``episodes/<seed>.json``:
-initial-state attempts, subtasks, failure, planning log, robot contacts other
-than the expected ones, and timings.
+initial-state attempts, subtasks, failure, planning log, robot contacts (the
+fingers' on objects, and unexpected ones), the objects' final positions and
+joints, and timings.
 """
 
 import json
@@ -22,23 +23,25 @@ from table_1000.scenes.initial import InitializationFailed, initial_state
 from table_1000.sim import CONTROL_HZ, PHYSICS_DT
 
 
-def expected_contact(pair, spec):
-    """Contacts every expert makes: fingers with anything but the robot, the two fingers of a gripper."""
-    fingers = {f'robot.{link}' for arm in spec.arms.values() for link in arm.finger_links}
-    a, b = pair
-    if a in fingers and b in fingers:
-        return any({a, b} == {f'robot.{link}' for link in arm.finger_links} for arm in spec.arms.values())
-    return (a in fingers and not b.startswith('robot')) or (b in fingers and not a.startswith('robot'))
+def finger_links(spec):
+    return {f'robot.{link}' for arm in spec.arms.values() for link in arm.finger_links}
 
 
 def contact_summary(intervals, spec):
-    """``{pair: {'max_penetration_m', 'seconds', 'subtasks'}}`` of the robot's unexpected contacts."""
-    summary = {}
+    """Robot contacts by pair, ``{pair: {'max_penetration_m', 'seconds', 'subtasks'}}``, split into
+    ``fingers`` (a finger on something other than the robot: what the expert touches, to be
+    checked against what it means to touch) and ``unexpected`` (everything else but the two
+    fingers of one gripper)."""
+    fingers = finger_links(spec)
+    grippers = [{f'robot.{link}' for link in arm.finger_links} for arm in spec.arms.values()]
+    summary = {'fingers': {}, 'unexpected': {}}
     for entry in intervals:
-        if expected_contact(entry['pair'], spec):
+        a, b = entry['pair']
+        if {a, b} in grippers:
             continue
-        key = ' / '.join(entry['pair'])
-        item = summary.setdefault(key, {'max_penetration_m': 0., 'seconds': 0., 'subtasks': []})
+        on_object = (a in fingers and not b.startswith('robot')) or (b in fingers and not a.startswith('robot'))
+        item = summary['fingers' if on_object else 'unexpected'].setdefault(
+            ' / '.join(entry['pair']), {'max_penetration_m': 0., 'seconds': 0., 'subtasks': []})
         item['max_penetration_m'] = max(item['max_penetration_m'], entry['max_penetration_m'])
         if entry.get('end') is not None:
             item['seconds'] += entry['end'] - entry['start']
@@ -97,6 +100,9 @@ class Generator:
             steps=ctx.steps, duration_s=ctx.steps / CONTROL_HZ, subtasks=ctx.subtasks, events=ctx.events,
             plans=[entry for solver in ctx.solvers.values() for entry in solver.log],
             robot_contacts=contact_summary(self.env.contacts.intervals(), self.spec),
+            final={'objects': {name: self.env.object_pose(name)[0][:3, 3].tolist() for name in self.scene.OBJECTS},
+                   'joints': {name: {joint: float(value[0]) for joint, value in joints.items()}
+                              for name, joints in self.env.privileged()['joints'].items()}},
             timings={'init_s': init_s, **{key: sum(s.timings[key] for s in ctx.solvers.values())
                                           for key in ('planning_s', 'executing_s')}})
         attrs = {'scene': self.name, 'seed': seed, 'attempt': report['initial']['attempt'],
@@ -121,7 +127,7 @@ SUMMARY_FIELDS = ('seed', 'status', 'attempt', 'failed_subtask', 'reason', 'step
 
 
 def summary_row(report):
-    contacts = report.get('robot_contacts', {})
+    contacts = report.get('robot_contacts', {}).get('unexpected', {})
     failure = report.get('failure', {})
     return {'seed': report['seed'], 'status': report['status'], 'attempt': report.get('initial', {}).get('attempt'),
             'failed_subtask': failure.get('subtask'), 'reason': failure.get('reason'),

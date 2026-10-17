@@ -1,6 +1,6 @@
 """Render recorded trajectories from their states: videos, robot camera frames and review sheets.
 
-``.venv/bin/python scripts/scenes/render.py outputs/scenes/scene-000000/gen/trajectories.hdf5 --output outputs/scenes/scene-000000/render --gpu 1 [--demos demo_3 demo_7 | --count 5] [--cameras face_view left_wrist_view right_wrist_view] [--no-video]``
+``.venv/bin/python scripts/scenes/render.py outputs/scenes/scene-000000/gen/trajectories.hdf5 --output outputs/scenes/scene-000000/render --gpu 1 [--demos demo_3 demo_7 | --count 5] [--views wide] [--cameras face_view left_wrist_view right_wrist_view] [--sheets]``
 
 Per episode ``<output>/<demo>/``:
 
@@ -14,6 +14,8 @@ Per episode ``<output>/<demo>/``:
 
 Every frame restores the recorded state of that step; nothing is simulated.
 ``--count`` picks that many episodes at random (``--seed``); the default is all.
+``--sheets`` renders only the twelve frames of each review sheet (no videos, no
+robot cameras), enough to review every episode of a batch.
 """
 
 import argparse
@@ -53,7 +55,7 @@ def main(argv=None):
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--cameras', nargs='*', default=None, help='robot cameras (default: every rgb camera)')
     parser.add_argument('--views', nargs='*', default=None, help='fixed views of the scene (default: all)')
-    parser.add_argument('--no-video', action='store_true')
+    parser.add_argument('--sheets', action='store_true', help='only the review sheets')
     parser.add_argument('--gpu', type=int, default=0)
     parser.add_argument('--root', type=Path, default=ROOT)
     parser.add_argument('--assets', type=Path, default=ROOT / 'assets')
@@ -80,8 +82,8 @@ def main(argv=None):
         if args.count:
             names = sorted(np.random.default_rng(args.seed).choice(names, min(args.count, len(names)), replace=False),
                            key=list(episodes).index)
-        cameras = {name: camera for name, camera in spec.cameras.items()
-                   if (args.cameras is None and camera.sensor.kind == 'rgb') or name in (args.cameras or ())}
+        cameras = {name: camera for name, camera in spec.cameras.items() if not args.sheets and (
+            (args.cameras is None and camera.sensor.kind == 'rgb') or name in (args.cameras or ()))}
         views = {name: scene.VIEWS[name] for name in (args.views if args.views is not None else scene.VIEWS)}
         env = RobotEnv(scene, spec, args.assets.resolve(), cameras=cameras, views=views, root=args.root)
         for name in names:
@@ -91,23 +93,24 @@ def main(argv=None):
             shutil.rmtree(directory, ignore_errors=True)
             videos = Video(env, list(views), directory / 'views', CONTROL_HZ)
             frames = Video(env, list(cameras), directory / 'frames', CONTROL_HZ)
-            for t in range(episode.length + 1):
+            picks = np.linspace(0, episode.length, SHEET[0] * SHEET[1]).round().astype(int)
+            for t in picks if args.sheets else range(episode.length + 1):
                 replay.set_state(env, episode.state(t))
                 # Each render draws every camera. RT2 denoises over time, so the first render after a
                 # state change still blends in the previous one; the second is kept.
                 env.render([])
                 rendered = env.render([*views, *cameras])
-                if not args.no_video:
-                    videos.capture(f'{name}  t={t / CONTROL_HZ:6.2f}s  {episode.subtask(t) or ""}', rendered)
+                videos.capture(f'{name}  t={t / CONTROL_HZ:6.2f}s  {episode.subtask(t) or ""}', rendered)
                 if t < episode.length:
                     frames.capture(None, rendered)
-            if not args.no_video:
+            first = directory / 'views' / next(iter(views))
+            if args.sheets:
+                shots = [first / f'{i:05d}.jpg' for i in range(len(picks))]
+            else:
                 videos.encode(directory)
-                picks = np.linspace(0, episode.length, SHEET[0] * SHEET[1]).round().astype(int)
-                first = next(iter(views))
-                sheet([directory / 'views' / first / f'{t:05d}.jpg' for t in picks],
-                      [f't={t / CONTROL_HZ:.1f}s {episode.subtask(t) or ""}' for t in picks], directory / 'sheet.jpg')
-                shutil.rmtree(directory / 'views')
+                shots = [first / f'{t:05d}.jpg' for t in picks]
+            sheet(shots, [f't={t / CONTROL_HZ:.1f}s {episode.subtask(t) or ""}' for t in picks], directory / 'sheet.jpg')
+            shutil.rmtree(directory / 'views')
             print(name, episode.length, f'{time.perf_counter() - started:.0f} s', flush=True)
         env.close()
     except Exception:

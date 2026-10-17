@@ -4,7 +4,7 @@
 
 **输入：** 已构建的资产 `assets/objects/cabinet/000000`、`assets/objects/pen/000002`（第二章）与机器人 `assets/robots/x1pro`（第三章）。
 
-**输出：** `asset_sources/scenes/scene-000000/scene.py`；初态检查结果 `initial.json` 与 25 个初态的拼图 `grid.jpg`。
+**输出：** `asset_sources/scenes/scene-000000/scene.py`；初态检查结果 `initial.json` 与 25 个初态的拼图 `grid.jpg`（缩小后存为场景目录的 `initial_states.jpg`）。
 
 环境同第三章：
 
@@ -22,7 +22,7 @@ export ISAAC_PYTHON=$PWD/.venv/bin/python
 | `TABLE` | 1.36 × 1.02 m，高 0.755 m |
 | `ROBOT` | `robots/x1pro`，底盘在桌子 −Y 边外 (−0.03, −0.80)，朝 +Y；躯干升 0.40 m，头低 0.30 rad，双臂零位（折叠） |
 | `OBJECTS` | `cabinet`：`objects/cabinet/000000`；`pen`：`objects/pen/000002` |
-| `VIEWS` | 录像用的 `wide`、`close` 两个固定视角 |
+| `VIEWS` | 录像用的 `wide`、`close` 与看摆放用的俯视 `top` 三个固定视角 |
 | `initialize(layout)` | 抽屉柜原点在 (0.30, 0.06) ± 5 cm，抽屉朝向机器人；笔原点在 (−0.04, −0.36) ± 5 cm，偏航 ±0.3 rad，在机器人右手前方、抽屉拉出范围之外 |
 
 ```python
@@ -47,9 +47,9 @@ def initialize(layout):
 
 不通过就换子 seed 重来。
 
-本例结果：25 个 seed 全部第一次通过，约 RESULT_TIME。拼图 `grid.jpg` 用于人工查看摆放是否合理、是否有足够变化：
+本例结果：25 个 seed 全部第一次通过；静置时笔最多移动 0.38 mm、转动 0.18°，抽屉柜不动。每个 seed 约 2.3 s，含启动共约 3 分钟。拼图 `grid.jpg` 用场景的 `top` 视角（`--view` 可换），用于人工查看摆放是否合理、是否有足够变化：
 
-![scene-000000 的 25 个初态](GRID_IMAGE)
+![scene-000000 的 25 个初态](../../asset_sources/scenes/scene-000000/initial_states.jpg)
 
 最初笔按资产原始朝向平放，有一条棱朝下，静置时会滚 7.5° 到相邻的面上，检查因此不通过。现在 `place` 先取离给定朝向最近的稳定朝向（由碰撞凸包算出），静置移动降到 0.4 mm、0.2°。
 

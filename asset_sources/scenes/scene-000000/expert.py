@@ -135,10 +135,12 @@ class Expert:
     # -- drawer ------------------------------------------------------------------------
     def grasp_handle(self):
         arm = self.arm
-        arm.allow(['cabinet:' + HANDLE])
         arm.open_gripper()
         grasp = self.cabinet.handle_grasp(self.drawer())
         arm.first_reachable([standoff(grasp, d) for d in STANDOFFS], arm.move_to_pose_with_RRTConnect)
+        # Only the last, straight approach may touch the handle; a free-space path through it would
+        # push the drawer.
+        arm.allow(['cabinet:' + HANDLE])
         arm.move_to_pose_with_screw(self.cabinet.handle_grasp(self.drawer()))
         arm.close_gripper()
         gap = arm.finger_gap()

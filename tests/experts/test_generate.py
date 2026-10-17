@@ -6,7 +6,7 @@ ARM = types.SimpleNamespace(finger_links=('l_left', 'l_right'))
 SPEC = types.SimpleNamespace(arms={'right': ARM})
 
 
-def test_unexpected_contacts_leave_out_fingers_on_objects():
+def test_contacts_split_fingers_on_objects_from_unexpected_ones():
     intervals = [
         {'pair': ('pen:body.barrel', 'robot.l_left'), 'start': 0., 'end': 1., 'max_penetration_m': .001, 'phase': 'a'},
         {'pair': ('robot.l_left', 'robot.l_right'), 'start': 0., 'end': 1., 'max_penetration_m': 0., 'phase': 'a'},
@@ -15,8 +15,9 @@ def test_unexpected_contacts_leave_out_fingers_on_objects():
         {'pair': ('robot.l_left', 'robot.link2'), 'start': 2., 'end': None, 'max_penetration_m': .0, 'phase': 'c'},
     ]
     summary = contact_summary(intervals, SPEC)
-    assert set(summary) == {'cabinet:cabinet.housing.shell / robot.link4', 'robot.l_left / robot.link2'}
-    assert summary['cabinet:cabinet.housing.shell / robot.link4']['seconds'] == .5
+    assert set(summary['unexpected']) == {'cabinet:cabinet.housing.shell / robot.link4', 'robot.l_left / robot.link2'}
+    assert summary['unexpected']['cabinet:cabinet.housing.shell / robot.link4']['seconds'] == .5
+    assert set(summary['fingers']) == {'pen:body.barrel / robot.l_left'}
 
 
 def test_summary_counts_initial_failures_apart():
