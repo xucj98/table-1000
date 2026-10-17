@@ -20,6 +20,9 @@ sim = [
 robots = ["mplib==0.2.1", "toppra==0.6.10", "trimesh==4.5.1", "rtree==1.3.0"]
 # Developing assets and robots: mesh processing, convex decomposition, the asset store.
 dev = ["open3d==0.20.0", "coacd==1.0.11", "huggingface_hub==0.36.2", "pytest"]
+# Converting trajectories to LeRobot v3.0 datasets. LeRobot needs newer packages than
+# Isaac Lab allows, so it gets an environment of its own (see `conflicts`).
+data = ["lerobot==0.4.4", "h5py==3.14.0"]
 
 [build-system]
 requires = ["uv_build>=0.12.5,<0.13"]
@@ -33,6 +36,7 @@ module-root = ""
 environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
 # Isaac Sim and Isaac Lab wheels are on NVIDIA's index; their dependencies on PyPI.
 index-strategy = "unsafe-best-match"
+conflicts = [[{ extra = "data" }, { extra = "sim" }], [{ extra = "data" }, { extra = "robots" }], [{ extra = "data" }, { extra = "dev" }]]
 
 [[tool.uv.index]]
 name = "nvidia"

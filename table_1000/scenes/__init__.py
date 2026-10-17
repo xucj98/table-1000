@@ -1,4 +1,29 @@
-"""Simulator-independent scene helpers."""
+"""Scenes: ``asset_sources/scenes/<name>/`` holds ``scene.py`` (what is in the scene and how it
+starts) and ``expert.py`` (how the expert tidies it). Simulator-independent helpers."""
+
+import importlib.util
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+# The one instruction of every Table-1000 scene; experts divide it into subtasks.
+INSTRUCTION = 'tidy up the table'
+
+
+def source_dir(name, root=ROOT):
+    return Path(root) / 'asset_sources' / 'scenes' / name
+
+
+def load(name, module='scene', root=ROOT):
+    """Module ``module`` (``'scene'`` or ``'expert'``) of scene ``name``."""
+    path = source_dir(name, root) / f'{module}.py'
+    spec = importlib.util.spec_from_file_location(f'scene_{name.replace("-", "_")}_{module}', path)
+    loaded = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(loaded)
+    return loaded
+
+
+def scene_names(root=ROOT):
+    return sorted(path.parent.name for path in (Path(root) / 'asset_sources' / 'scenes').glob('*/scene.py'))
 
 
 def primitive_surface(spec, pose, count=400):
