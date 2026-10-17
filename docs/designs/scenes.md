@@ -86,7 +86,7 @@
 
 `env.reset_to(initial_state)` 后依次执行动作可在物理中重放；`scene.reset_to(states[t])` 精确恢复第 t 步，用于渲染。
 
-**带图片**：`render.py` 按状态逐步恢复并渲染机器人相机，`to_lerobot.py` 写成 LeRobot v3.0 数据集：`observation.state`（关节位置）、`action`、`observation.images.<相机>`（视频）、`task`（子任务指令，或 `--task instruction` 用高层指令），25 fps。LeRobot 依赖的包版本与 Isaac Lab 冲突，转换在单独的 `data` 环境里运行。
+**带图片**：`render.py` 按状态逐步恢复并渲染机器人相机，`to_lerobot.py` 写成 LeRobot v3.0 数据集：`observation.state`（关节位置）、`action`、`observation.images.<相机>`（视频）、`task`（子任务指令，或 `--task instruction` 用高层指令），25 fps。LeRobot 在 `data` 依赖组，与 Isaac Lab 装在同一环境。
 
 ## 验收
 

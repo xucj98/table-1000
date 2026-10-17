@@ -1,6 +1,6 @@
-"""Convert rendered trajectories to a LeRobot v3.0 dataset (runs in the ``data`` environment).
+"""Convert rendered trajectories to a LeRobot v3.0 dataset (needs the ``data`` extra).
 
-``.venv-data/bin/python scripts/scenes/to_lerobot.py outputs/scenes/scene-000000/gen/part*/trajectories.hdf5 --frames outputs/scenes/scene-000000/render --output outputs/scenes/scene-000000/lerobot [--task subtask|instruction]``
+``python scripts/scenes/to_lerobot.py outputs/scenes/scene-000000/gen/part*/trajectories.hdf5 --frames outputs/scenes/scene-000000/render --output outputs/scenes/scene-000000/lerobot [--task subtask|instruction]``
 
 Every episode rendered by ``scripts/scenes/render.py`` (``<frames>/<demo>/frames/<camera>/``)
 becomes one LeRobot episode at the control rate (25 fps):
@@ -12,9 +12,6 @@ becomes one LeRobot episode at the control rate (25 fps):
 - ``observation.images.<camera>``: each robot camera, stored as video
 - ``task``: the English instruction of the step's subtask (``--task subtask``,
   default), or the scene's one instruction (``--task instruction``)
-
-LeRobot requires newer packages than Isaac Lab allows; set up its environment with
-``uv sync --extra data`` into ``.venv-data`` (see the tutorial).
 """
 
 import argparse

@@ -37,7 +37,7 @@ export ISAAC_PYTHON=$PWD/.venv/bin/python
 开发机器人另需 `dev` 依赖组（open3d、coacd、huggingface_hub），缩略图需要 Blender：
 
 ```bash
-uv sync --locked --extra sim --extra robots --extra dev
+uv sync --locked --all-extras
 ```
 
 厂商原始包不进 Git，存档在 Hugging Face 私有数据集中，数据集名、固定版本和路径记录在仓库根目录的 [assets.lock.json](../../assets.lock.json)。首次使用先登录有访问权限的账号，再把原始包下载到 `assets/`：

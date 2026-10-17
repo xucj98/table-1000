@@ -34,11 +34,10 @@
 
 ## 2. 导出 LeRobot
 
-LeRobot 需要的包版本与 Isaac Lab 冲突（如 `packaging`），装在单独的环境里：
+需要 `data` 依赖组（LeRobot，与 Isaac Lab 装在同一环境，见 README）：
 
 ```bash
-UV_PROJECT_ENVIRONMENT=.venv-data uv sync --locked --extra data
-.venv-data/bin/python scripts/scenes/to_lerobot.py outputs/scenes/scene-000000/gen/part*/trajectories.hdf5 --frames outputs/scenes/scene-000000/render --output outputs/scenes/scene-000000/lerobot
+"$ISAAC_PYTHON" scripts/scenes/to_lerobot.py outputs/scenes/scene-000000/gen/part*/trajectories.hdf5 --frames outputs/scenes/scene-000000/render --output outputs/scenes/scene-000000/lerobot
 ```
 
 可以一次给多个轨迹文件（分段生成的各部分）；只转换在 `--frames` 下渲染过的轨迹。本例 5 条轨迹（3435 帧，3 路相机）转换约 8.5 分钟，主要耗在 AV1 视频编码，数据集 68 MB。
