@@ -51,10 +51,7 @@ def pull_release(ctx: TestContext, index):
         ctx.run(5)
     assert abs(ctx.rows[0][f'asset.{joint}.position'] - .045) < 1e-6, 'initial drawer opening was not applied'
     release = next(row for row in ctx.rows if row['time'] >= 2.1)
-    stop = next((row for row in ctx.rows if row['time'] > 2.1 and abs(row[f'asset.{joint}.velocity']) < 1e-4), None)
     ctx.metric('release_speed', release[f'asset.{joint}.velocity']*1000, unit='mm/s', label='松手时速度')
-    if stop is not None:
-        ctx.metric('stop_time', stop['time'] - 2.1, unit='s', label='松手后停下用时')
     ctx.metric('final_opening', ctx.rows[-1][f'asset.{joint}.position']*1000, unit='mm', label='最终开度')
 
 
