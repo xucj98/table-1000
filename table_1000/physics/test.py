@@ -412,6 +412,8 @@ def main(argv=None):
                 for name in args.tests or names[reference]:
                     result=json.loads((output/name/'result.json').read_text())
                     plot_trace(output/name/'trace.csv',result['plots'],result['columns'])
+        if broken:
+            raise SystemExit('failed: '+', '.join(f'{reference} (physics_test.py)' for reference in broken))
         return
     jobs,selected=[],{}
     for reference in names:

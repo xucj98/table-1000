@@ -144,3 +144,12 @@ class CaseResultsTests(unittest.TestCase):
             broken = json.loads((root / 'cabinet/000000/physics_test/summary.json').read_text())
             self.assertIn('broken', broken['error'])
             self.assertTrue((root / 'pen/000002/physics_test/summary.json').exists())
+
+    def test_plots_only_fails_on_a_broken_definition(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            asset = Path(temporary) / 'bad/000000'
+            asset.mkdir(parents=True)
+            (asset / 'physics_test.py').write_text("raise ImportError('broken')\n")
+            with patch('traceback.print_exc'):
+                with self.assertRaisesRegex(SystemExit, 'bad/000000'):
+                    main(['--source', temporary, '--assets', 'bad/000000', '--physics', 'isaac-cpu', '--plots-only'])
