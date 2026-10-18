@@ -67,8 +67,8 @@
 要求：
 
 - 每个目标位姿由物体**当下**的实际位姿和资产几何算出，不按 seed 或固定世界坐标写特例。
-- 手指只在需要的动作里允许接触相应部件；接触结束后撤销。
-- 可以重试，但要写明候选（后撤距离、抬起高度）或次数上限（重新抓取）。其余失败用 `ctx.fail(原因)` 或规划异常结束，记录子任务与原因。
+- 手指只在需要的动作里允许接触相应部件；接触结束后撤销。例：先允许碰把手再用 RRTConnect 去把手前方，路径可能穿过把手，把抽屉推回去后抓空；应只在最后的直线接近时允许。
+- 可以重试，但要写明候选（后撤距离、抬起高度；物理上等价的抓法与放法，如对称的手腕转向、绕圆柱轴侧倾、物体放置的两个方向）或次数上限（重新抓取），用 `ctx.note` 记下换用的候选。其余失败用 `ctx.fail(原因)` 或规划异常结束，记录子任务与原因。
 - TCP 约定：+X 为接近方向，+Y 为手指张开方向。
 
 规划用 MPlib（ManiSkill 也用它）：自由空间用 RRTConnect 到 IK 解，规划路径按 1 cm 关节步长复查碰撞，不过就重新规划；接触动作用直线 screw 路径。规划好的路径每个控制步（25 Hz）发送一个关节位置。
@@ -85,9 +85,9 @@
 | `obs/*` | 每步之前的机器人观测（`qpos`、`qvel`、`base_pose`、`tcp_<arm>`） |
 | 属性 | `scene`、`seed`、`attempt`、`instruction`、`subtasks`（每段的指令与起止步）、`status`、`failure` |
 
-`env.reset_to(initial_state)` 后依次执行动作可在物理中重放；`scene.reset_to(states[t])` 精确恢复第 t 步，用于渲染。
+`env.reset_to(initial_state)` 后依次执行动作可在物理中重放；`scene.reset_to(states[t])` 精确恢复第 t 步，用于渲染。生成时每条轨迹开始前用 seed 设置 MPlib 的随机数（`mplib.pymp.set_global_seed`），同一 seed 单独重跑时动作逐位相同；RRTConnect 有规划时限，负载不同时仍可能不同。
 
-**带图片**：`render.py` 按状态逐步恢复并渲染机器人相机，`to_lerobot.py` 写成 LeRobot v3.0 数据集：`observation.state`（关节位置）、`action`、`observation.images.<相机>`（视频）、`task`（子任务指令，或 `--task instruction` 用高层指令），25 fps。LeRobot 在 `data` 依赖组，与 Isaac Lab 装在同一环境。
+**带图片**：`render.py` 按状态逐步恢复并渲染机器人相机。每一步：`scene.reset_to(states[t])`；调用 PhysX 的 `update_transformations` 把位姿写进 USD（不推进物理时渲染器读不到新位姿）；渲染两次保留第二次（RT2 在时间上降噪，第一次会混入上一个状态）。机器人相机图像是每一步之前的观测，与该步动作对应。`to_lerobot.py` 写成 LeRobot v3.0 数据集：`observation.state`（关节位置）、`action`、`observation.images.<相机>`（视频）、`task`（子任务指令，或 `--task instruction` 用高层指令），25 fps。LeRobot 在 `data` 依赖组，与 Isaac Lab 装在同一环境。
 
 ## 验收
 
@@ -97,7 +97,7 @@
 
 - 初态平均尝试次数、无法初始化的 seed；
 - 生成成功率，失败按子任务和原因分布；
-- 每条轨迹的规划次数与重试、意外接触（机器人除手指接触物体、两指之间以外的接触）及其最大穿透；
+- 每条轨迹的规划次数与换用的候选；机器人接触分两类记录：`fingers`（手指碰过的物体部件，核对是否只碰了该碰的）和 `unexpected`（除此之外、也不是两指之间的接触）及其最大穿透；
 - 轨迹时长、墙钟耗时。
 
 **评审**：
