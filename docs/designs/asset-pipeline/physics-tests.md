@@ -36,15 +36,26 @@ def pull(ctx: TestContext):
 TESTS = {"pull": pull}
 ```
 
-示例参数仅演示接口，不规定资产的受力阈值。执行器接收资产目录、可选测试名及输出目录；默认读取同目录脚本，依次运行全部测试。入口负责启动仿真、加载资产及官方行为组件、独立复位、采样和结果写入。测试函数不自行启动或关闭 Isaac。
-
-执行器通过共享 Isaac Lab `start_app()` 启动隔离用户配置的应用，物理上下文使用 `SimulationContext`。`--physics cpu|gpu` 选择 CPU 或 CUDA PhysX，默认 `cpu`；`--gpu` 选择物理显卡编号，CUDA 逻辑设备为 `cuda:0`。CPU/GPU 必须分别输出结果，不能把渲染显卡编号当作物理后端。
-
-`--num-envs N` 在同一场景中并行运行 N 份相同的实验，默认 CPU 为 1、GPU 为 4。各环境接收相同的动作、夹持轨迹和限值，夹持按各自环境的状态反馈；记录、曲线和视频取第一个环境，测试脚本无需修改。接触临界或限力切换等敏感过程中，各环境可能分化成不同的结果，`result.json` 的 `environments` 记录其他环境与第一个环境的终态最大位置差。GPU 上第一个环境的结果也可能随环境数略有不同，比较时保持相同的环境数。
+示例参数仅演示接口，不规定资产的受力阈值。入口负责启动仿真、加载资产及官方行为组件、独立复位、采样和结果写入。测试函数不自行启动或关闭 Isaac。
 
 ```bash
-uv run python scripts/assets/physics_test.py assets/objects/pen/000002 --script asset_sources/objects/pen/000002/physics_test.py --physics gpu --gpu 0
+uv run python scripts/assets/physics_test.py --assets pen/000002 cabinet/000000 --physics isaac-cpu isaac-gpu --gpus 0 1
 ```
+
+| 参数 | 含义 |
+| --- | --- |
+| `--assets` | 相对 `--source`（默认 `assets/objects`）的资产目录；省略时为所有带 `physics_test.py` 的资产 |
+| `--physics` | 必填，一个或多个物理后端：`isaac-cpu`、`isaac-gpu` |
+| `--gpus` | 可用的物理显卡编号，默认 `0`；每张卡同一时刻运行一个“资产 × 后端” |
+| `--tests` | 只运行指定测试，其余测试的已有结果保留 |
+| `--scripts` | 从该目录（如 `asset_sources/objects`）读取 `physics_test.py`，默认用构建时复制到资产目录的快照 |
+| `--num-envs`、`--benchmark` | 见下文 |
+
+每个“资产 × 后端”在独立进程中运行：Isaac 的物理设备在启动时确定，一个进程不能切换；某一组失败不影响其他组，其输出写入 `physics_test/<后端>/run.log`。同一组内某项测试失败时，其余测试照常运行。全部结束后为每个资产重新生成 `physics_test/summary.json`；任一组失败时退出码非零。
+
+执行器通过共享 Isaac Lab `start_app()` 启动隔离用户配置的应用，物理上下文使用 `SimulationContext`。`isaac-cpu` 和 `isaac-gpu` 分别使用 CPU 和 CUDA PhysX，渲染都在分配到的显卡上，CUDA 逻辑设备为 `cuda:0`。测试脚本中 `ctx.physics` 为 `cpu` 或 `gpu`。
+
+`--num-envs N` 在同一场景中并行运行 N 份相同的实验，默认 CPU 为 1、GPU 为 4。各环境接收相同的动作、夹持轨迹和限值，夹持按各自环境的状态反馈；记录、曲线和视频取第一个环境，测试脚本无需修改。接触临界或限力切换等敏感过程中，各环境可能分化成不同的结果，`result.json` 的 `environments` 记录其他环境与第一个环境的终态最大位置差。GPU 上第一个环境的结果也可能随环境数略有不同，比较时保持相同的环境数。
 
 每个测试开始时，仅加载默认实例 `ctx.asset`，名称为 `asset`，恢复资产保存的初态，时间为零。不同测试以及计时重复之间不残留上一次的实例、约束或行为状态。
 
@@ -120,33 +131,46 @@ Python 接口统一使用 SI 单位、弧度和 wxyz 四元数。默认重力为
 
 每个测试只生成一张 `plots.jpg`，按选择顺序上下排列；标签使用列名，单位由观测定义确定，长度可显示为 m 或 mm，CSV 保持 SI。不选择曲线时不出图。已有 CSV 可以独立重画，不重新仿真。
 
-结果写入资产目录下的 `physics_test/cpu/` 或 `physics_test/gpu/`，按物理后端分开，与 `preview/` 并列；`--output` 可改为其他目录。测试 `pull` 的结果为：
+结果写入资产目录下的 `physics_test/`，与 `preview/` 并列，按物理后端分目录。测试 `pull` 的结果为：
 
 ```text
 physics_test/
-  cpu/
+  summary.json        各后端的状态、关键指标与 RTF
+  isaac-cpu/
+    run.log           该后端的运行输出
     pull.mp4          完整视频
     pull/
       plots.jpg       关注曲线
-      result.json     执行状态、实测量、条件与性能
+      result.json     执行状态、关键指标、实测量、条件与性能
       trace.csv       每个物理步的全部记录列
-  gpu/
+  isaac-gpu/
     ...
 ```
 
 重跑仅清理所选测试的结果。`result.json` 包含测试名、资产与软件版本、生效物理/渲染条件、环境数、实测量及性能数据。其中 `execution_status` 由执行器写入：测试函数正常结束为 `completed`；抛出异常（包括脚本中的断言失败）为 `failed`，此时 `error` 记录异常信息，不生成视频和曲线。脚本用普通断言检查明确要求，不需要另建断言语言。
 
-测试把测得的关键物理量写入字典 `ctx.experiment_details`（SI 单位，键名带单位后缀，如 `peak_pull_N`），结果原样保存在 `result.json` 的 `experiment`。
+测试用 `ctx.metric(name, value, unit=..., label=...)` 声明给人看的关键指标，如 `ctx.metric('seating_push', peak, unit='N', label='合帽力')`；单位按便于阅读选择（N、mm、deg 等），保存在 `result.json` 的 `metrics`。其余实测细节写入字典 `ctx.experiment_details`（SI 单位，键名带单位后缀，如 `peak_pull_N`），原样保存在 `result.json` 的 `experiment`。验收条件仍用断言检查，指标只记录数值。
+
+`summary.json` 由各后端已有的 `result.json` 汇总生成，只列入当前 `physics_test.py` 中的测试；只重跑一个后端或部分测试时，其余结果照常列入：
+
+| 字段 | 含义 |
+| --- | --- |
+| `asset` | 资产路径，如 `pen/000002` |
+| `backends.<后端>` | `engine`（引擎与版本）、`environments`（并行环境数）、`completed`（完成的测试数）、`failed`（失败的测试名） |
+| `tests.<测试>.status` | 各后端的 `completed` 或 `failed` |
+| `tests.<测试>.error` | 失败时各后端异常的最后一行，完整信息见对应 `result.json` |
+| `tests.<测试>.metrics.<指标>` | `label`、`unit`，以及各后端的数值（4 位有效数字），同一指标的不同后端在同一行 |
+| `tests.<测试>.rtf` | 各后端的 `physics`（物理推进 RTF）与 `video`（含视频 RTF） |
 
 ### 人工验收
 
-CPU 与 GPU 的结果分别检查，每项测试看以下文件：
+先看 `summary.json`：各后端 `failed` 为空，关键指标合理，后端之间的差异有解释，RTF 没有明显异常。然后在每个后端目录中，每项测试看以下文件：
 
 | 文件 | 检查内容 |
 | --- | --- |
 | `<test>.mp4` | 完整过程是否符合实验意图和物理常识：物体是否按预期运动、停住或分离，有无穿透、抖动、飞出等异常 |
 | `<test>/plots.jpg` | 关注曲线的趋势、峰值和稳定段是否与视频一致，有无突跳或振荡 |
-| `<test>/result.json` | `execution_status` 为 `completed`；`experiment` 中的实测量是否合理；`conditions` 中的求解器、环境数与预期一致；`performance` 中的 RTF |
+| `<test>/result.json` | 需要细查时看：`experiment` 中的完整实测量，`conditions` 中的求解器与环境数 |
 
 `trace.csv` 仅在需要细查某一时刻或重画曲线时使用。观察到的限位、接触误差、振荡及步长敏感性如实记录；数值稳定不等于材料参数已经标定。检查通过后，把实测量和性能更新到资产 README 的[物理实测](README.md#readme-与缩略图)一节；发现问题时修改资产或测试并重跑受影响的测试。
 

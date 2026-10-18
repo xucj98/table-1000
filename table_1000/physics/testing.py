@@ -77,6 +77,7 @@ class TestContext:
         self.dt, self.gravity = .004, (0, 0, -9.81)
         self.initials, self.actions, self.action_values = {}, {}, {}
         self.observers, self.units, self.plot_columns = {}, {}, []
+        self.metrics = {}
         self.rows, self.images = [], []
         self.camera_config = None
         self.camera_instance = None
@@ -307,6 +308,10 @@ class TestContext:
         unit = 'm' if prim.IsA(UsdPhysics.PrismaticJoint) else 'rad'
         for field in ['position','velocity']:
             self.observe(f'{instance.name}.{name}.{field}',lambda field=field: frames(instance,name)[field],unit=unit+('/s' if field=='velocity' else ''))
+
+    def metric(self,name,value,*,unit,label):
+        """Declare a key result; the asset's physics_test/summary.json lists it per backend."""
+        self.metrics[name] = {'label':label,'unit':unit,'value':float(value)}
 
     def plots(self,*columns):
         self.plot_columns = list(columns)

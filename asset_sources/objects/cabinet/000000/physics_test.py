@@ -50,6 +50,12 @@ def pull_release(ctx: TestContext, index):
     with ctx.fixed(ctx.asset.body('cabinet.housing')):
         ctx.run(5)
     assert abs(ctx.rows[0][f'asset.{joint}.position'] - .045) < 1e-6, 'initial drawer opening was not applied'
+    release = next(row for row in ctx.rows if row['time'] >= 2.1)
+    stop = next((row for row in ctx.rows if row['time'] > 2.1 and abs(row[f'asset.{joint}.velocity']) < 1e-4), None)
+    ctx.metric('release_speed', release[f'asset.{joint}.velocity']*1000, unit='mm/s', label='松手时速度')
+    if stop is not None:
+        ctx.metric('stop_time', stop['time'] - 2.1, unit='s', label='松手后停下用时')
+    ctx.metric('final_opening', ctx.rows[-1][f'asset.{joint}.position']*1000, unit='mm', label='最终开度')
 
 
 def travel_stops(ctx: TestContext):
@@ -75,6 +81,9 @@ def travel_stops(ctx: TestContext):
     with ctx.fixed(ctx.asset.body('cabinet.housing')):
         ctx.run(5)
     assert abs(ctx.rows[0][f'asset.{joint}.position'] - .085) < 1e-6, 'initial drawer opening was not applied'
+    positions = [row[f'asset.{joint}.position'] for row in ctx.rows]
+    ctx.metric('max_opening', max(positions)*1000, unit='mm', label=f'最大开度（限位 {TRAVEL*1000:g} mm）')
+    ctx.metric('min_opening', min(positions)*1000, unit='mm', label='最小开度（限位 0 mm）')
 
 
 def pull_cabinet(ctx: TestContext):
@@ -100,6 +109,10 @@ def pull_cabinet(ctx: TestContext):
         {'time': 7, 'force': (0, 0, 0)},
     ])
     ctx.run(7)
+    ctx.metric('drawer_opening', max(row[f'asset.{joint}.position'] for row in ctx.rows)*1000, unit='mm',
+               label=f'抽屉最大开度（限位 {TRAVEL*1000:g} mm）')
+    moved = ctx.rows[-1]['asset.cabinet.housing.position.y'] - ctx.rows[0]['asset.cabinet.housing.position.y']
+    ctx.metric('housing_travel', abs(moved)*100, unit='cm', label='盒子被拉动距离')
 
 
 def gravity_tilt(ctx: TestContext):
@@ -137,6 +150,9 @@ def gravity_tilt(ctx: TestContext):
         'note': 'onset defined by 0.5 mm relative displacement, not a calibrated static friction coefficient',
     }
 
+    for i in (1, 2, 3):
+        if starts[f'drawer{i}'] is not None:
+            ctx.metric(f'drawer{i}_onset', starts[f'drawer{i}']['angle_degrees'], unit='deg', label=f'抽屉 {i} 起滑角')
     assert all(value is not None and value['angle_degrees'] >= 15 for value in starts.values()), \
         'a drawer slid before the 15-degree design target or never opened'
 

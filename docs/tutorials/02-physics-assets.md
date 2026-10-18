@@ -13,7 +13,7 @@
 
 原生物理表达不了的行为另写 `behavior.py`（[规范](../designs/asset-pipeline/behaviors.md)），本章两个资产都不需要。
 
-构建结果在 `assets/objects/<类别>/<编号>/`：`object.usdz` 是仿真加载的资产，`physics_build.json` 是构建报告；测试结果在 `physics_test/cpu/` 和 `physics_test/gpu/`。
+构建结果在 `assets/objects/<类别>/<编号>/`：`object.usdz` 是仿真加载的资产，`physics_build.json` 是构建报告；测试结果在 `physics_test/`。
 
 ## 命令
 
@@ -25,15 +25,16 @@ uv run python scripts/assets/build_physics.py --assets pen/000002 cabinet/000000
 
 构建报告中，笔应有 5 个刚体、11 个部件、79 个碰撞形状，盒子应有 4 个刚体、26 个部件、33 个碰撞形状。
 
-运行物理测试，CPU 和 GPU 各跑一次：
+运行物理测试（省略 `--assets` 时测试所有带 `physics_test.py` 的资产）：
 
 ```bash
-uv run python scripts/assets/physics_test.py assets/objects/pen/000002 --physics cpu --gpu 0
-uv run python scripts/assets/physics_test.py assets/objects/pen/000002 --physics gpu --gpu 0
+uv run python scripts/assets/physics_test.py --assets pen/000002 cabinet/000000 --physics isaac-cpu isaac-gpu --gpus 0 1 2
 ```
 
+- `--physics` 必填，列出要运行的物理后端：`isaac-cpu`、`isaac-gpu`。
+- 每个资产的每个后端单独运行，分到 `--gpus` 列出的显卡上并行，每张卡同时只跑一个。本例 4 组在三张卡上约 9 分钟。
 - `--tests close pull_comparison` 只运行指定的测试。
-- `--script asset_sources/objects/pen/000002/physics_test.py` 使用源码目录中正在修改的测试，默认用构建时复制的快照。
+- `--scripts asset_sources/objects` 使用源码目录中正在修改的测试，默认用构建时复制的快照。
 - GPU 默认同时模拟 4 个相同的环境，结果取第一个环境；`--num-envs` 可修改。
 - 默认每项测试只跑一遍；需要在 README 记录性能时加 `--benchmark`，按标准方法测量 RTF（实时因子），耗时约为默认的 3–5 倍。
 
@@ -61,10 +62,18 @@ uv run python scripts/assets/physics_test.py assets/objects/pen/000002 --physics
 
 ## 验收
 
-结果目录 `physics_test/cpu/` 和 `physics_test/gpu/` 分别检查，每项测试看三个文件：
+有测试失败时，脚本以非零退出码结束。每个资产的 `physics_test/` 下有一份 `summary.json`，先看它：
+
+| 字段 | 看什么 |
+| --- | --- |
+| `backends` | 每个后端的引擎版本、并行环境数；`failed` 应为空 |
+| `tests.<测试>.status` | 每个后端应为 `completed`；失败时 `error` 写明原因 |
+| `tests.<测试>.metrics` | 上表的关键指标，各后端的值并排列出，应与预期相符 |
+| `tests.<测试>.rtf` | 物理推进（`physics`）和含视频（`video`）的 RTF，不应明显低于 README 中的记录 |
+
+然后在 `physics_test/isaac-cpu/` 和 `physics_test/isaac-gpu/` 中，每项测试看两个文件：
 
 1. `<测试名>.mp4`：完整过程是否符合上表的测试意图，有没有穿透、抖动、飞出等异常；
-2. `<测试名>/plots.jpg`：关注曲线的趋势和峰值是否与视频一致；
-3. `<测试名>/result.json`：`execution_status` 应为 `completed`，测试出错时为 `failed`，`error` 中写明原因；`experiment` 是测得的关键指标，`performance` 是 RTF。
+2. `<测试名>/plots.jpg`：关注曲线的趋势和峰值是否与视频一致。
 
 验收通过后，把关键指标和 `--benchmark` 测得的性能更新到资产 README 的“物理实测”一节。不通过时，修改 `physics.py` 或 `physics_test.py`，重新构建并重跑受影响的测试。

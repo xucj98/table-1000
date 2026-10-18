@@ -142,6 +142,8 @@ def pull_comparison(ctx):
               'force':'grip force along world -X, including cap inertia (negligible at this speed)'},
         separation_geometry={'body_tip_local_x_m':BODY_TIP_X,'cap_mouth_local_x_m':0,'required_axial_gap_m':.002},
         placed_cap_positions_m=[c.state['position'].tolist() for c in caps])
+    ctx.metric('tight_pull',records[0]['peak_pull_N'],unit='N',label='紧帽拔帽力')
+    ctx.metric('loose_pull',records[1]['peak_pull_N'],unit='N',label='松帽拔帽力')
 
 
 def close(ctx):
@@ -188,6 +190,8 @@ def close(ctx):
         light_push_last_0_4s_x_drift_m=drift,light_push_pose_velocity_m_s=pose_v,seating_push=seated_force,final_fit=final,final_pose_velocity_m_s=final_pose_v,
         final_reported_velocity_m_s=float(np.linalg.norm(cap.state['velocity'][:3])),
         closing_grip='grip on the cap along world X only (sideways free, rotation held) toward the seated pose, force limited to 0.3 N, then raised 0.6 N/s up to 5 N; released after seating')
+    ctx.metric('light_push_gap',weak['opening']*1000,unit='mm',label='0.3 N 轻推后离盖紧位')
+    ctx.metric('seating_push',seated_force['peak_push_N'],unit='N',label='合帽力')
 
 
 def collision_min_z(ctx,pose):
@@ -227,6 +231,8 @@ def drop_heights(ctx):
         initial_model_collision_min_z_m=low,initial_origin_positions_m=[[x,0,h-low] for x,h in zip(positions,heights)],
         simultaneous_release=True,initial_velocity_m_s=[0,0,0],final_fit=dict(zip([p.name for p in pens],final)),
         interpretation='4 ms impacts are coarse tests; transient penetration and any physical cap release are reported, with no prescribed detachment outcome')
+    for h,f in zip(heights,final):
+        ctx.metric(f'cap_ejection_{h:g}m',f['opening']*1000,unit='mm',label=f'{h:g} m 落地后笔帽松出')
 
 
 def gravity_rotation(ctx):
@@ -253,6 +259,8 @@ def gravity_rotation(ctx):
     assert abs(result['tight']['opening'])<.0015 and result['loose']['opening']>.04,'gravity rotation did not retain tight cap and separate loose cap'
     ctx.experiment_details.update(final_fit=result,rotation_duration_s=6,angular_speed_deg_s=30,
         loose_initial_opening_m=LOOSE_OPENING,fixtures='grips on the bodies only; no cap fixture or scripted coupling')
+    ctx.metric('tight_opening',result['tight']['opening']*1000,unit='mm',label='紧帽倒置后松出')
+    ctx.metric('loose_opening',result['loose']['opening']*1000,unit='mm',label='松帽倒置后松出')
 
 
 TESTS={'pull_comparison':pull_comparison,'close':close,'drop_heights':drop_heights,'gravity_rotation':gravity_rotation}

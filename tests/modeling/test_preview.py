@@ -36,14 +36,13 @@ class PreviewTests(unittest.TestCase):
                   'samples': [{'output': 'front.jpg', 'frame': 0}, {'output': 'press.mp4', 'frame': 3}],
                   'failures': [{'output': 'press.mp4', 'frame': 3, 'bodies': ['a', 'b'],
                                 'colliders': ['x', 'y'], 'penetration_m': .0012}]}
-        result = summary(report, ['front.jpg', 'press.mp4'])
+        result = summary(report)
         self.assertEqual(result['status'], 'failed')
         self.assertEqual(result['rigid_bodies'], 2)
-        self.assertEqual(result['joints'], [{'name': 'pen.press', 'type': 'SLIDER', 'range': [0, .004], 'unit': 'm'}])
+        self.assertEqual(result['joints'], 1)
         self.assertEqual(result['poses_checked'], 2)
         self.assertEqual(result['penetrating_poses'], 1)
         self.assertEqual(result['penetrations'][0]['depth_mm'], 1.2)
-        self.assertEqual(result['review'], ['front.jpg', 'press.mp4'])
 
     def test_direct_worker_script_imports_package(self):
         script = Path(__file__).resolve().parents[2] / "table_1000/modeling/preview.py"
