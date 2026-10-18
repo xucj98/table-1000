@@ -39,9 +39,14 @@ PEN_TIP_CLEARANCE = .004
 PEN_RADIUS = .009
 PEN_APPROACH = .05
 PEN_HELD_GAP = (.010, .03)
+# The barrel is round, so the hand may also lean about the pen axis.
+PEN_GRASP_LEANS = np.radians([0., 20., -20.])
 # Placement: the pen axis over the exposed part of the drawer, released PEN_DROP
-# above the drawer walls with the hand leaning PLACE_TILT toward the cabinet.
-PLACE_ABOVE, PEN_DROP, PLACE_TILT = .06, .012, np.radians(40)
+# above the drawer walls with the hand leaning toward the cabinet (PLACE_TILTS, tried in order).
+PLACE_ABOVE, PEN_DROP = .06, .012
+PLACE_TILTS = np.radians([40., 20.])
+# The pen (0.18 m) may lie turned in the drawer (0.25 m wide, about 0.11 m exposed).
+PLACE_TURNS = np.radians([0., 20., -20.])
 # Options tried in order until one plans.
 STANDOFFS = (.08, .05, .03)   # back-off from the handle or the released pen
 RISES = (.10, .06, .03)       # rise after opening
@@ -89,33 +94,42 @@ class Cabinet:
         return drawer[:3, :3] @ local + drawer[:3, 3]
 
 
-def pen_grasp(pen, table_height, grasp_x, backward):
-    """Top-down grasp across the barrel at ``grasp_x`` (pen frame). Of the two symmetric hand
-    turns, the one whose closing direction is nearer ``backward`` (the robot's -X, horizontal),
-    so the wrist turns least whichever way the pen points."""
+def pen_grasp(pen, table_height, grasp_x, flip, lean):
+    """Grasp across the barrel at ``grasp_x`` (pen frame), approaching from above leaned by ``lean``
+    about the pen axis; ``flip`` (+-1) picks one of the two symmetric hand turns."""
     axis = pen[:3, 0].copy()
     axis[2] = 0.
-    down = np.array([0., 0., -1.])
-    closing = np.cross(down, axis / np.linalg.norm(axis))
-    if np.dot(closing, backward) < 0:
-        closing = -closing
+    axis /= np.linalg.norm(axis)
+    turn = Rotation.from_rotvec(axis * lean)
+    approach = turn.apply([0., 0., -1.])
+    closing = flip * np.cross(approach, axis)
     centre = pen[:3, :3] @ [float(np.clip(grasp_x, *PEN_BARREL)), 0., 0.] + pen[:3, 3]
-    centre[2] = max(centre[2], table_height + PEN_TIP_CLEARANCE + TIP_BEYOND_TCP)
-    return build_grasp_pose(down, closing, centre)
+    centre[2] = max(centre[2], table_height + PEN_TIP_CLEARANCE + TIP_BEYOND_TCP * np.cos(lean))
+    return build_grasp_pose(approach, closing, centre)
 
 
-def place_pose(release, tcp_pen, axis_target, toward):
+def pen_grasp_options(pen, backward):
+    """``(flip, lean)`` in the order tried: first the hand turn whose closing direction is nearer
+    ``backward`` (the robot's -X, horizontal), so the wrist turns least whichever way the pen
+    points; each upright, then leaned."""
+    axis = pen[:3, 0].copy()
+    axis[2] = 0.
+    preferred = 1. if np.dot(np.cross([0., 0., -1.], axis), backward) >= 0 else -1.
+    return [(flip, lean) for flip in (preferred, -preferred) for lean in PEN_GRASP_LEANS]
+
+
+def place_pose(release, tcp_pen, axis_target, toward, tilt):
     """TCP pose putting the held pen's origin at ``release`` with its axis along ``axis_target``,
-    the hand pointing down and leaning PLACE_TILT toward ``toward``."""
+    the hand pointing down and leaning ``tilt`` toward ``toward``."""
     down = np.array([0., 0., -1.])
     axis_in_tcp = tcp_pen[:3, 0]
     candidates = [build_grasp_pose(down, np.cross(down, sign * axis_target), np.zeros(3))[:3, :3]
                   for sign in (1., -1.)]
     rotation = min(candidates, key=lambda r: np.linalg.norm(r @ axis_in_tcp - axis_target))
     axis = axis_target / np.linalg.norm(axis_target)
-    lean = Rotation.from_rotvec(axis * PLACE_TILT)
+    lean = Rotation.from_rotvec(axis * tilt)
     if np.dot(lean.apply(down), toward) < 0:
-        lean = Rotation.from_rotvec(-axis * PLACE_TILT)
+        lean = Rotation.from_rotvec(-axis * tilt)
     rotation = lean.as_matrix() @ rotation
     transform = np.eye(4)
     transform[:3, :3] = rotation
@@ -200,8 +214,17 @@ class Expert:
         pen = ctx.pose('pen', 'body')
         grasp_x = float((np.linalg.inv(pen) @ np.r_[ctx.center_of_mass('pen', 'body'), 1.])[0])
         arm.allow(['pen:pen'])
-        arm.move_to_pose_with_RRTConnect(standoff(pen_grasp(pen, self.table_height, grasp_x, self.backward), PEN_APPROACH))
-        arm.move_to_pose_with_screw(pen_grasp(ctx.pose('pen', 'body'), self.table_height, grasp_x, self.backward))
+        options = pen_grasp_options(pen, self.backward)
+        for index, (flip, lean) in enumerate(options):
+            try:
+                grasp = pen_grasp(pen, self.table_height, grasp_x, flip, lean)
+                arm.move_to_pose_with_RRTConnect(standoff(grasp, PEN_APPROACH))
+                arm.move_to_pose_with_screw(pen_grasp(ctx.pose('pen', 'body'), self.table_height, grasp_x, flip, lean))
+                break
+            except PlanningFailed as error:
+                if index == len(options) - 1:
+                    raise
+                ctx.note('next pen grasp', flip=flip, lean=float(lean), reason=error.reason)
         arm.close_gripper()
         gap = arm.finger_gap()
         if not PEN_HELD_GAP[0] <= gap <= PEN_HELD_GAP[1]:
@@ -221,20 +244,34 @@ class Expert:
     def place_pen(self, tcp_pen):
         ctx, arm = self.ctx, self.arm
 
-        def release_pose():
+        def release_pose(direction, turn, tilt):
             drawer = self.drawer()
             release = self.cabinet.release_point(drawer, ctx.pose('cabinet', 'cabinet.housing'))
-            return place_pose(release, tcp_pen, drawer[:3, 0], drawer[:3, 1])
+            axis = Rotation.from_rotvec(drawer[:3, 2] * turn).apply(direction * drawer[:3, 0])
+            return place_pose(release, tcp_pen, axis, drawer[:3, 1], tilt)
 
-        # A straight carry turns the hand only about the pen axis, so the pen stays
-        # level above the drawer walls; RRTConnect is the fallback.
-        above = translated(release_pose(), [0., 0., PLACE_ABOVE])
-        try:
-            arm.move_to_pose_with_screw(above)
-        except PlanningFailed as error:
-            ctx.note('carry with RRTConnect', reason=error.reason)
-            arm.move_to_pose_with_RRTConnect(above)
-        arm.move_to_pose_with_screw(release_pose())
+        # The pen may lie either way along the drawer, turned a little; first the way the hand
+        # turns least.
+        tcp = arm.tcp()
+        directions = sorted((1., -1.), key=lambda d: -np.trace(tcp[:3, :3].T @ release_pose(d, 0., PLACE_TILTS[0])[:3, :3]))
+        options = [(d, turn, tilt) for turn in PLACE_TURNS for d in directions for tilt in PLACE_TILTS]
+        for index, (direction, turn, tilt) in enumerate(options):
+            try:
+                # A straight carry turns the hand only about the pen axis, so the pen stays
+                # level above the drawer walls; RRTConnect is the fallback.
+                above = translated(release_pose(direction, turn, tilt), [0., 0., PLACE_ABOVE])
+                try:
+                    arm.move_to_pose_with_screw(above)
+                except PlanningFailed as error:
+                    ctx.note('carry with RRTConnect', reason=error.reason)
+                    arm.move_to_pose_with_RRTConnect(above)
+                arm.move_to_pose_with_screw(release_pose(direction, turn, tilt))
+                break
+            except PlanningFailed as error:
+                if index == len(options) - 1:
+                    raise
+                ctx.note('next placement', direction=direction, turn=float(turn), tilt=float(tilt),
+                         reason=error.reason)
         arm.open_gripper(.05)
         arm.detach('pen:pen')
         ctx.hold(.5)
