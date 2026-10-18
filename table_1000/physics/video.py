@@ -28,10 +28,16 @@ class Camera:
     def capture(self, ctx):
         runtime = ctx.session
         from PIL import Image, ImageDraw
-        from omni.physx import get_physx_interface
-        get_physx_interface().update_transformations(True, True, True, False)
+        if ctx.physics == 'gpu':
+            ctx.world.forward()
+        else:
+            from omni.physx import get_physx_interface
+            get_physx_interface().update_transformations(True, True, True, False)
         before = {key: value['position'].copy() for key, value in runtime.states.items()}
-        self.rep.orchestrator.step(rt_subframes=1, delta_time=0., pause_timeline=False)
+        # Lab render disables timeline simulation while updating Hydra and RTX.
+        # Replicator.step can stall with the Lab-managed timeline on either backend.
+        ctx.world.render()
+        ctx.world.render()
         runtime.refresh()
         if any(not np.array_equal(value, runtime.states[key]['position']) for key, value in before.items()):
             raise RuntimeError('Rendering advanced physical state')

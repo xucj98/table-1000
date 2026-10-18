@@ -1,6 +1,6 @@
 """Keyboard teleoperation of a robot in its check scene (``robot_test.py``), in a browser.
 
-``"$ISAAC_PYTHON" scripts/robots/teleop.py x1pro --output outputs/robots/x1pro-teleop --gpu 1 --port 8765``
+``uv run python scripts/robots/teleop.py x1pro --output outputs/robots/x1pro-teleop --gpu 1 --port 8765``
 then open ``http://<server>:8765/`` (for example through ``ssh -L 8765:localhost:8765 <server>``).
 Keys are listed in ``table_1000/robots/teleop.py``; the session's actions go to
 ``<output>/actions.jsonl``.
