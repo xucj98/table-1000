@@ -265,19 +265,25 @@ class TestContext:
         self.action_values = {}
         for grip in self.grips:
             grip.update(t, dt)
+        states = {}
         for name, action in self.actions.items():
-            body = action['body'];state = body.state
+            body = action['body']
+            instance, i = body.instance, body.instance.indices[body.name]
+            if instance.name not in states:
+                states[instance.name] = instance.environment_states()
+            # Each environment resolves body-frame inputs with its own pose.
+            positions, rotations, centers = (value[:, i] for value in states[instance.name])
             value = interpolate(action['frames'],t)
-            vector, point = np.zeros(3), state['com']
+            vector, point = np.zeros((self.num_envs, 3)), centers
             if value is not None:
-                vector = value[action['kind']]
-                if action['frame'] == 'body': vector = state['rotation'] @ vector
+                vector = np.broadcast_to(value[action['kind']], (self.num_envs, 3)).astype(float)
+                if action['frame'] == 'body': vector = np.einsum('eij,j->ei', rotations, value[action['kind']])
                 if 'point' in value:
-                    point = value['point']
-                    if action['point_frame'] == 'body': point = state['position'] + state['rotation'] @ point
+                    point = np.broadcast_to(value['point'], (self.num_envs, 3)).astype(float)
+                    if action['point_frame'] == 'body': point = positions + np.einsum('eij,j->ei', rotations, value['point'])
                 self.session.force(body, vector if action['kind']=='force' else np.zeros(3), point,
                                    vector if action['kind']=='torque' else None)
-            self.action_values[name] = {action['kind']:vector,'point':point}
+            self.action_values[name] = {action['kind']:vector[0],'point':point[0]}
 
     def observe(self,name,getter,*,unit):
         self.observers[name] = getter

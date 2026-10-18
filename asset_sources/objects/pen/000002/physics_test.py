@@ -154,7 +154,9 @@ def close(ctx):
     ctx.video_annotation=lambda:f'Close world +X | phase {ctx.input_state["phase"]}: 0 settle, 1 grip push limited to 0.3 N, 2 increasing limit, 3 released'
     with ctx.fixed(body):
         ctx.run(.4);ctx.input_state['phase']=1
-        # Push toward the fully seated pose with at most 0.3 N per axis.
+        # Push along the pen axis toward the fully seated pose with at most
+        # 0.3 N; the barrel guides the cap sideways, the grip holds its tilt.
+        grip.axes(linear=(1,0,0))
         grip.limit(force=.3)
         seated=cap.state['position']+body.state['rotation'][:,0]*fit(body,cap)['opening']
         grip.move_to(position=seated,duration=.4);ctx.run(1.2)
@@ -171,14 +173,21 @@ def close(ctx):
         while ctx.session.time-start<8:
             ctx.step()
             if fit(body,cap)['opening']<.0002:
-                seated_force={'limit_N':limit(ctx.session.time),'push_N':ctx.rows[-1]['push_N']};break
+                # The cap snaps in once past the detent; the push it needed is
+                # the largest before seating, not the push after the snap.
+                peak=max(row['push_N'] for row in ctx.rows if row['time']>start)
+                seated_force={'limit_N':limit(ctx.session.time),'peak_push_N':peak,'push_at_seating_N':ctx.rows[-1]['push_N']};break
         assert seated_force is not None,'increasing push did not seat the cap'
         ctx.input_state['phase']=3;grip.release();ctx.run(1.2)
         final=fit(body,cap)
-        assert abs(final['opening'])<.001 and np.linalg.norm(cap.state['velocity'][:3])<.01,'cap did not remain seated after release'
+        # As above, judge rest from the 0.4 s pose history, not the reported velocity.
+        recent=[row for row in ctx.rows if row['time']>=ctx.session.time-.4]
+        final_pose_v=float(np.linalg.norm([recent[-1][f'asset.cap.position.{a}']-recent[0][f'asset.cap.position.{a}'] for a in 'xyz'])/.4)
+        assert abs(final['opening'])<.001 and final_pose_v<.01,'cap did not remain seated after release'
     ctx.experiment_details.update(light_push_N=.3,light_push_final_fit=weak,light_push_final_vx_m_s=vx,
-        light_push_last_0_4s_x_drift_m=drift,light_push_pose_velocity_m_s=pose_v,seating_push=seated_force,final_fit=final,
-        closing_grip='grip on the cap toward the seated pose, force limit 0.3 N per world axis, then raised 0.6 N/s up to 5 N; released after seating')
+        light_push_last_0_4s_x_drift_m=drift,light_push_pose_velocity_m_s=pose_v,seating_push=seated_force,final_fit=final,final_pose_velocity_m_s=final_pose_v,
+        final_reported_velocity_m_s=float(np.linalg.norm(cap.state['velocity'][:3])),
+        closing_grip='grip on the cap along world X only (sideways free, rotation held) toward the seated pose, force limited to 0.3 N, then raised 0.6 N/s up to 5 N; released after seating')
 
 
 def collision_min_z(ctx,pose):

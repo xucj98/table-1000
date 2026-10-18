@@ -133,10 +133,11 @@ class RigidView(TensorView):
             self.subset(indices).set_velocities(values, np.arange(len(values)))
 
     def apply_forces_and_torques_at_pos(self, forces, torques, positions, is_global=True):
-        """Apply per-body forces in every environment at ``positions[environment, body]`` (local)."""
-        convert = lambda value: torch.as_tensor(value, dtype=torch.float32, device=self.device)
+        """Apply ``forces[environment, body]`` and torques at ``positions[environment, body]`` (local)."""
+        convert = lambda value: torch.as_tensor(np.asarray(value, dtype=np.float32).reshape(-1, 3),
+                                                device=self.device)
         count = len(self.paths) * len(self.offsets)
-        points = (np.asarray(positions, dtype=np.float32) + self.offsets[:, None]).reshape(-1, 3)
+        points = np.asarray(positions, dtype=np.float32) + self.offsets[:, None]
         self.view.apply_forces_and_torques_at_position(
-            convert(self.tile(forces)), convert(self.tile(torques)), convert(points),
+            convert(forces), convert(torques), convert(points),
             torch.arange(count, dtype=torch.int32, device=self.device), is_global)

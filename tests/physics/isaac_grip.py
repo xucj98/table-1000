@@ -196,7 +196,62 @@ def replicated_environments(context):
     return result
 
 
-CHECKS = [held_under_load, tumbling_trajectory, force_limited_pull, released_rotation, replicated_environments]
+def limited_magnitudes(context):
+    """Limits bound the force and torque magnitudes, at any grip orientation.
+
+    The cube is turned 45 degrees about world Z, then pulled diagonally and
+    turned about world Y toward far targets: the applied force and torque must
+    reach, and not exceed, their limits.
+    """
+    import numpy as np
+    from scipy.spatial.transform import Rotation
+    force_limit, torque_limit = .05, 1e-4
+    ctx = context('limit_magnitudes', gravity=(0, 0, 0))
+    body = ctx.asset.body('cube')
+    grip = ctx.grip(body, name='grip')
+    grip.move_to(rotation=quaternion((0, 0, np.pi/4)), duration=.2)
+    ctx.run(.1)
+    grip.limit(force=force_limit, torque=torque_limit)
+    turned = Rotation.from_rotvec((0, .4, 0))*Rotation.from_rotvec((0, 0, np.pi/4))
+    x, y, z, w = turned.as_quat()
+    start = len(ctx.rows)
+    grip.track(grip.position+(.5, .5, 0), (w, x, y, z))
+    ctx.run(.04)
+    force = max(np.linalg.norm([row[f'grip.force.{a}'] for a in 'xyz']) for row in ctx.rows[start+1:])
+    torque = max(np.linalg.norm([row[f'grip.torque.{a}'] for a in 'xyz']) for row in ctx.rows[start+1:])
+    result = {'force_limit_N': force_limit, 'max_force_N': force,
+              'torque_limit_N_m': torque_limit, 'max_torque_N_m': torque}
+    assert abs(force/force_limit-1) < .01, result
+    # GPU torque is a drive-law estimate; CPU reads the joint force.
+    assert abs(torque/torque_limit-1) < (.01 if ctx.physics == 'cpu' else .06), result
+    return result
+
+
+def replica_body_frame_actions(context):
+    """Each environment resolves body-frame forces with its own orientation."""
+    import numpy as np
+    ctx = context('replica_body_frame', gravity=(0, 0, 0), num_envs=2)
+    body = ctx.asset.body('cube')
+    ctx.force('push', body, frame='body', keyframes=[{'time': 0, 'force': (.1, 0, 0)}, {'time': .1, 'force': (.1, 0, 0)}])
+    ctx.ensure_initialized()
+    view = ctx.asset.view.view
+    # Turn the replica 90 degrees about world Z, as a diverged replica would be.
+    pose = view.get_transforms().clone()
+    pose[1, 3:] = pose.new_tensor([0, 0, 2**-.5, 2**-.5])
+    import torch
+    view.set_transforms(pose, torch.arange(2, dtype=torch.int32, device=pose.device))
+    ctx.session.refresh()
+    ctx.run(.1)
+    velocities = view.get_velocities().detach().cpu().numpy()[:, :3]
+    expected = .1*.1/MASS
+    result = {'environment_0_velocity_m_s': velocities[0].tolist(), 'replica_velocity_m_s': velocities[1].tolist()}
+    np.testing.assert_allclose(velocities[0], [expected, 0, 0], atol=.01*expected, err_msg=str(result))
+    np.testing.assert_allclose(velocities[1], [0, expected, 0], atol=.01*expected, err_msg=str(result))
+    return result
+
+
+CHECKS = [held_under_load, tumbling_trajectory, force_limited_pull, limited_magnitudes, released_rotation,
+          replicated_environments, replica_body_frame_actions]
 
 
 def main():

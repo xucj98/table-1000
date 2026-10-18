@@ -86,7 +86,7 @@ def gravity_tilt(ctx):
 | `move_to(*, duration, position=None, rotation=None, wait=True)` | 从上一段运动的终点出发，平移走直线、旋转绕固定轴，按五次多项式随时间平滑，起止速度和加速度为零 |
 | `follow(path, *, duration, wait=True)` | 跟踪 `path(t) -> (position, quaternion)`，`t ∈ [0, duration]`；`path(0)` 必须等于上一段运动的终点 |
 | `track(position, quaternion, linear_velocity=0, angular_velocity=0)` | 从下一步起保持给定位姿与速度，清空排队的运动；用于需要每步反馈的实验 |
-| `limit(force=inf, torque=inf)` | 每个世界轴上的力（N）与力矩（N·m）上限，可为数值或时间的函数；上限起作用时夹持以该力推向目标，物体落后于轨迹 |
+| `limit(force=inf, torque=inf)` | 夹持施加的合力（N）与合力矩（N·m）的大小上限，可为数值或时间的函数；上限起作用时夹持以该大小推向目标，物体落后于轨迹 |
 | `axes(linear=(1, 1, 1), angular=True)` | 逐个开关世界平移轴及转动；关闭的轴不施力 |
 | `release()` / `grasp()` | 松开，刚体完全自由；在刚体当前位姿处静止地重新夹住 |
 | `position` / `quaternion` | 上一段运动的终点，即下一段运动的起点 |
@@ -95,7 +95,7 @@ def gravity_tilt(ctx):
 - `duration` 必须给出，且为物理步长的整数倍。阻塞式调用推进仿真直到运动结束，期间动作、行为与采样照常执行。多段运动按顺序衔接，可以在两段之间读取实时状态计算下一段。`wait=False` 只排队并返回运动对象，用 `ctx.wait(*motions)` 让多个夹持同时运动。
 - 增益由被夹 articulation 树的质量与惯量自动确定，并补偿其重力与轨迹加速度；物体以连续的真实速度跟随轨迹，静止夹持时不因重力下垂。所用增益写入结果的 `grips`。
 - 每步记录 `<name>.target.position.*`、`<name>.force.*`、`<name>.torque.*`（夹持施加给被夹树的力与对夹持点的力矩）及 `<name>.error.position` / `<name>.error.angle`。力在 CPU 与 GPU 上都可用于测量；GPU 上的力矩为估算值，约偏低 5%。
-- 位移控制测力（如以恒定速度拔帽并取力的峰值）用 `follow`；力控制（如一只逐渐用力的手）用 `limit` 配合远处的目标。已知外载荷作用下的实验仍用 `ctx.force()`。
+- 位移控制测力（如以恒定速度拔帽并取力的峰值）用 `follow`；力控制（如一只逐渐用力的手）用 `limit` 配合远处的目标。上限针对合力：夹持保持的横向约束力也计入其中，只关心某一方向的推力时，用 `axes` 只保留该方向（如沿笔轴合帽）。已知外载荷作用下的实验仍用 `ctx.force()`。
 
 
 实例句柄、测试函数和时间规则是统一接口；其余辅助方法随实际实验提取，避免为未使用的能力预建框架。

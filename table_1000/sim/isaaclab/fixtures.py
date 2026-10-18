@@ -278,7 +278,7 @@ class Grip:
     Gains follow from the held tree's mass and inertia; drives receive the
     trajectory velocity, and feedforward joint forces carry gravity and the
     trajectory acceleration of the held tree. ``limit`` bounds the force and
-    torque per world axis, turning position control into force control.
+    torque magnitudes, turning position control into force control.
     """
 
     def __init__(self, ctx, body, *, name):
@@ -361,11 +361,11 @@ class Grip:
         self.linear_axes, self.angular = np.asarray(linear, dtype=float), bool(angular)
 
     def limit(self, force=np.inf, torque=np.inf):
-        """Bound the applied force (N) and torque (N·m) per world axis.
+        """Bound the magnitude of the applied force (N) and torque (N·m).
 
         Each limit is a number or a function of simulation time; ``inf``
-        removes it. While a limit binds, the grip pushes with that force and
-        the body lags its trajectory.
+        removes it. While a limit binds, the grip pushes toward its target with
+        that magnitude and the body lags its trajectory.
         """
         self.force_limit, self.torque_limit = force, torque
 
@@ -449,19 +449,30 @@ class Grip:
             torque = Rotation.from_rotvec(row[3:]).inv().apply(torque) if self.angular else np.zeros(3)
             feedforward.append(np.r_[force*linear, torque])
         feedforward = np.array(feedforward)
-        # A limited axis whose force (drive estimate plus feedforward) would
-        # exceed its limit pushes with the limit toward the target instead:
-        # the trajectory feedforward assumes tracking, which no longer holds.
-        limits = np.r_[[self.limit_value(self.force_limit, t)]*3, [self.limit_value(self.torque_limit, t)]*3]
+        # Limits bound the magnitude of the force and of the torque. A group
+        # whose estimated wrench (drive plus feedforward) would exceed its limit
+        # pushes with exactly the limit along that estimate instead: the
+        # trajectory feedforward assumes tracking, which no longer holds.
+        # Magnitudes do not depend on the frame, so the joint-frame torque
+        # is bounded as the world torque is.
         estimate = (stiffness*(fixture.coordinates-positions) +
                     damping*(fixture.velocity_targets-self.measured_velocities(positions)) + feedforward)
-        saturated = np.abs(estimate) > limits
-        fixture.stiffness = np.where(saturated, 0, stiffness)
-        fixture.damping = np.where(saturated, 0, damping)
-        # Only finite limits saturate; masking first avoids 0*inf.
-        fixture.actuation = np.where(saturated, np.sign(estimate)*np.where(saturated, limits, 0),
-                                     np.clip(feedforward, -limits, limits))
-        fixture.max_forces = np.where(saturated, np.inf, np.maximum(limits - np.abs(fixture.actuation), 0))
+        fixture.stiffness, fixture.damping = np.tile(stiffness, (len(positions), 1)), np.tile(damping, (len(positions), 1))
+        fixture.actuation, fixture.max_forces = feedforward.copy(), np.full(feedforward.shape, np.inf)
+        for group, limit in ((slice(0, 3), self.force_limit), (slice(3, 6), self.torque_limit)):
+            limit = self.limit_value(limit, t)
+            if np.isinf(limit):
+                continue
+            size = np.linalg.norm(estimate[:, group], axis=1, keepdims=True)
+            saturated = size > limit
+            push = estimate[:, group]*limit/np.maximum(size, 1e-30)
+            carried = np.linalg.norm(feedforward[:, group], axis=1, keepdims=True)
+            held = feedforward[:, group]*np.minimum(1, limit/np.maximum(carried, 1e-30))
+            fixture.stiffness[:, group] = np.where(saturated, 0, stiffness[group])
+            fixture.damping[:, group] = np.where(saturated, 0, damping[group])
+            fixture.actuation[:, group] = np.where(saturated, push, held)
+            # Tracking within the limit: the drive may add up to what is left.
+            fixture.max_forces[:, group] = np.where(saturated, np.inf, np.maximum(limit - np.minimum(carried, limit), 0))
         self.previous_positions = positions
         fixture.apply()
 

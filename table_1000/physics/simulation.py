@@ -283,17 +283,26 @@ class PhysicsStep:
                 state['gravity_acceleration'] = np.zeros(3)
 
     def force(self, body, force, point=None, torque=None, external=True):
+        """Add a world force (at ``point``) and torque on ``body`` for this step.
+
+        Values are one vector for every environment, or one row per
+        environment in environment-local coordinates. Moments are taken about
+        each environment's own center of mass.
+        """
         key = body.key
         state = self.states[key]
-        force = np.asarray(force, dtype=float)
-        moment = np.zeros(3) if torque is None else np.asarray(torque, dtype=float)
+        rows = lambda value: np.broadcast_to(np.asarray(value, dtype=float), (self.envs, 3))
+        force = rows(force)
+        moment = rows(np.zeros(3) if torque is None else torque)
         if point is not None:
-            moment = moment + np.cross(np.asarray(point) - state['com'], force)
-        self.forces[key] += force
-        self.torques[key] += moment
+            centers = (body.instance.environment_states()[2][:, body.instance.indices[body.name]]
+                       if self.envs > 1 else state['com'][None])
+            moment = moment + np.cross(rows(point) - centers, force)
+        self.forces[key] = self.forces[key] + force
+        self.torques[key] = self.torques[key] + moment
         if external:
-            state['external_force'] += force
-            state['external_torque'] += moment
+            state['external_force'] += force[0]
+            state['external_torque'] += moment[0]
 
     def prepare(self, dt):
         from isaacsim.core.simulation_manager import SimulationManager
@@ -307,8 +316,8 @@ class PhysicsStep:
             if not self.ready or not all(a.view.is_physics_handle_valid() for a in self.instances.values()):
                 self.initialize()
             self.refresh()
-            self.forces = {key: np.zeros(3) for key in self.states}
-            self.torques = {key: np.zeros(3) for key in self.states}
+            self.forces = {key: np.zeros((self.envs, 3)) for key in self.states}
+            self.torques = {key: np.zeros((self.envs, 3)) for key in self.states}
             if self.actions:
                 self.actions(self.time, dt)
             self.callback_steps += 1
@@ -321,13 +330,12 @@ class PhysicsStep:
             return
         for asset in self.instances.values():
             keys = [(asset.name, name) for name in asset.body_names]
-            # Each environment receives the same force and moment at its own
-            # centers of mass.
+            # Forces and moments per environment, applied at its own centers of mass.
             centers = (asset.environment_states()[2] if self.envs > 1 else
                        np.array([[self.states[key]['com'] for key in keys]]))
             asset.view.apply_forces_and_torques_at_pos(
-                np.array([self.forces[key] for key in keys], dtype=np.float32),
-                np.array([self.torques[key] for key in keys], dtype=np.float32),
+                np.stack([self.forces[key] for key in keys], axis=1),
+                np.stack([self.torques[key] for key in keys], axis=1),
                 positions=centers, is_global=True)
 
     def step(self, world):
