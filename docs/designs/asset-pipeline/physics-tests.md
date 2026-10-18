@@ -131,6 +131,8 @@ physics_test/
 
 重跑仅清理对应测试的结果。报告包含测试名、资产与软件版本、生效物理/渲染条件、实例数、自动检查及性能数据。`execution_status` 为 `completed` 或 `failed`；`review_status` 初始为 `pending`，人工确认后为 `accepted` 或 `needs_changes`。脚本可使用普通断言检查明确要求，不需要另建断言语言。
 
+测试把测得的关键物理量写入字典 `ctx.experiment_details`（SI 单位，键名带单位后缀，如 `peak_pull_N`），结果原样保存在 `result.json` 的 `experiment`。验收完成后，将这些量汇总到资产 README 的物理实测表，见 [README 与缩略图](README.md#readme-与缩略图)。
+
 人工查看完整视频与关注曲线，判断是否符合实验预期和物理常识。观察到的限位、接触误差、振荡及步长敏感性如实记录；数值稳定不等同于真实材料参数已标定。
 
 ## RTF 基准

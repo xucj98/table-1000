@@ -436,7 +436,9 @@ class Grip:
         saturated = np.abs(estimate) > limits
         fixture.stiffness = np.where(saturated, 0, stiffness)
         fixture.damping = np.where(saturated, 0, damping)
-        fixture.actuation = np.where(saturated, np.sign(estimate)*limits, np.clip(feedforward, -limits, limits))
+        # Only finite limits saturate; masking first avoids 0*inf.
+        fixture.actuation = np.where(saturated, np.sign(estimate)*np.where(saturated, limits, 0),
+                                     np.clip(feedforward, -limits, limits))
         fixture.max_forces = np.where(saturated, np.inf, np.maximum(limits - np.abs(fixture.actuation), 0))
         self.previous_positions = positions
         fixture.apply()
