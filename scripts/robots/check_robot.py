@@ -1,6 +1,6 @@
 """Robot acceptance in Isaac Sim: physical-sense cases and comparison metrics.
 
-``"$ISAAC_PYTHON" scripts/robots/check_robot.py x1pro --output outputs/robots/x1pro-check --gpu 1 [--video]``
+``uv run python scripts/robots/check_robot.py x1pro --output outputs/robots/x1pro-check --gpu 1 [--video]``
 writes ``report.json`` (every case with its checks, then the metrics) and, with
 ``--video``, one video of all cases per view: ``wide.mp4`` from outside and
 ``<camera>.mp4`` for every robot camera (depth as grey, white near). The robot's settings and cases come from
@@ -28,6 +28,7 @@ def main(argv=None):
     parser.add_argument('robot')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--gpu', type=int, default=0)
+    parser.add_argument('--physics', choices=('cpu', 'gpu'), default='cpu')
     parser.add_argument('--video', action='store_true')
     parser.add_argument('--cases', nargs='*')
     parser.add_argument('--no-metrics', action='store_true')
@@ -41,8 +42,10 @@ def main(argv=None):
     from table_1000.sim.isaaclab.render import RT2_ARGS
     started = time.perf_counter()
     # Robot camera images (the sensors case) and videos render with RTX Real-Time 2.0.
-    app = start_app(gpu=args.gpu, workers=4, extra_args=RT2_ARGS)
-    report = {'robot': args.robot, 'startup_s': time.perf_counter() - started, 'cases': {}}
+    device = 'cpu' if args.physics == 'cpu' else 'cuda:0'
+    app = start_app(gpu=args.gpu, workers=4, device=device, extra_args=RT2_ARGS)
+    report = {'robot': args.robot, 'physics': args.physics, 'device': device,
+              'startup_s': time.perf_counter() - started, 'cases': {}}
     checker = None
     try:
         from table_1000.robots import load_robot_test, load_spec
@@ -53,7 +56,7 @@ def main(argv=None):
         spec = load_spec(args.robot, root)
         # The outside view and every robot camera, one video each.
         checker = Checker(spec, load_robot_test(args.robot, root), output, args.assets.resolve(), root,
-                          views=VIEW if args.video else None, video=args.video)
+                          views=VIEW if args.video else None, video=args.video, device=device)
         report['load_s'] = checker.load_s
         if args.benchmark:
             from table_1000.robots.checks import benchmark

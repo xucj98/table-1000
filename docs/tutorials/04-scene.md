@@ -11,11 +11,10 @@
 - 轨迹文件 `trajectories.hdf5`（成功）、`trajectories_failed.hdf5`（失败），每个 seed 的报告与汇总；
 - 每条渲染轨迹的视频、评审图、机器人相机图像；LeRobot v3.0 数据集。
 
-环境同第三章，另需 `data` 依赖组（LeRobot）：
+环境同第三章，另需 `data` 依赖组（LeRobot）；命令都用 `uv run python` 运行：
 
 ```bash
 uv sync --locked --all-extras
-export ISAAC_PYTHON=$PWD/.venv/bin/python
 ```
 
 ## 1. 场景源码
@@ -41,7 +40,7 @@ def initialize(layout):
 ## 2. 检查初态
 
 ```bash
-"$ISAAC_PYTHON" scripts/scenes/check_scene.py scene-000000 --output outputs/scenes/scene-000000/check --gpu 0
+uv run python scripts/scenes/check_scene.py scene-000000 --output outputs/scenes/scene-000000/check --gpu 0
 ```
 
 对 seed 0–24 各做一次与生成轨迹时相同的初始化：
@@ -97,7 +96,7 @@ def solve(ctx):
 ## 4. 生成轨迹
 
 ```bash
-"$ISAAC_PYTHON" scripts/scenes/generate.py scene-000000 --seeds 0:100 --output outputs/scenes/scene-000000/gen --gpu 0
+uv run python scripts/scenes/generate.py scene-000000 --seeds 0:100 --output outputs/scenes/scene-000000/gen --gpu 0
 ```
 
 每个 seed 依次：
@@ -110,7 +109,7 @@ def solve(ctx):
 一个进程连续跑多个 seed，每个从复位开始。需要更快时，按 seed 区间在多个进程或 GPU 上分别运行，各自输出到不同目录，再汇总：
 
 ```bash
-"$ISAAC_PYTHON" scripts/scenes/summarize.py outputs/scenes/scene-000000/gen/part* --output outputs/scenes/scene-000000/gen/summary.json
+uv run python scripts/scenes/summarize.py outputs/scenes/scene-000000/gen/part* --output outputs/scenes/scene-000000/gen/summary.json
 ```
 
 本例结果：在提交 3d648a5 上，seed 0–99 分 4 个进程并行生成。
@@ -159,7 +158,7 @@ RRTConnect 有规划时限，机器负载不同时仍可能走出不同的路径
 把录制的轨迹渲染成视频、机器人相机图像和评审图。渲染按录制的状态逐步恢复场景，不重新仿真，画面与录制的轨迹一致。
 
 ```bash
-"$ISAAC_PYTHON" scripts/scenes/render.py outputs/scenes/scene-000000/gen/trajectories.hdf5 --output outputs/scenes/scene-000000/render --count 5 --gpu 0
+uv run python scripts/scenes/render.py outputs/scenes/scene-000000/gen/trajectories.hdf5 --output outputs/scenes/scene-000000/render --count 5 --gpu 0
 ```
 
 `--count 5` 随机选 5 条（`--seed` 固定选择），`--demos demo_3 demo_7` 指定，默认全部。
@@ -185,7 +184,7 @@ RRTConnect 有规划时限，机器负载不同时仍可能走出不同的路径
 ## 7. 导出 LeRobot
 
 ```bash
-"$ISAAC_PYTHON" scripts/scenes/to_lerobot.py outputs/scenes/scene-000000/gen/part*/trajectories.hdf5 --frames outputs/scenes/scene-000000/render --output outputs/scenes/scene-000000/lerobot
+uv run python scripts/scenes/to_lerobot.py outputs/scenes/scene-000000/gen/part*/trajectories.hdf5 --frames outputs/scenes/scene-000000/render --output outputs/scenes/scene-000000/lerobot
 ```
 
 可以一次给多个轨迹文件（分段生成的各部分）；只转换在 `--frames` 下渲染过的轨迹。本例 5 条轨迹（3435 帧，3 路相机）转换约 8.5 分钟，主要耗在 AV1 视频编码，数据集 68 MB。
