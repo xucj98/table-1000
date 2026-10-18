@@ -108,3 +108,39 @@ class CaseResultsTests(unittest.TestCase):
         self.assertEqual(result['tests']['close']['rtf']['isaac-cpu'], {'physics': .571, 'video': .34})
         self.assertEqual(result['tests']['drop']['error'], {'isaac-gpu': 'AssertionError: pen did not settle'})
         self.assertEqual(list(result['tests']), ['close', 'drop'])
+
+    def test_failed_backend_never_reports_old_results(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            asset = Path(temporary) / 'pen/000002'
+            asset.mkdir(parents=True)
+            (asset / 'physics_test.py').write_text("TESTS = {'close': None, 'drop': None}\n")
+            for name in ('close', 'drop'):
+                path = asset / 'physics_test/isaac-gpu' / name / 'result.json'
+                path.parent.mkdir(parents=True)
+                path.write_text(json.dumps({'execution_status': 'completed', 'conditions': {'isaac_version': ['5.1.0']},
+                                            'environments': {'count': 4}, 'metrics': {},
+                                            'performance': {'no_render': {'RTF': 1}, 'video_end_to_end': {'RTF': 1}}}))
+            # The worker dies at startup and writes nothing.
+            with patch('table_1000.physics.test.run_jobs', return_value=['pen/000002 isaac-gpu']):
+                with self.assertRaises(SystemExit):
+                    main(['--source', temporary, '--physics', 'isaac-gpu', '--tests', 'close'])
+            result = json.loads((asset / 'physics_test/summary.json').read_text())
+        self.assertEqual(result['tests']['close']['status'], {'isaac-gpu': 'failed'})
+        self.assertIn('not run', result['tests']['close']['error']['isaac-gpu'])
+        self.assertEqual(result['tests']['drop']['status'], {'isaac-gpu': 'completed'})
+        self.assertEqual(result['backends']['isaac-gpu']['failed'], ['close'])
+
+    def test_broken_definition_fails_only_its_asset(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for reference, text in (('pen/000002', "TESTS = {'drop': None}\n"), ('cabinet/000000', "raise ImportError('broken')\n")):
+                (root / reference).mkdir(parents=True)
+                (root / reference / 'physics_test.py').write_text(text)
+            with patch('table_1000.physics.test.run_jobs', return_value=[]) as jobs, \
+                 patch('traceback.print_exc'):
+                with self.assertRaisesRegex(SystemExit, 'cabinet/000000'):
+                    main(['--source', temporary, '--physics', 'isaac-cpu'])
+            self.assertEqual([label for _, _, label in jobs.call_args.args[0]], ['pen/000002 isaac-cpu'])
+            broken = json.loads((root / 'cabinet/000000/physics_test/summary.json').read_text())
+            self.assertIn('broken', broken['error'])
+            self.assertTrue((root / 'pen/000002/physics_test/summary.json').exists())

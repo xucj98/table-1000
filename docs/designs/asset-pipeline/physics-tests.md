@@ -51,7 +51,7 @@ uv run python scripts/assets/physics_test.py --assets pen/000002 cabinet/000000 
 | `--scripts` | 从该目录（如 `asset_sources/objects`）读取 `physics_test.py`，默认用构建时复制到资产目录的快照 |
 | `--num-envs`、`--benchmark` | 见下文 |
 
-每个“资产 × 后端”在独立进程中运行：Isaac 的物理设备在启动时确定，一个进程不能切换；某一组失败不影响其他组，其输出写入 `physics_test/<后端>/run.log`。同一组内某项测试失败时，其余测试照常运行。全部结束后为每个资产重新生成 `physics_test/summary.json`；任一组失败时退出码非零。
+每个“资产 × 后端”在独立进程中运行：Isaac 的物理设备在启动时确定，一个进程不能切换；某一组失败不影响其他组，其输出写入 `physics_test/<后端>/run.log`。同一组内某项测试失败时，其余测试照常运行。所选测试的旧结果在开始前清除，进程中途退出而未运行的测试记为 `failed`；某个资产的 `physics_test.py` 无法导入时，只跳过该资产，其 `summary.json` 的 `error` 写明原因。全部结束后为每个资产重新生成 `physics_test/summary.json`；任一组失败时退出码非零。
 
 执行器通过共享 Isaac Lab `start_app()` 启动隔离用户配置的应用，物理上下文使用 `SimulationContext`。`isaac-cpu` 和 `isaac-gpu` 分别使用 CPU 和 CUDA PhysX，渲染都在分配到的显卡上，CUDA 逻辑设备为 `cuda:0`。测试脚本中 `ctx.physics` 为 `cpu` 或 `gpu`。
 

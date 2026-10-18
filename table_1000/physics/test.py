@@ -223,10 +223,15 @@ def run_video(asset,name,test,output,app,startup,rtf,gpu,physics="cpu",num_envs=
         ctx.close()
 
 
+def clear(output,name):
+    """Remove one test's previous results, so a rerun never reports them."""
+    if (output/name).exists():shutil.rmtree(output/name)
+    (output/(name+'.mp4')).unlink(missing_ok=True)
+
+
 def run_case(asset,name,test,output,app,startup,gpu,physics="cpu",num_envs=1,utilization=None,standard=False):
     directory=output/name
-    if directory.exists():shutil.rmtree(directory)
-    (output/(name+'.mp4')).unlink(missing_ok=True)
+    clear(output,name)
     directory.mkdir(parents=True)
     try:
         rtf=benchmark(asset,name,test,app,physics=physics,num_envs=num_envs,utilization=utilization) if standard else None
@@ -246,8 +251,11 @@ def significant(value,digits=4):
     return float(f'{value:.{digits}g}')
 
 
-def summary(directory,names):
+def summary(directory,names,error=None):
     """Collect each backend's result.json into one human-facing digest."""
+    asset=str(directory.relative_to(directory.parents[1]))
+    if error:
+        return {'asset':asset,'error':error,'backends':{},'tests':{}}
     backends,tests={},{}
     for backend in BACKENDS:
         output=directory/'physics_test'/backend
@@ -272,13 +280,13 @@ def summary(directory,names):
             test['rtf'][backend]={'physics':significant(physics.get('median_RTF',physics.get('RTF')),3),
                                   'video':significant(performance['video_end_to_end']['RTF'],3)}
     ordered={name:tests[name] for name in names if name in tests}
-    return {'asset':str(directory.relative_to(directory.parents[1])),'backends':backends,'tests':ordered}
+    return {'asset':asset,'backends':backends,'tests':ordered}
 
 
-def write_summary(directory,names):
+def write_summary(directory,names,error=None):
     path=directory/'physics_test'/'summary.json'
     path.parent.mkdir(parents=True,exist_ok=True)
-    path.write_text(json.dumps(summary(directory,names),indent=2,ensure_ascii=False)+'\n',encoding='utf-8')
+    path.write_text(json.dumps(summary(directory,names,error),indent=2,ensure_ascii=False)+'\n',encoding='utf-8')
     return path
 
 
@@ -385,22 +393,32 @@ def main(argv=None):
                 else sorted(path.parent.relative_to(source) for path in source.rglob('physics_test.py')))
     scripts={reference:(args.scripts.resolve()/reference if args.scripts else source/reference)/'physics_test.py'
              for reference in references}
-    names={reference:list(load_tests(script)) for reference,script in scripts.items()}
-    for reference in references:
+    names,broken={},{}
+    for reference,script in scripts.items():
+        try:
+            names[reference]=list(load_tests(script))
+        except Exception:
+            # A broken definition fails only its own asset.
+            traceback.print_exc()
+            broken[reference]=traceback.format_exc().strip().splitlines()[-1]
+            continue
         unknown=set(args.tests or ())-set(names[reference])
         if unknown:parser.error(f'{reference}: unknown tests {sorted(unknown)}')
     if args.plots_only:
         from table_1000.physics.plots import plot_trace
-        for reference in references:
+        for reference in names:
             for backend in args.physics:
                 output=source/reference/'physics_test'/backend
                 for name in args.tests or names[reference]:
                     result=json.loads((output/name/'result.json').read_text())
                     plot_trace(output/name/'trace.csv',result['plots'],result['columns'])
         return
-    jobs=[]
-    for reference in references:
+    jobs,selected=[],{}
+    for reference in names:
         for backend in args.physics:
+            output=source/reference/'physics_test'/backend
+            selected[reference,backend]=args.tests or names[reference]
+            for name in selected[reference,backend]:clear(output,name)
             command=[sys.executable,str(ENTRY),'--worker',str(source/reference),'--physics',backend,
                      '--script',str(scripts[reference])]
             if args.tests:command+=['--tests',*args.tests]
@@ -408,8 +426,17 @@ def main(argv=None):
             if args.benchmark:command.append('--benchmark')
             jobs.append((command,source/reference/'physics_test'/backend/'run.log',f'{reference} {backend}'))
     failed=run_jobs(jobs,args.gpus)
+    for (reference,backend),tests in selected.items():
+        output=source/reference/'physics_test'/backend
+        for name in tests:
+            # The worker exited before reaching this test, e.g. at startup.
+            if not (output/name/'result.json').exists():
+                (output/name).mkdir(parents=True,exist_ok=True)
+                (output/name/'result.json').write_text(json.dumps({'test':name,'execution_status':'failed',
+                    'error':f'not run: the {backend} process exited before this test; see {output/"run.log"}'},indent=2)+'\n')
     for reference in references:
-        print('SUMMARY',write_summary(source/reference,names[reference]),flush=True)
+        print('SUMMARY',write_summary(source/reference,names.get(reference,[]),broken.get(reference)),flush=True)
+    failed+=[f'{reference} (physics_test.py)' for reference in broken]
     if failed:
         raise SystemExit('failed: '+', '.join(failed))
 
