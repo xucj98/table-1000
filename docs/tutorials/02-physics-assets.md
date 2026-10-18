@@ -57,8 +57,8 @@ uv run python scripts/assets/physics_test.py assets/objects/pen/000002 \
 
 | 测试 | 内容 |
 | --- | --- |
-| `pull_comparison` | 同场景紧松两笔，固定笔身，沿 X 轴逐渐施加 0–5 N 拉力；完全分离后接住并放稳。记录两帽拉力及 X 位置 |
-| `close` | 固定笔身，先用小于 0.5 N 的轻推力停在卡扣前，再加力盖紧并撤力。记录推力及帽的 X 位置 |
+| `pull_comparison` | 同场景紧松两笔，固定笔身，夹持笔帽以 5 mm/s 沿 −X 匀速拉出 45 mm，再放稳松开。记录夹持拉力（取峰值为拔帽力）及帽的 X 位置 |
+| `close` | 固定笔身，夹持笔帽推向盖合位置：先限力 0.3 N，应停在卡扣前；再逐渐提高上限直到盖紧，然后松开。记录推力及帽的 X 位置 |
 | `drop_heights` | 同场景三笔从 0.2、0.5、1 m 同时落地，观察冲击后运动与恢复 |
 | `gravity_rotation` | 同场景紧松两笔，从帽朝上的竖直姿态慢转 180°，观察紧帽保持、松帽滑落 |
 
@@ -73,9 +73,9 @@ uv run python scripts/assets/physics_test.py assets/objects/cabinet/000000 \
   --physics gpu --gpu 0 --output outputs/physics/cabinet-gpu
 ```
 
-测试覆盖三个抽屉拉动后撤力、上下限位持续受力、到限位后继续拉动整个盒子，以及从水平连续下倾至 45° 的重力滑动（`gravity_tilt`）。记录三个抽屉达到 0.5 mm 相对位移时的实际角度；本例使用原生关节轴静/动摩擦力 0.50/0.35 N，迁移后实测 CPU 约 19.06°、GPU 约 18.95° 起滑，满足至少 15° 的设计目标。
+测试覆盖三个抽屉拉动后撤力、上下限位持续受力、到限位后继续拉动整个盒子，以及夹持外壳从水平连续下倾至 45° 的重力滑动（`gravity_tilt`）。记录三个抽屉达到 0.5 mm 相对位移时的实际角度；本例使用原生关节轴静/动摩擦力 0.50/0.35 N，静摩擦对应的解析起滑角约 18.6°。实测 CPU 约 18.9°、GPU 约 15.8–16.6° 起滑，满足至少 15° 的设计目标；GPU 偏早约 2.5°。
 
-夹具在初始化前声明，运行时通过 PhysX 张量移动、驱动与释放。资产材料、质量、惯量及原有关节参数保持不变；可释放夹具增加辅助 link，因此 CPU 轨迹可能与旧 D6 夹具不同。GPU 使用更高求解迭代数，关闭不支持的 CCD，笔跌落单独使用 PGS；实际配置记录在 `result.json`，详见[测试规范](../designs/asset-pipeline/physics-tests.md)。
+静止锁定 `ctx.fixed` 与夹持 `ctx.grip` 在初始化前声明，运行中移动、驱动与释放，不改变资产材料、质量、惯量及原有关节参数；夹持的增益写入 `result.json` 的 `grips`。GPU 使用更高求解迭代数，关闭不支持的 CCD，笔跌落单独使用 PGS；实际配置记录在 `result.json`，详见[测试规范](../designs/asset-pipeline/physics-tests.md)。
 
 结果默认写入资产的 `physics_test/`，与 `preview/` 并列。例如：
 

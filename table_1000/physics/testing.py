@@ -75,6 +75,7 @@ class TestContext:
         self.camera_instance = None
         self.fixture_counter = 0
         self.fixtures = []
+        self.grips = []
         self.session.fixtures = self.fixtures
         self.initialized = False
         self.integrating_seconds = self.preparation_seconds = 0.
@@ -167,17 +168,19 @@ class TestContext:
         for fixture in self.fixtures:
             fixture.initialize()
             if not fixture.locked:
-                velocity = fixture.body.instance.initial_velocities[fixture.body.instance.indices[fixture.body.name]]
+                instance = fixture.body.instance
+                velocity = instance.initial_velocities[instance.indices[fixture.body.name]]
                 state = fixture.body.state
                 origin_velocity = velocity[:3] - np.cross(velocity[3:], state['com'] - state['position'])
                 values = fixture.view.get_dof_velocities()
-                values[0, fixture.order] = np.r_[fixture.basis.inv().apply(origin_velocity),
-                                                fixture.basis.inv().apply(velocity[3:])]
+                values[0, fixture.order] = fixture.velocity_coordinates(state['quaternion'], origin_velocity, velocity[3:])
                 fixture.view.set_dof_velocities(values, fixture.indices)
         self.session.time = 0.;self.session.steps = 0
         self.session.callback_steps = 0
         self.world.forward()
         self.session.refresh()
+        for grip in self.grips:
+            grip.initialize()
         self.action_values.clear()
         self.initialized = True
         self.preparation_seconds += time.perf_counter()-started
@@ -197,29 +200,42 @@ class TestContext:
 
     @contextmanager
     def fixed(self, body, *, position=None, rotation=None):
-        from table_1000.sim.isaaclab.fixtures import Grip
-        grip = Grip(self, body, name='fixture_'+str(self.fixture_counter), locked=True)
-        self.fixture_counter += 1
-        grip.move(position, rotation)
-        try:
-            yield grip
-        finally:
-            grip.release()
+        """Rigidly lock a body at a static world pose (default: its declared pose).
 
-    @contextmanager
-    def spring(self, body, *, position, rotation=(1,0,0,0), linear_stiffness, linear_damping,
-               angular_stiffness, angular_damping):
-        from table_1000.sim.isaaclab.fixtures import Grip
-        grip = Grip(self, body, name='fixture_'+str(self.fixture_counter),
-                    linear_stiffness=linear_stiffness, linear_damping=linear_damping,
-                    angular_stiffness=angular_stiffness, angular_damping=angular_damping,
-                    linear_max_force=float('inf'), angular_max_force=float('inf'))
+        The lock cannot move; use :meth:`grip` for any prescribed motion.
+        Leaving the scope releases the body.
+        """
+        from table_1000.sim.isaaclab.fixtures import Fixture
+        lock = Fixture(self, body, name='fixture_'+str(self.fixture_counter), locked=True,
+                       position=position, rotation=rotation)
         self.fixture_counter += 1
-        grip.move(position, rotation)
         try:
-            yield grip
+            yield lock
         finally:
-            grip.release()
+            lock.release()
+
+    def grip(self, body, *, name=None):
+        """Ideal six-axis grip of ``body`` at its declared pose; declare before the first step.
+
+        See :class:`table_1000.sim.isaaclab.fixtures.Grip` for its motions.
+        Records ``<name>.target.position``, ``.force``, ``.torque`` (world, about
+        the held point) and ``.error.position`` / ``.error.angle``.
+        """
+        from table_1000.sim.isaaclab.fixtures import Grip
+        name = name or 'grip_'+str(len(self.grips))
+        return Grip(self, body, name=name)
+
+    def wait(self, *motions):
+        """Step until every given grip motion has ended."""
+        self.ensure_initialized()
+        end = max(motion.end for motion in motions)
+        remaining = round((end - self.session.time)/self.dt)
+        if remaining > 0:
+            self.run(remaining*self.dt)
+
+    def grip_details(self):
+        return {grip.name: {'body': f'{grip.body.instance.name}.{grip.body.name}', **(grip.gains or {})}
+                for grip in self.grips}
 
     def force(self, name, body, *, keyframes, frame='world', point_frame='world'):
         self._action(name,body,'force',keyframes,frame,point_frame)
@@ -237,6 +253,8 @@ class TestContext:
 
     def apply_actions(self,t,dt):
         self.action_values = {}
+        for grip in self.grips:
+            grip.update(t, dt)
         for name, action in self.actions.items():
             body = action['body'];state = body.state
             value = interpolate(action['frames'],t)
