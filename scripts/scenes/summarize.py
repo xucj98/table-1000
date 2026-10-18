@@ -1,6 +1,6 @@
 """Summary of one or more generation outputs (``generate.py`` run in parts, e.g. per seed range).
 
-``python scripts/scenes/summarize.py outputs/scenes/scene-000000/gen/part* --output outputs/scenes/scene-000000/gen/summary.json``
+``python scripts/scenes/summarize.py outputs/scenes/000000/gen/part* --output outputs/scenes/000000/gen/summary.json``
 reads every ``episodes/<seed>.json`` and writes the same summary as ``generate.py``
 (success rate, failures by subtask and reason, ...).
 """

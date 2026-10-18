@@ -1,9 +1,9 @@
-"""scene-000000: X1Pro at a table with a three-drawer cabinet and a pen.
+"""Scene 000000: X1Pro at a table with a three-drawer cabinet and a pen.
 
 World frame: origin on the floor below the table centre, +Z up. The robot
 stands in front of the table's -Y edge facing +Y. The cabinet's drawers pull
-toward the robot (cabinet -Y = world -Y); the pen lies on the table near the
-robot's right hand, its axis roughly along world X.
+toward the robot (cabinet -Y = world -Y, turned by up to 15 degrees); the pen
+lies on the table near the robot's right hand, in any direction.
 """
 
 import math
@@ -39,9 +39,12 @@ VIEWS = {
 }
 
 
+CABINET_YAW = math.radians(15)
+
+
 def initialize(layout):
-    """Cabinet on the table right of centre, drawers toward the robot; pen in front of the robot's
-    right hand, clear of the drawers' pull-out space. Origins vary by +-5 cm, the pen's yaw by
-    +-0.3 rad."""
-    layout.place('cabinet', region=((.25, .01), (.35, .11)))
-    layout.place('pen', region=((-.09, -.41), (.01, -.31)), yaw=(-.3, .3))
+    """Cabinet on the table right of centre, drawers toward the robot, turned by up to +-15 degrees;
+    pen in front of the robot's right hand in any direction, clear of the drawers' pull-out space.
+    Origins vary by +-5 cm."""
+    layout.place('cabinet', region=((.25, .01), (.35, .11)), yaw=(-CABINET_YAW, CABINET_YAW))
+    layout.place('pen', region=((-.09, -.41), (.01, -.31)), yaw=(-math.pi, math.pi))

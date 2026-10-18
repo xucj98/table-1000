@@ -1,13 +1,13 @@
 # 04 场景、专家轨迹与渲染
 
-以 [scene-000000](../../asset_sources/scenes/scene-000000/) 为例：X1Pro 站在桌前，桌上一个三抽屉柜和一支笔；机器人打开最下层抽屉，把笔放进去，再关上。流程为 **场景源码 → 检查初态 → 专家程序 → 批量生成轨迹 → 渲染与评审 → 导出 LeRobot**。场景和专家都是 Python 代码（专家即 code as policy，可由大模型编写）；框架负责检查初态、把场景放进 Isaac Lab、录制与重放。规范见[场景与专家轨迹规范](../designs/scenes.md)。
+以场景 [scenes/000000](../../asset_sources/scenes/000000/) 为例：X1Pro 站在桌前，桌上一个三抽屉柜和一支笔；机器人打开最下层抽屉，把笔放进去，再关上。流程为 **场景源码 → 检查初态 → 专家程序 → 批量生成轨迹 → 渲染与评审 → 导出 LeRobot**。场景和专家都是 Python 代码（专家即 code as policy，可由大模型编写）；框架负责检查初态、把场景放进 Isaac Lab、录制与重放。规范见[场景与专家轨迹规范](../designs/scenes.md)。
 
 **输入：** 已构建的资产 `assets/objects/cabinet/000000`、`assets/objects/pen/000002`（第二章）与机器人 `assets/robots/x1pro`（第三章）。
 
 **输出：**
 
-- 场景目录 `asset_sources/scenes/scene-000000/`：`scene.py`、`expert.py`、25 个初态的拼图 `initial_states.jpg`；
-- 初态检查结果 `initial.json` 与拼图 `grid.jpg`；
+- 场景目录 `asset_sources/scenes/000000/`：`scene.py`、`expert.py`、25 个初态的拼图 `initial_states.jpg`；
+- 场景预览目录 `assets/scenes/000000/preview/`（不进 Git）：初态检查结果 `initial.json` 与拼图 `initial_states.jpg`，渲染轨迹的视频、评审图与机器人相机图像；
 - 轨迹文件 `trajectories.hdf5`（成功）、`trajectories_failed.hdf5`（失败），每个 seed 的报告与汇总；
 - 每条渲染轨迹的视频、评审图、机器人相机图像；LeRobot v3.0 数据集。
 
@@ -19,7 +19,7 @@ uv sync --locked --all-extras
 
 ## 1. 场景源码
 
-[scene.py](../../asset_sources/scenes/scene-000000/scene.py) 的内容：
+[scene.py](../../asset_sources/scenes/000000/scene.py) 的内容：
 
 | 名称 | 本例 |
 | --- | --- |
@@ -27,12 +27,12 @@ uv sync --locked --all-extras
 | `ROBOT` | `robots/x1pro`，底盘在桌子 −Y 边外 (−0.03, −0.80)，朝 +Y；躯干升 0.40 m，头低 0.30 rad，双臂零位（折叠） |
 | `OBJECTS` | `cabinet`：`objects/cabinet/000000`；`pen`：`objects/pen/000002` |
 | `VIEWS` | 录像用的 `wide`、`close` 与看摆放用的俯视 `top` 三个固定视角 |
-| `initialize(layout)` | 抽屉柜原点在 (0.30, 0.06) ± 5 cm，抽屉朝向机器人；笔原点在 (−0.04, −0.36) ± 5 cm，偏航 ±0.3 rad，在机器人右手前方、抽屉拉出范围之外 |
+| `initialize(layout)` | 抽屉柜原点在 (0.30, 0.06) ± 5 cm，抽屉朝向机器人，偏航 ±15°；笔原点在 (−0.04, −0.36) ± 5 cm，朝向任意，在机器人右手前方、抽屉拉出范围之外 |
 
 ```python
 def initialize(layout):
-    layout.place('cabinet', region=((.25, .01), (.35, .11)))
-    layout.place('pen', region=((-.09, -.41), (.01, -.31)), yaw=(-.3, .3))
+    layout.place('cabinet', region=((.25, .01), (.35, .11)), yaw=(-CABINET_YAW, CABINET_YAW))  # 15°
+    layout.place('pen', region=((-.09, -.41), (.01, -.31)), yaw=(-math.pi, math.pi))
 ```
 
 `place` 在区域内均匀采样原点，按资产碰撞几何算出稳定朝向与贴住桌面的高度，与已放物体穿透就重采。需要更细的控制时，直接用 `set_pose`、`set_joint` 和几何查询（`resting_pose`、`penetration`、`geometry`）自己写，例如先放一个碗，再把另一个碗放进去。
@@ -40,7 +40,7 @@ def initialize(layout):
 ## 2. 检查初态
 
 ```bash
-uv run python scripts/scenes/check_scene.py scene-000000 --output outputs/scenes/scene-000000/check --gpu 0
+uv run python scripts/scenes/check_scene.py 000000 --gpu 0
 ```
 
 对 seed 0–24 各做一次与生成轨迹时相同的初始化：
@@ -51,9 +51,9 @@ uv run python scripts/scenes/check_scene.py scene-000000 --output outputs/scenes
 
 不通过就换子 seed 重来。
 
-本例结果：25 个 seed 全部第一次通过；静置时笔最多移动 0.38 mm、转动 0.18°，抽屉柜不动。每个 seed 约 2.3 s，含启动共约 3 分钟。拼图 `grid.jpg` 用场景的 `top` 视角（`--view` 可换），用于人工查看摆放是否合理、是否有足够变化：
+本例结果：25 个 seed 全部第一次通过；静置时笔最多移动 0.38 mm、转动 0.18°，抽屉柜不动。每个 seed 约 2.3 s，含启动共约 3 分钟。结果写入 `assets/scenes/000000/preview/`（`--output` 可换）。拼图 `initial_states.jpg` 用场景的 `top` 视角（`--view` 可换），用于人工查看摆放是否合理、是否有足够变化：
 
-![scene-000000 的 25 个初态](../../asset_sources/scenes/scene-000000/initial_states.jpg)
+![场景 000000 的 25 个初态](../../asset_sources/scenes/000000/initial_states.jpg)
 
 最初笔按资产原始朝向平放，有一条棱朝下，静置时会滚 7.5° 到相邻的面上，检查因此不通过。现在 `place` 先取离给定朝向最近的稳定朝向（由碰撞凸包算出），静置移动降到 0.4 mm、0.2°。
 
@@ -61,7 +61,7 @@ uv run python scripts/scenes/check_scene.py scene-000000 --output outputs/scenes
 
 ## 3. 专家程序
 
-[expert.py](../../asset_sources/scenes/scene-000000/expert.py) 定义 `solve(ctx)`，按四个英文子任务组织：
+[expert.py](../../asset_sources/scenes/000000/expert.py) 定义 `solve(ctx)`，按四个英文子任务组织：
 
 ```python
 def solve(ctx):
@@ -96,7 +96,7 @@ def solve(ctx):
 ## 4. 生成轨迹
 
 ```bash
-uv run python scripts/scenes/generate.py scene-000000 --seeds 0:100 --output outputs/scenes/scene-000000/gen --gpu 0
+uv run python scripts/scenes/generate.py 000000 --seeds 0:100 --output outputs/scenes/000000/gen --gpu 0
 ```
 
 每个 seed 依次：
@@ -109,7 +109,7 @@ uv run python scripts/scenes/generate.py scene-000000 --seeds 0:100 --output out
 一个进程连续跑多个 seed，每个从复位开始。需要更快时，按 seed 区间在多个进程或 GPU 上分别运行，各自输出到不同目录，再汇总：
 
 ```bash
-uv run python scripts/scenes/summarize.py outputs/scenes/scene-000000/gen/part* --output outputs/scenes/scene-000000/gen/summary.json
+uv run python scripts/scenes/summarize.py outputs/scenes/000000/gen/part* --output outputs/scenes/000000/gen/summary.json
 ```
 
 本例结果：在提交 3d648a5 上，seed 0–99 分 4 个进程并行生成。
@@ -158,7 +158,7 @@ RRTConnect 有规划时限，机器负载不同时仍可能走出不同的路径
 把录制的轨迹渲染成视频、机器人相机图像和评审图。渲染按录制的状态逐步恢复场景，不重新仿真，画面与录制的轨迹一致。
 
 ```bash
-uv run python scripts/scenes/render.py outputs/scenes/scene-000000/gen/trajectories.hdf5 --output outputs/scenes/scene-000000/render --count 5 --gpu 0
+uv run python scripts/scenes/render.py outputs/scenes/000000/gen/trajectories.hdf5 --count 5 --gpu 0
 ```
 
 `--count 5` 随机选 5 条（`--seed` 固定选择），`--demos demo_3 demo_7` 指定，默认全部。
@@ -169,7 +169,7 @@ uv run python scripts/scenes/render.py outputs/scenes/scene-000000/gen/trajector
 2. 调用 PhysX 的 `update_transformations` 把位姿写进 USD（不推进物理时渲染器读不到新位姿）；
 3. 渲染两次，保留第二次（RT2 在时间上降噪，第一次会混入上一个状态）。
 
-每条轨迹 `<output>/<demo>/`：
+每条轨迹写入 `assets/scenes/000000/preview/<demo>/`（`--output` 可换）：
 
 | 文件 | 内容 |
 | --- | --- |
@@ -179,15 +179,15 @@ uv run python scripts/scenes/render.py outputs/scenes/scene-000000/gen/trajector
 
 本例每条轨迹约 700 步，渲染 3 个视角与 3 路机器人相机约 2.5 分钟。
 
-批量评审用 `--sheets`：只渲染每条轨迹评审图的 12 帧，不出视频和机器人相机图像，每条约 1 s（每次运行另有约 1 分钟启动）。
+批量评审用 `--sheets`：只渲染每条轨迹评审图的 12 帧，不出视频和机器人相机图像，每条约 1 s（每次运行另有约 1 分钟启动）；只替换 `sheet.jpg`，已渲染的视频和图像保留。
 
 ## 7. 导出 LeRobot
 
 ```bash
-uv run python scripts/scenes/to_lerobot.py outputs/scenes/scene-000000/gen/part*/trajectories.hdf5 --frames outputs/scenes/scene-000000/render --output outputs/scenes/scene-000000/lerobot
+uv run python scripts/scenes/to_lerobot.py outputs/scenes/000000/gen/part*/trajectories.hdf5 --output outputs/scenes/000000/lerobot
 ```
 
-可以一次给多个轨迹文件（分段生成的各部分）；只转换在 `--frames` 下渲染过的轨迹。本例 5 条轨迹（3435 帧，3 路相机）转换约 8.5 分钟，主要耗在 AV1 视频编码，数据集 68 MB。
+可以一次给多个轨迹文件（分段生成的各部分）；只转换在场景预览目录（`--frames` 可换）下渲染过的轨迹。本例 5 条轨迹（3435 帧，3 路相机）转换约 8.5 分钟，主要耗在 AV1 视频编码，数据集 68 MB。
 
 已渲染的每条轨迹成为一个 LeRobot 回合（25 fps）：
 
@@ -202,7 +202,7 @@ uv run python scripts/scenes/to_lerobot.py outputs/scenes/scene-000000/gen/part*
 
 ```python
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-dataset = LeRobotDataset('table-1000/scene-000000', root='outputs/scenes/scene-000000/lerobot', video_backend='pyav')
+dataset = LeRobotDataset('table-1000/000000', root='outputs/scenes/000000/lerobot', video_backend='pyav')
 ```
 
 LeRobot 默认用 torchcodec 解码视频，它需要系统里有 FFmpeg 4–7 的共享库；没有时用 `video_backend='pyav'`。

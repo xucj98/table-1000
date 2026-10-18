@@ -1,6 +1,6 @@
 """Expert trajectories of a scene in Isaac Lab.
 
-``.venv/bin/python scripts/scenes/generate.py scene-000000 --seeds 0:100 --output outputs/scenes/scene-000000/gen --gpu 1``
+``.venv/bin/python scripts/scenes/generate.py 000000 --seeds 0:100 --output outputs/scenes/000000/gen --gpu 1``
 writes ``trajectories.hdf5`` (succeeded episodes, Isaac Lab's format, ``demo_<seed>``),
 ``trajectories_failed.hdf5``, ``episodes/<seed>.json`` and ``summary.json`` /
 ``summary.csv``. ``--seeds`` takes ``a:b`` ranges and single seeds. The exit

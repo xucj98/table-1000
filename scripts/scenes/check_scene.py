@@ -1,13 +1,14 @@
 """Initial states of a scene for review: the common checks over seeds and a 5 x 5 picture grid.
 
-``.venv/bin/python scripts/scenes/check_scene.py scene-000000 --output outputs/scenes/scene-000000/check --gpu 1 [--seeds 0:25] [--view top]``
+``uv run python scripts/scenes/check_scene.py 000000 --gpu 1 [--seeds 0:25] [--view top] [--output DIR]``
 
 For each seed, makes the initial state as an episode would (``scene.initialize``,
 penetration and settling checks, retried with sub-seeds; see
 ``table_1000/scenes/initial.py``) and renders it from one of the scene's views.
 Writes ``initial.json`` (every attempt with its problems and settling report,
-attempts per seed, seeds without a valid state) and ``grid.jpg`` (one picture
-per seed, captioned with the seed and the accepted attempt). The exit status is 1
+attempts per seed, seeds without a valid state) and ``initial_states.jpg`` (one
+picture per seed, captioned with the seed and the accepted attempt) into the
+scene's preview directory ``assets/scenes/<scene>/preview/`` (or ``--output``). The exit status is 1
 when a seed has no valid initial state or the run fails.
 """
 
@@ -29,13 +30,13 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('scene')
     parser.add_argument('--seeds', nargs='+', default=['0:25'])
-    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--output', type=Path, help='default: assets/scenes/<scene>/preview')
     parser.add_argument('--view', default='top', help='a view of the scene')
     parser.add_argument('--gpu', type=int, default=0)
     parser.add_argument('--root', type=Path, default=ROOT)
     parser.add_argument('--assets', type=Path, default=ROOT / 'assets')
     args = parser.parse_args(argv)
-    output = args.output.resolve()
+    output = (args.output or args.assets / 'scenes' / args.scene / 'preview').resolve()
     output.mkdir(parents=True, exist_ok=True)
     from table_1000.sim.isaaclab.app import start_app
     from table_1000.sim.isaaclab.render import RT2_ARGS
@@ -86,7 +87,7 @@ def main(argv=None):
             if image is not None:
                 grid.paste(Image.fromarray(image).resize((TILE_WIDTH, tile_height)), (x, y + 18))
             draw.text((x + 4, y + 3), caption, fill='black')
-        grid.save(output / 'grid.jpg', quality=90)
+        grid.save(output / 'initial_states.jpg', quality=90)
         print(json.dumps({key: value for key, value in report.items() if key != 'seeds'}, indent=1))
         env.close()
     except Exception:

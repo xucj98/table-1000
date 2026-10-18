@@ -63,7 +63,7 @@ robot.urdf ──Blender 渲染──> three_quarter.jpg
 
 ## 资产布局
 
-对象路径为 `objects/<category>/<六位编号>`，场景路径为 `scenes/scene-<六位编号>`，机器人路径为 `robots/<名称>`；编号从 `000000` 开始。
+对象路径为 `objects/<category>/<六位编号>`，场景路径为 `scenes/<六位编号>`，机器人路径为 `robots/<名称>`；编号从 `000000` 开始。
 
 | 位置 | 内容 | Git |
 | --- | --- | --- |
@@ -72,6 +72,8 @@ robot.urdf ──Blender 渲染──> three_quarter.jpg
 | `asset_sources/robots/<name>/` | robot.urdf 及其按相对路径引用的 meshes/、prepare.py、physics.py、robot.py（机器人描述）、robot_test.py（验收设置）、README.md、three_quarter.jpg | 提交 |
 | `assets/robots/<name>/raw/` | 厂商原始 URDF 包 | 忽略；存档于 Hugging Face 数据集，版本见 `assets.lock.json` |
 | `assets/robots/<name>/` 其余 | URDF 导入结果 import/、加载入口 robot.usda、源码快照、prepare.json、check.json | 忽略 |
+| `asset_sources/scenes/<scene>/` | scene.py（场景与随机初始化）、expert.py（专家程序）、initial_states.jpg | 提交 |
+| `assets/scenes/<scene>/preview/` | 初态检查 initial.json 与拼图 initial_states.jpg；渲染轨迹的视频、评审图与机器人相机图像（`<demo>/`）；见[场景规范](../scenes.md) | 忽略 |
 | `outputs/` | 临时实验结果与日志 | 忽略 |
 
 源码快照重建依赖同版本的 `table_1000` 包，共用模块不复制到资产目录。外部资源引用须注明版本、来源和许可，不使用私有绝对路径。

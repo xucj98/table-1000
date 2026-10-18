@@ -1,4 +1,4 @@
-"""Expert of scene-000000: open the cabinet's bottom drawer, put the pen in it, close it (right arm).
+"""Expert of scene 000000: open the cabinet's bottom drawer, put the pen in it, close it (right arm).
 
 Every target is computed from the live poses at that moment and the assets'
 collision geometry; nothing depends on the seed. Fingers may touch the drawer
@@ -89,14 +89,19 @@ class Cabinet:
         return drawer[:3, :3] @ local + drawer[:3, 3]
 
 
-def pen_grasp(pen, table_height, grasp_x):
-    """Top-down grasp across the barrel at ``grasp_x`` (pen frame), wrist camera toward the cap end."""
+def pen_grasp(pen, table_height, grasp_x, backward):
+    """Top-down grasp across the barrel at ``grasp_x`` (pen frame). Of the two symmetric hand
+    turns, the one whose closing direction is nearer ``backward`` (the robot's -X, horizontal),
+    so the wrist turns least whichever way the pen points."""
     axis = pen[:3, 0].copy()
     axis[2] = 0.
     down = np.array([0., 0., -1.])
+    closing = np.cross(down, axis / np.linalg.norm(axis))
+    if np.dot(closing, backward) < 0:
+        closing = -closing
     centre = pen[:3, :3] @ [float(np.clip(grasp_x, *PEN_BARREL)), 0., 0.] + pen[:3, 3]
     centre[2] = max(centre[2], table_height + PEN_TIP_CLEARANCE + TIP_BEYOND_TCP)
-    return build_grasp_pose(down, np.cross(down, axis / np.linalg.norm(axis)), centre)
+    return build_grasp_pose(down, closing, centre)
 
 
 def place_pose(release, tcp_pen, axis_target, toward):
@@ -125,6 +130,8 @@ class Expert:
         self.cabinet = Cabinet(ctx.geometry['cabinet'])
         self.table_height = ctx.scene.TABLE['height']
         self.cabinet_xy = ctx.pose('cabinet')[:2, 3]
+        yaw = ctx.scene.ROBOT['yaw']
+        self.backward = -np.array([np.cos(yaw), np.sin(yaw), 0.])
         self.regrasps = 0
         arm.add_table()
         # Cabinet: one planning object per body, the handles apart (fingers may touch them).
@@ -193,8 +200,8 @@ class Expert:
         pen = ctx.pose('pen', 'body')
         grasp_x = float((np.linalg.inv(pen) @ np.r_[ctx.center_of_mass('pen', 'body'), 1.])[0])
         arm.allow(['pen:pen'])
-        arm.move_to_pose_with_RRTConnect(standoff(pen_grasp(pen, self.table_height, grasp_x), PEN_APPROACH))
-        arm.move_to_pose_with_screw(pen_grasp(ctx.pose('pen', 'body'), self.table_height, grasp_x))
+        arm.move_to_pose_with_RRTConnect(standoff(pen_grasp(pen, self.table_height, grasp_x, self.backward), PEN_APPROACH))
+        arm.move_to_pose_with_screw(pen_grasp(ctx.pose('pen', 'body'), self.table_height, grasp_x, self.backward))
         arm.close_gripper()
         gap = arm.finger_gap()
         if not PEN_HELD_GAP[0] <= gap <= PEN_HELD_GAP[1]:

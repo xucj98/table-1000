@@ -1,8 +1,9 @@
 """Render recorded trajectories from their states: videos, robot camera frames and review sheets.
 
-``.venv/bin/python scripts/scenes/render.py outputs/scenes/scene-000000/gen/trajectories.hdf5 --output outputs/scenes/scene-000000/render --gpu 1 [--demos demo_3 demo_7 | --count 5] [--views wide] [--cameras face_view left_wrist_view right_wrist_view] [--sheets]``
+``uv run python scripts/scenes/render.py outputs/scenes/000000/gen/trajectories.hdf5 --gpu 1 [--demos demo_3 demo_7 | --count 5] [--views wide] [--cameras face_view left_wrist_view right_wrist_view] [--sheets] [--output DIR]``
 
-Per episode ``<output>/<demo>/``:
+Per episode ``<output>/<demo>/``, by default in the scene's preview directory
+``assets/scenes/<scene>/preview/``:
 
 - ``<view>.mp4`` for each fixed view of the scene (``VIEWS``, or ``--views``), captioned with the
   time and the subtask, one frame per control step (25 fps, 1x);
@@ -15,7 +16,8 @@ Per episode ``<output>/<demo>/``:
 Every frame restores the recorded state of that step; nothing is simulated.
 ``--count`` picks that many episodes at random (``--seed``); the default is all.
 ``--sheets`` renders only the twelve frames of each review sheet (no videos, no
-robot cameras), enough to review every episode of a batch.
+robot cameras), enough to review every episode of a batch; it replaces only
+``sheet.jpg`` and keeps an episode's videos and frames.
 """
 
 import argparse
@@ -49,7 +51,7 @@ def sheet(frames, captions, path):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('trajectories', type=Path)
-    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--output', type=Path, help='default: assets/scenes/<scene>/preview')
     parser.add_argument('--demos', nargs='*')
     parser.add_argument('--count', type=int)
     parser.add_argument('--seed', type=int, default=0)
@@ -60,7 +62,6 @@ def main(argv=None):
     parser.add_argument('--root', type=Path, default=ROOT)
     parser.add_argument('--assets', type=Path, default=ROOT / 'assets')
     args = parser.parse_args(argv)
-    output = args.output.resolve()
     from table_1000.sim.isaaclab.app import start_app
     from table_1000.sim.isaaclab.render import RT2_ARGS
     app = start_app(gpu=args.gpu, workers=4, extra_args=RT2_ARGS)
@@ -78,6 +79,7 @@ def main(argv=None):
         meta = replay.env_args(file)
         scene = load(meta['scene'], 'scene', args.root)
         spec = load_spec(meta['robot'], args.root)
+        output = (args.output or args.assets / 'scenes' / meta['scene'] / 'preview').resolve()
         names = args.demos or list(episodes)
         if args.count:
             names = sorted(np.random.default_rng(args.seed).choice(names, min(args.count, len(names)), replace=False),
@@ -90,7 +92,8 @@ def main(argv=None):
             started = time.perf_counter()
             episode = episodes[name]
             directory = output / name
-            shutil.rmtree(directory, ignore_errors=True)
+            if not args.sheets:
+                shutil.rmtree(directory, ignore_errors=True)
             videos = Video(env, list(views), directory / 'views', CONTROL_HZ)
             frames = Video(env, list(cameras), directory / 'frames', CONTROL_HZ)
             picks = np.linspace(0, episode.length, SHEET[0] * SHEET[1]).round().astype(int)

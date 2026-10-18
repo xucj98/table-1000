@@ -1,8 +1,9 @@
 """Convert rendered trajectories to a LeRobot v3.0 dataset (needs the ``data`` extra).
 
-``python scripts/scenes/to_lerobot.py outputs/scenes/scene-000000/gen/part*/trajectories.hdf5 --frames outputs/scenes/scene-000000/render --output outputs/scenes/scene-000000/lerobot [--task subtask|instruction]``
+``uv run python scripts/scenes/to_lerobot.py outputs/scenes/000000/gen/part*/trajectories.hdf5 --output outputs/scenes/000000/lerobot [--frames DIR] [--task subtask|instruction]``
 
-Every episode rendered by ``scripts/scenes/render.py`` (``<frames>/<demo>/frames/<camera>/``)
+Every episode rendered by ``scripts/scenes/render.py`` (``<frames>/<demo>/frames/<camera>/``;
+``--frames`` defaults to the scene's preview directory ``assets/scenes/<scene>/preview/``)
 becomes one LeRobot episode at the control rate (25 fps):
 
 - ``observation.state``: joint positions (``obs/qpos``, the robot's joints then
@@ -40,7 +41,7 @@ def rendered_episodes(files, frames):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('trajectories', type=Path, nargs='+', help='trajectory files (e.g. the parts of a run)')
-    parser.add_argument('--frames', type=Path, required=True, help='output directory of render.py')
+    parser.add_argument('--frames', type=Path, help='output directory of render.py (default: assets/scenes/<scene>/preview)')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--repo-id', default=None, help='default: table-1000/<scene>')
     parser.add_argument('--task', choices=('subtask', 'instruction'), default='subtask')
@@ -48,6 +49,7 @@ def main(argv=None):
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
     files = [h5py.File(path, 'r') for path in args.trajectories]
     meta = json.loads(files[0]['data'].attrs['env_args'])
+    args.frames = args.frames or Path(__file__).resolve().parents[2] / 'assets' / 'scenes' / meta['scene'] / 'preview'
     episodes = rendered_episodes(files, args.frames)
     if not episodes:
         raise SystemExit(f'no rendered episodes of {[str(p) for p in args.trajectories]} in {args.frames}')

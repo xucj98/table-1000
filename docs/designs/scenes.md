@@ -1,6 +1,6 @@
 # 场景与专家轨迹规范
 
-规定一个场景交付什么：场景源码、随机初始化、专家程序、轨迹数据，以及验收方式。以 [scene-000000](../../asset_sources/scenes/scene-000000/)（三抽屉柜与笔）为例，命令见[第四章](../tutorials/04-scene.md)。
+规定一个场景交付什么：场景源码、随机初始化、专家程序、轨迹数据，以及验收方式。以场景 [scenes/000000](../../asset_sources/scenes/000000/)（三抽屉柜与笔）为例，命令见[第四章](../tutorials/04-scene.md)。
 
 ## 定位
 
@@ -17,7 +17,8 @@
 | `table_1000/experts/` | 专家上下文（`context.py`）、运动求解器（`solver.py`）、抓取几何（`grasps.py`）、批量生成（`generate.py`） | 是 |
 | `table_1000/sim/isaaclab/` | 环境（物体接入）、录制（`recording.py`）、按状态重放（`replay.py`） | 是 |
 | `scripts/scenes/` | `check_scene`、`generate`、`render`、`to_lerobot` | 是 |
-| `outputs/` | 检查结果、轨迹文件、视频、LeRobot 数据集 | 否 |
+| `assets/scenes/<scene>/preview/` | 供验收查看的预览：初态检查 `initial.json` 与拼图 `initial_states.jpg`，渲染轨迹的视频、评审图、机器人相机图像（`<demo>/`） | 否 |
+| `outputs/` | 轨迹文件、生成报告、LeRobot 数据集 | 否 |
 
 ## 场景源码 `scene.py`
 
