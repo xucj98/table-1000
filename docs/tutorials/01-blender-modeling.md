@@ -62,17 +62,20 @@ ffmpeg -hide_banner -loglevel error -y -i assets/objects/pen/000000/preview/thre
 
 ## 验收
 
-自动检查失败时，脚本以非零退出码结束。通过后，人工检查每个资产的 `preview/`：
+自动检查失败时，脚本以非零退出码结束。通过后，检查每个资产的 `preview/`：
 
-1. **`acceptance.json`**：刚体数、关节数与 README 一致，没有禁止的碰撞对，复杂度合理。本例的数值：
+1. **`acceptance.json`**：`status` 应为 `passed`，`failures` 为空。再核对以下字段：
 
-   | 项目 | 盒子 | 笔 |
-   | --- | ---: | ---: |
-   | 刚体 / 关节 | 4 / 3 | 2 / 1 |
-   | 运动采样数 | 81 | 57 |
-   | 视觉三角面数 | 588 | 1036 |
-   | 碰撞盒数 | 21 | 2 |
-   | 凸网格数（顶点 / 面） | 12（160 / 104） | 35（352 / 246） |
+   | 字段 | 含义 | 盒子 | 笔 |
+   | --- | --- | ---: | ---: |
+   | `bodies` | 刚体数，应与 README 一致 | 4 | 2 |
+   | `joints` | 关节列表（名称、类型、连接的刚体、行程），个数应与 README 一致 | 3 | 1 |
+   | `samples` | 检查的姿态采样，每项的 `penetrations` 应为 0 | 81 | 57 |
+   | `ignored_body_pairs` | 不检查碰撞的刚体对，通常为空 | 空 | 空 |
+   | `complexity.visual_triangles` | 视觉三角面数 | 588 | 1036 |
+   | `complexity.primitive_colliders` | 碰撞盒等基础碰撞形状数 | 21 | 2 |
+   | `complexity.convex_colliders` | 凸网格碰撞数 | 12 | 35 |
+   | `complexity.convex_vertices` / `convex_faces` | 凸网格顶点数 / 面数合计 | 160 / 104 | 352 / 246 |
 
 2. **图片和视频**（左为外观，右为碰撞，碰撞按刚体着色）：外观与照片相符；碰撞完整覆盖外观，刚体划分合理；运动视频中抽屉、按钮等活动部件能走完行程，没有穿透。盒子的视频是 `open.mp4`，笔的是 `press_and_extend.mp4`。
 
