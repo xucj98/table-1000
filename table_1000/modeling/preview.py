@@ -158,6 +158,30 @@ def interpolate(keys, frame):
     return {"frame": frame, "camera": camera, "joints": joints, "transforms": transforms, "controls": controls}
 
 
+def summary(report, rendered=()):
+    """The human-facing digest of ``acceptance.json``: what to confirm and what to look at."""
+    units = {"SLIDER": "m", "HINGE": "rad"}
+    penetrations = sorted(report["failures"], key=lambda f: -f["penetration_m"])
+    return {
+        "status": report["status"],
+        "rigid_bodies": report["bodies"],
+        "joints": [{"name": joint["name"], "type": joint["type"], "range": [round(value, 6) for value in joint["limits"]] if joint.get("limits") else None,
+                    "unit": units.get(joint["type"])} for joint in report["joints"]],
+        "complexity": report["complexity"],
+        "poses_checked": len(report["samples"]),
+        "penetrations": [{"output": f["output"], "frame": f["frame"], "bodies": f["bodies"],
+                          "depth_mm": round(f["penetration_m"]*1000, 3)} for f in penetrations[:20]],
+        "penetrating_poses": len({(f["output"], f["frame"]) for f in report["failures"]}),
+        "review": list(rendered),
+        "details": "acceptance.json",
+    }
+
+
+def write_summary(output, report, rendered=()):
+    (output / "summary.json").write_text(json.dumps(summary(report, rendered), indent=2, ensure_ascii=False)+"\n",
+                                         encoding="utf-8")
+
+
 def configure_cycles(scene, requested):
     """Use one visible GPU; CPU remains available on machines without GPU support."""
     import bpy
@@ -198,6 +222,7 @@ def run_worker(blend, views, output, check_only=False, device="auto"):
 
     output.mkdir(parents=True, exist_ok=True)
     (output / "acceptance.json").unlink(missing_ok=True)
+    (output / "summary.json").unlink(missing_ok=True)
     bpy.ops.wm.open_mainfile(filepath=str(blend), load_ui=False)
     scene = bpy.context.scene
     scene.frame_set(0)
@@ -296,6 +321,7 @@ def run_worker(blend, views, output, check_only=False, device="auto"):
     checks.report["timings_seconds"] = {"validation": round(time.perf_counter() - started, 3)}
     checks.report["status"] = "failed" if checks.report["failures"] else "passed"
     report_path.write_text(json.dumps(checks.report, indent=2)+"\n", encoding="utf-8")
+    write_summary(output, checks.report)
     if checks.report["failures"]:
         raise ValueError(f"Collision coarse check failed; see {report_path}")
     if check_only:
@@ -457,6 +483,7 @@ def run_worker(blend, views, output, check_only=False, device="auto"):
                                 "panel_size": 480}
     checks.report["timings_seconds"]["total"] = round(time.perf_counter() - started, 3)
     report_path.write_text(json.dumps(checks.report, indent=2)+"\n", encoding="utf-8")
+    write_summary(output, checks.report, views)
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)

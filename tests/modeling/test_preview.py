@@ -8,7 +8,7 @@ import sys
 import unittest
 from unittest.mock import patch
 
-from table_1000.modeling.preview import main, read_views, interpolate
+from table_1000.modeling.preview import main, read_views, interpolate, summary
 
 
 class PreviewTests(unittest.TestCase):
@@ -29,6 +29,21 @@ class PreviewTests(unittest.TestCase):
                 path.write_text(json.dumps(data))
                 with self.assertRaises(ValueError):
                     read_views(path)
+
+    def test_summary_keeps_what_a_reviewer_confirms(self):
+        report = {'status': 'failed', 'bodies': 2, 'complexity': {'visual_triangles': 10},
+                  'joints': [{'name': 'pen.press', 'type': 'SLIDER', 'body1': 'a', 'body2': 'b', 'limits': [0, .004]}],
+                  'samples': [{'output': 'front.jpg', 'frame': 0}, {'output': 'press.mp4', 'frame': 3}],
+                  'failures': [{'output': 'press.mp4', 'frame': 3, 'bodies': ['a', 'b'],
+                                'colliders': ['x', 'y'], 'penetration_m': .0012}]}
+        result = summary(report, ['front.jpg', 'press.mp4'])
+        self.assertEqual(result['status'], 'failed')
+        self.assertEqual(result['rigid_bodies'], 2)
+        self.assertEqual(result['joints'], [{'name': 'pen.press', 'type': 'SLIDER', 'range': [0, .004], 'unit': 'm'}])
+        self.assertEqual(result['poses_checked'], 2)
+        self.assertEqual(result['penetrating_poses'], 1)
+        self.assertEqual(result['penetrations'][0]['depth_mm'], 1.2)
+        self.assertEqual(result['review'], ['front.jpg', 'press.mp4'])
 
     def test_direct_worker_script_imports_package(self):
         script = Path(__file__).resolve().parents[2] / "table_1000/modeling/preview.py"

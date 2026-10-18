@@ -62,21 +62,21 @@ ffmpeg -hide_banner -loglevel error -y -i assets/objects/pen/000000/preview/thre
 
 ## 验收
 
-自动检查失败时，脚本以非零退出码结束。通过后，检查每个资产的 `preview/`：
+自动检查失败时，脚本以非零退出码结束。每个资产的 `preview/` 下有一份 `summary.json`，按它验收：
 
-1. **`acceptance.json`**：`status` 应为 `passed`，`failures` 为空。再核对以下字段：
+1. **`summary.json`**：
 
-   | 字段 | 含义 | 盒子 | 笔 |
-   | --- | --- | ---: | ---: |
-   | `bodies` | 刚体数，应与 README 一致 | 4 | 2 |
-   | `joints` | 关节列表（名称、类型、连接的刚体、行程），个数应与 README 一致 | 3 | 1 |
-   | `samples` | 检查的姿态采样，每项的 `penetrations` 应为 0 | 81 | 57 |
-   | `ignored_body_pairs` | 不检查碰撞的刚体对，通常为空 | 空 | 空 |
-   | `complexity.visual_triangles` | 视觉三角面数 | 588 | 1036 |
-   | `complexity.primitive_colliders` | 碰撞盒等基础碰撞形状数 | 21 | 2 |
-   | `complexity.convex_colliders` | 凸网格碰撞数 | 12 | 35 |
-   | `complexity.convex_vertices` / `convex_faces` | 凸网格顶点数 / 面数合计 | 160 / 104 | 352 / 246 |
+   | 字段 | 看什么 | 盒子 | 笔 |
+   | --- | --- | --- | --- |
+   | `status` | 应为 `passed` | `passed` | `passed` |
+   | `rigid_bodies` | 刚体数，应与 README 一致 | 4 | 2 |
+   | `joints` | 每个关节的名称、类型和行程，应与 README 一致 | 3 个滑动关节，行程 0–0.173 m | 1 个滑动关节，行程 −3–0 mm |
+   | `penetrations` | 穿透的姿态，应为空；不为空时列出所在图片或视频帧、刚体和深度 | 空 | 空 |
+   | `complexity` | 视觉三角面数和碰撞形状数，用来判断模型是否过细或过粗 | 588 面，21 个盒、12 个凸网格 | 1036 面，2 个盒、35 个凸网格 |
+   | `review` | 需要人工查看的图片和视频 | 9 个文件 | 9 个文件 |
 
-2. **图片和视频**（左为外观，右为碰撞，碰撞按刚体着色）：外观与照片相符；碰撞完整覆盖外观，刚体划分合理；运动视频中抽屉、按钮等活动部件能走完行程，没有穿透。盒子的视频是 `open.mp4`，笔的是 `press_and_extend.mp4`。
+   完整的检查记录在同目录的 `acceptance.json`，一般不需要看。
+
+2. **`review` 中的图片和视频**（左为外观，右为碰撞，碰撞按刚体着色）：外观与照片相符；碰撞完整覆盖外观，刚体划分合理；运动视频中抽屉、按钮等活动部件能走完行程，没有穿透。盒子的视频是 `open.mp4`，笔的是 `press_and_extend.mp4`。
 
 不通过时，记下问题所在的图片或视频帧：形状和结构问题改 `object.py`，视角和运动问题改 `preview.json`，然后重新构建和预览。
