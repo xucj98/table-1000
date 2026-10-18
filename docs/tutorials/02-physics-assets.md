@@ -42,7 +42,7 @@ uv run python scripts/assets/build_physics.py --assets pen/000002 cabinet/000000
 
 ## 3. 运行测试并验收
 
-测试使用 Isaac Lab，`--physics cpu|gpu` 选择物理后端（默认 CPU），`--gpu` 选择物理显卡。分别运行笔帽的 CPU、GPU 验收，并使用不同输出目录：
+测试使用 Isaac Lab，`--physics cpu|gpu` 选择物理后端（默认 CPU），`--gpu` 选择物理显卡。GPU 后端默认并行运行 4 个相同的环境，记录和视频取第一个环境；`--num-envs` 可改变环境数。分别运行笔帽的 CPU、GPU 验收，并使用不同输出目录：
 
 ```bash
 uv run python scripts/assets/physics_test.py assets/objects/pen/000002 \
@@ -96,6 +96,6 @@ CPU 与 GPU 各自执行笔 4 项、抽屉柜 6 项检查，自动执行完成�
 
 笔帽采用未标定的钢珠弹簧代理，每颗半径 0.8 mm 的球使用 1 g 质量。主要通过视频验收紧松帽拔出、分段施力盖合和重力翻转，结合力与位置曲线判断过程。载荷和动作速度应根据实际响应调整，保留上述测试意图；高速跌落允许短时穿透，但应检查后续能否稳定恢复，不能据此推断真实脱帽高度。抽屉的质量与摩擦参数同样未经实物标定。
 
-验收后，把 `result.json` 中 `experiment` 记录的关键物理量（本例的拔帽力、合帽力和抽屉起滑角）更新到资产 README 的“物理实测”表，见 [README 规范](../designs/asset-pipeline/README.md#readme-与缩略图)。
+验收后，把 `result.json` 中 `experiment` 记录的关键物理量（本例的拔帽力、合帽力和抽屉起滑角），以及 `performance` 中的 RTF 和资源占用，更新到资产 README 的“物理实测”一节，见 [README 规范](../designs/asset-pipeline/README.md#readme-与缩略图)。
 
 有问题时修改对应源码，重新构建并运行受影响的测试。按[资产布局](../designs/asset-pipeline/README.md#资产布局)保存源码和生成物。

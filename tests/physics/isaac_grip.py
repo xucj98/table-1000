@@ -1,4 +1,4 @@
-"""Grip and fixture acceptance on an isotropic cube: holding, tracking, limits and release."""
+"""Grip and fixture acceptance on an isotropic cube: holding, tracking, limits, release and parallel environments."""
 import argparse
 import json
 from pathlib import Path
@@ -162,7 +162,41 @@ def released_rotation(context):
     return {name: value.tolist() for name, value in velocities.items()}
 
 
-CHECKS = [held_under_load, tumbling_trajectory, force_limited_pull, released_rotation]
+def replicated_environments(context):
+    """Parallel environments repeat environment 0: same records, replicas in step.
+
+    A grip moves and force-limits one cube while a keyframed force pushes it;
+    a second cube is locked and released. With four environments, environment
+    0 must record what one environment records, and every replica must follow.
+    """
+    import numpy as np
+    runs = {}
+    for count in (1, 4):
+        ctx = context('replicas_'+str(count), num_envs=count)
+        body = ctx.asset.body('cube')
+        other = ctx.spawn(ctx.asset_path, name='other', position=(.3, 0, .5))
+        grip = ctx.grip(body, name='grip')
+        ctx.force('push', body, keyframes=[{'time': 0, 'force': (0, .2, 0)}, {'time': .6, 'force': (0, .2, 0)}])
+        with ctx.fixed(other.body('cube')):
+            ctx.run(.1)
+            grip.move_to(position=grip.position+(.05, 0, .02), rotation=quaternion((0, 0, 1.)), duration=.3)
+        grip.limit(force=.05)
+        grip.move_to(position=grip.position+(.2, 0, 0), duration=.2)
+        runs[count] = {'rows': ctx.rows, 'deviation': max(instance.view.replica_deviation()
+                                                          for instance in ctx.session.instances.values())}
+    difference = max(abs(a[k]-b[k]) for a, b in zip(runs[1]['rows'], runs[4]['rows']) for k in a)
+    result = {'environment_0_max_record_difference': difference, 'replica_max_position_deviation_m': runs[4]['deviation'],
+              'records': len(runs[4]['rows'])}
+    assert len(runs[1]['rows']) == len(runs[4]['rows'])
+    # CPU PhysX resolves positions metres from the origin to about 1e-6 m;
+    # over one 4 ms step that is velocity noise of 1e-4 m/s, enough to switch
+    # a force limit one step earlier in a replica. GPU replicas stay exact.
+    tolerance = 1e-5 if ctx.physics == 'gpu' else 2e-3
+    assert difference < 1e-5 and runs[4]['deviation'] < tolerance, result
+    return result
+
+
+CHECKS = [held_under_load, tumbling_trajectory, force_limited_pull, released_rotation, replicated_environments]
 
 
 def main():
@@ -180,10 +214,10 @@ def main():
         from table_1000.physics.testing import TestContext
         asset = cube((args.output/'cube.usda').resolve())
 
-        def context(name, gravity=(0, 0, -9.81), rotation=(1, 0, 0, 0)):
+        def context(name, gravity=(0, 0, -9.81), rotation=(1, 0, 0, 0), num_envs=1):
             while contexts:
                 contexts.pop().close()
-            ctx = TestContext(asset, name=name, app=app, physics=args.physics)
+            ctx = TestContext(asset, name=name, app=app, physics=args.physics, num_envs=num_envs)
             contexts.append(ctx)
             ctx.simulation(gravity=gravity)
             # Keep the cube clear of everything; there is no ground.

@@ -58,11 +58,11 @@ def ground_clearance(model, rows, instance_names, ground_z):
             'method':'collision hull vertices and analytic sphere extents transformed by recorded rigid poses; geometric overlap excludes contact margins'}
 
 
-def benchmark(asset,name,test,app,physics="cpu"):
+def benchmark(asset,name,test,app,physics="cpu",num_envs=1,utilization=None):
     from table_1000.physics.testing import TestContext
     # Warm a disposable scene: restoring poses alone cannot restore the
     # contact solver's internal state. Every measured repeat starts fresh.
-    warm = TestContext(asset, name=name, app=app, physics=physics)
+    warm = TestContext(asset, name=name, app=app, physics=physics, num_envs=num_envs)
     start = time.perf_counter()
     try:
         test(warm)
@@ -76,11 +76,13 @@ def benchmark(asset,name,test,app,physics="cpu"):
         finals=[]
         while seconds < 10-1e-8:
             start=time.perf_counter()
-            ctx=TestContext(asset,name=name,app=app,physics=physics)
+            ctx=TestContext(asset,name=name,app=app,physics=physics,num_envs=num_envs)
+            ctx.utilization=utilization
             construction=time.perf_counter()-start
             try:
                 test(ctx)
                 seconds+=ctx.session.time;wall+=time.perf_counter()-ctx.experiment_started
+                if utilization: utilization.stop()
                 prepare+=construction+ctx.preparation_seconds
                 finals.append(ctx.rows[-1])
             finally:
@@ -88,8 +90,10 @@ def benchmark(asset,name,test,app,physics="cpu"):
         rounds.append({'simulated_seconds':seconds,'wall_seconds':wall,'RTF':seconds/wall,
                        'independent_repeats':len(finals),'preparation_reset_seconds':prepare,
                        'final_states':finals})
+    median=statistics.median(r['RTF'] for r in rounds)
     return {'warmup':{'wall_seconds':warmup,'method':'one complete experiment in a disposable scene before measured rounds'},
-            'rounds':rounds,'median_RTF':statistics.median(r['RTF'] for r in rounds),
+            'rounds':rounds,'median_RTF':median,'environments':num_envs,'median_environment_seconds_per_second':median*num_envs,
+            'utilization':utilization.summary() if utilization else None,
             'includes':'physical steps, official behavior, test actions, state reading and in-memory sampling; no camera or rendering'}
 
 
@@ -159,15 +163,17 @@ def conditions(ctx):
             'standard_dt':ctx.dt==.004}
 
 
-def run_video(asset,name,test,output,app,startup,rtf,gpu,physics="cpu"):
+def run_video(asset,name,test,output,app,startup,rtf,gpu,physics="cpu",num_envs=1,utilization=None):
     from table_1000.physics.testing import TestContext
     from table_1000.physics.plots import plots
     directory=output/name
     started=time.perf_counter()
-    ctx=TestContext(asset,name=name,render=True,app=app,physics=physics)
+    ctx=TestContext(asset,name=name,render=True,app=app,physics=physics,num_envs=num_envs)
+    ctx.utilization=utilization
     construction=time.perf_counter()-started
     try:
         test(ctx)
+        replica_deviation=max(instance.view.replica_deviation() for instance in ctx.session.instances.values())
         frames=directory/'frames';frames.mkdir()
         for i,image in enumerate(ctx.images):image.save(frames/f'{i:05}.jpg',quality=95)
         columns=list(ctx.rows[0])
@@ -177,15 +183,21 @@ def run_video(asset,name,test,output,app,startup,rtf,gpu,physics="cpu"):
         subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-y','-framerate',str(fps),'-i',str(frames/'%05d.jpg'),
                         '-c:v','libx264','-pix_fmt','yuv420p','-crf','20',str(output/(name+'.mp4'))],check=True)
         wall=time.perf_counter()-ctx.video_started
+        video_utilization=utilization.summary() if utilization else None
         plots(ctx.rows,ctx.plot_columns,directory,ctx.units)
         # Fresh independent input executions, not subtraction of render costs.
         errors=[max(abs(float(row[key])-float(ctx.rows[-1][key])) for key in row.keys() & ctx.rows[-1].keys() if key!='time')
                 for round in rtf['rounds'] for row in round['final_states']]
         result={'test':name,'execution_status':'completed','review_status':'pending','asset':str(asset),
-            'conditions':{**conditions(ctx),'gpu':gpu},'columns':ctx.units,'plots':ctx.plot_columns,
+            'conditions':{**conditions(ctx),'gpu':gpu},
+            'environments':{'count':num_envs,'recorded_and_rendered':'environment 0; replicas receive identical inputs and are hidden',
+                'spacing_m':float(ctx.session.offsets[1][1]) if num_envs>1 else None,
+                'final_replica_max_position_deviation_m':replica_deviation},'columns':ctx.units,'plots':ctx.plot_columns,
             'steps':ctx.session.steps,'frames':len(ctx.images),'sampling':'state after integration at t; action columns are the force applied over [t-dt,t); initial t=0 has zero actions',
             'physics_callbacks':'actions/state priority -100; official BehaviorScript priority 0 when present; batched force flush priority 100; one external physical step; actual solver and iterations in conditions',
-            'performance':{'no_render':rtf,'video_end_to_end':{'simulated_seconds':ctx.session.time,'wall_seconds':wall,'RTF':ctx.session.time/wall},
+            'performance':{'no_render':rtf,'video_end_to_end':{'simulated_seconds':ctx.session.time,'wall_seconds':wall,'RTF':ctx.session.time/wall,
+                     'environments':num_envs,'environment_seconds_per_second':num_envs*ctx.session.time/wall,
+                     'utilization':video_utilization},
                  'preparation':{'process_startup_seconds':startup,'construction_seconds':construction,'initialization_render_warmup_reset_seconds':ctx.preparation_seconds},
                  'independent_no_render_vs_video_final_max_scalar_error':max(errors)},
             'reaction_forces':'contact reaction forces not sampled; grip columns record the force each grip applies'}
@@ -203,14 +215,14 @@ def run_video(asset,name,test,output,app,startup,rtf,gpu,physics="cpu"):
         ctx.close()
 
 
-def run_case(asset,name,test,output,app,startup,gpu,physics="cpu"):
+def run_case(asset,name,test,output,app,startup,gpu,physics="cpu",num_envs=1,utilization=None):
     directory=output/name
     if directory.exists():shutil.rmtree(directory)
     (output/(name+'.mp4')).unlink(missing_ok=True)
     directory.mkdir(parents=True)
     try:
-        rtf=benchmark(asset,name,test,app,physics=physics)
-        return run_video(asset,name,test,output,app,startup,rtf,gpu,physics=physics)
+        rtf=benchmark(asset,name,test,app,physics=physics,num_envs=num_envs,utilization=utilization)
+        return run_video(asset,name,test,output,app,startup,rtf,gpu,physics=physics,num_envs=num_envs,utilization=utilization)
     except Exception:
         (directory/'result.json').write_text(json.dumps({'test':name,'execution_status':'failed',
             'review_status':'pending','error':traceback.format_exc()},indent=2)+'\n')
@@ -225,8 +237,11 @@ def main(argv=None):
     parser.add_argument('--tests',nargs='+')
     parser.add_argument('--gpu',type=int,default=0)
     parser.add_argument('--physics',choices=('cpu','gpu'),default='cpu',help='physics backend; --gpu selects the physical device')
+    parser.add_argument('--num-envs',type=int,help='parallel copies of each experiment; default 1 on CPU, 4 on GPU')
     parser.add_argument('--plots-only',action='store_true')
     args=parser.parse_args(argv)
+    num_envs=args.num_envs or (4 if args.physics=='gpu' else 1)
+    if num_envs<1:parser.error('--num-envs must be positive')
     asset=args.asset.resolve()
     if asset.is_dir():asset=asset/('object.usda' if (asset/'object.usda').exists() else 'object.usdz')
     script=args.script or asset.parent/'physics_test.py'
@@ -262,9 +277,14 @@ def main(argv=None):
         carb.settings.get_settings().set('/persistent/physics/numThreads',4)
         carb.settings.get_settings().set('/rtx/post/motionblur/enabled',False)
         # OpenMP is set before startup; changing it after Kit starts can stall RTX.
-        with threadpool_limits(limits=1, user_api='blas'):
-            for name,test in tests.items():
-                run_case(asset,name,test,output,app,startup,gpu,physics=args.physics)
+        from table_1000.physics.utilization import Utilization
+        utilization=Utilization(args.gpu)
+        try:
+            with threadpool_limits(limits=1, user_api='blas'):
+                for name,test in tests.items():
+                    run_case(asset,name,test,output,app,startup,gpu,physics=args.physics,num_envs=num_envs,utilization=utilization)
+        finally:
+            utilization.close()
     except BaseException:
         failed=True
         traceback.print_exc()

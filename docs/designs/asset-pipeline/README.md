@@ -94,6 +94,8 @@ cabinet
 
 带 `physics_test.py` 的资产另列[物理实测](physics-tests.md#视频曲线与结果)表，记录各测试测得的关键物理量，如拔出力、合紧力、起滑角：每行写明物理量、CPU 与 GPU 实测值、来源测试及测量方式。数值取自对应测试 `result.json` 的 `experiment`，注明软件版本，并标明为未标定的仿真值；修改几何、`physics.py` 或测试后重新运行并更新。已知后端差异在表下说明或链接 issue。
 
+同一节另列典型条件下的性能：CPU 后端 1 个环境、GPU 后端 4 个并行环境，分别给出无渲染和含视频的 RTF 范围，以及测量期间的本进程 CPU 占用和 GPU 利用率。数值取自 `result.json` 的 `performance`，注明机器负载等条件，测量方法见 [RTF 基准](physics-tests.md#rtf-基准)。
+
 第一阶段的[连续变形几何](modeling.md#第一阶段连续变形几何)另以 `[deformable]` 标注归属节点，README 单列其数量、控制量和仅几何预览的限制；不得计入刚体数或宣称物理导出已支持。仍使用上述五种第一阶段源文件，几何回调放在 `object.py` 中，随源码快照分发。
 
 `three_quarter.jpg` 是四分之三视角的 480 × 240 的缩略图，约 5 - 10 KB，左视觉、右碰撞。

@@ -42,13 +42,27 @@ class Asset:
         self.joint_names = [prim.GetCustomDataByKey('table1000:name') for prim in Usd.PrimRange(session.stage.GetPrimAtPath(path))
                             if prim.IsA(UsdPhysics.Joint)]
         self.indices = {name: i for i, name in enumerate(self.body_names)}
-        self.view = RigidView([self.paths[name] for name in self.body_names],
-                              SimulationManager.get_physics_sim_device())
+        paths = [self.paths[name] for name in self.body_names]
+        self.view = RigidView(paths, SimulationManager.get_physics_sim_device(),
+                              [[session.replica_path(p, i) for p in paths] for i in range(session.envs)],
+                              session.offsets)
         roots = [prim for prim in Usd.PrimRange(session.stage.GetPrimAtPath(path))
                  if prim.HasAPI(UsdPhysics.ArticulationRootAPI)]
         self.articulation_root = str(roots[0].GetPath()) if roots else None
         self.articulation = None
         self.root_index = self.indices[roots[0].GetCustomDataByKey('table1000:name')] if roots else None
+
+    def environment_states(self):
+        """Body positions, rotation matrices and centers of mass in every environment.
+
+        Arrays are indexed ``[environment, body]`` in environment-local
+        coordinates; environment 0 matches :attr:`Body.state`.
+        """
+        view = self.view
+        pose = view.view.get_transforms().detach().cpu().numpy().astype(float).reshape(len(view.offsets), len(view.paths), 7)
+        positions = pose[..., :3] - view.offsets[:, None]
+        rotations = Rotation.from_quat(pose[..., 3:].reshape(-1, 4)).as_matrix().reshape(*pose.shape[:2], 3, 3)
+        return positions, rotations, positions + np.einsum('ebij,bj->ebi', rotations, self.local_com)
 
     def body(self, name):
         from table_1000.assets.references import expand_names
@@ -70,10 +84,12 @@ class Asset:
     def initialize(self):
         if self.articulation_root or getattr(self, "fixture_root", None):
             from isaacsim.core.simulation_manager import SimulationManager
-            from table_1000.sim.isaaclab.asset_views import TensorView
-            self.articulation = TensorView(
-                SimulationManager.get_physics_sim_view().create_articulation_view(getattr(self, "fixture_root", self.articulation_root)),
-                self.view.device)
+            from table_1000.sim.isaaclab.asset_views import ReplicatedView
+            root = getattr(self, "fixture_root", self.articulation_root)
+            self.articulation = ReplicatedView(
+                SimulationManager.get_physics_sim_view().create_articulation_view(
+                    [self.session.replica_path(root, i) for i in range(self.session.envs)]),
+                self.view.device, self.session.offsets)
         self.view.initialize()
         self.local_com = np.asarray(self.view.get_coms()[0]).reshape(-1, 3)
         self.local_inertia = np.asarray(self.view.get_inertias()).reshape(-1, 3, 3)
@@ -119,6 +135,9 @@ class Asset:
 
 
 _sessions = {}
+ENVIRONMENTS = '/World/envs'
+# Replicas sit side by side, clear of each other's 4 m ground.
+ENVIRONMENT_SPACING = 5.
 
 
 def session_for(stage):
@@ -139,6 +158,7 @@ class PhysicsStep:
         self.stage, self.key = stage, key
         self.instances, self.states = {}, {}
         self.fixtures = []
+        self.envs, self.offsets = 1, np.zeros((1, 3))
         self.actions = None
         self.time, self.steps = 0., 0
         self.callback_steps = 0
@@ -164,13 +184,51 @@ class PhysicsStep:
         asset = Path(asset).resolve()
         if asset.is_dir():
             asset = asset / ('object.usda' if (asset / 'object.usda').exists() else 'object.usdz')
-        path = '/World/Assets/' + name
+        path = self.environment(0) + '/Assets/' + name
         prim = UsdGeom.Xform.Define(self.stage, path)
         prim.GetPrim().GetReferences().AddReference(str(asset))
         transform = UsdGeom.Xformable(prim)
         transform.AddTranslateOp().Set(Gf.Vec3d(*position))
         transform.AddOrientOp().Set(Gf.Quatf(quaternion[0], Gf.Vec3f(*quaternion[1:])))
         return self.register(path, name)
+
+    @staticmethod
+    def environment(i):
+        return f'{ENVIRONMENTS}/env_{i}'
+
+    def replica_path(self, path, i):
+        return self.environment(i) + path[len(self.environment(0)):] if i else path
+
+    def set_environments(self, count):
+        """Simulate ``count`` copies of environment 0, side by side along world Y.
+
+        Replicas receive the same inputs as environment 0 and stay hidden; they
+        exist for parallel cost. Tests read, record and render environment 0.
+        """
+        assert count >= 1 and not self.instances, 'Choose the environments before loading assets'
+        from pxr import UsdGeom
+        self.envs = count
+        self.offsets = np.array([[0, ENVIRONMENT_SPACING*i, 0] for i in range(count)])
+        UsdGeom.Xform.Define(self.stage, self.environment(0))
+
+    def replicate(self):
+        """Copy the authored environment 0 into every replica, once, before physics starts."""
+        from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics
+        layer = self.stage.GetRootLayer()
+        for i in range(1, self.envs):
+            path = self.environment(i)
+            if self.stage.GetPrimAtPath(path):
+                continue
+            # Targets inside environment 0 are remapped into the copy.
+            assert Sdf.CopySpec(layer, self.environment(0), layer, path)
+            prim = self.stage.GetPrimAtPath(path)
+            UsdGeom.Xformable(prim).AddTranslateOp().Set(Gf.Vec3d(*self.offsets[i]))
+            UsdGeom.Imageable(prim).MakeInvisible()
+            for joint in Usd.PrimRange(prim):
+                # A joint anchored to the world frame keeps world coordinates.
+                if joint.IsA(UsdPhysics.Joint) and not UsdPhysics.Joint(joint).GetBody0Rel().GetTargets():
+                    attribute = UsdPhysics.Joint(joint).GetLocalPos0Attr()
+                    attribute.Set((attribute.Get() or Gf.Vec3f(0)) + Gf.Vec3f(*map(float, self.offsets[i])))
 
     def initialize(self):
         for instance in self.instances.values():
@@ -263,10 +321,14 @@ class PhysicsStep:
             return
         for asset in self.instances.values():
             keys = [(asset.name, name) for name in asset.body_names]
+            # Each environment receives the same force and moment at its own
+            # centers of mass.
+            centers = (asset.environment_states()[2] if self.envs > 1 else
+                       np.array([[self.states[key]['com'] for key in keys]]))
             asset.view.apply_forces_and_torques_at_pos(
                 np.array([self.forces[key] for key in keys], dtype=np.float32),
                 np.array([self.torques[key] for key in keys], dtype=np.float32),
-                positions=np.array([self.states[key]['com'] for key in keys], dtype=np.float32), is_global=True)
+                positions=centers, is_global=True)
 
     def step(self, world):
         self.active = True

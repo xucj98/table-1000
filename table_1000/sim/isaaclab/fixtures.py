@@ -64,7 +64,7 @@ class Fixture:
         self.velocity_targets, self.actuation = np.zeros(6), np.zeros(6)
         self.stiffness, self.damping = np.zeros(6), np.zeros(6)
         self.max_forces = np.full(6, np.inf)
-        self.path = '/World/Fixtures/' + name
+        self.path = ctx.session.environment(0) + '/Fixtures/' + name
         stage = ctx.session.stage
         # Changing the articulation root must retain the asset's solver and
         # collision settings, rather than silently taking PhysX defaults.
@@ -173,15 +173,23 @@ class Fixture:
         return Rotation.from_rotvec(self.positions()[3:])
 
     def positions(self):
-        return self.view.get_dof_positions()[0, self.order].astype(float)
+        """Coordinates in environment 0."""
+        return self.environment_positions()[0]
+
+    def environment_positions(self):
+        """Coordinates in every environment, one row each."""
+        return self.view.get_dof_positions()[:, self.order].astype(float)
 
     # -- tensors -------------------------------------------------------------------------
     def initialize(self):
         from isaacsim.core.simulation_manager import SimulationManager
         from table_1000.sim.isaaclab.asset_views import TensorView
-        self.view = TensorView(SimulationManager.get_physics_sim_view().create_articulation_view(self.path+'/root_joint'),
-                               SimulationManager.get_physics_sim_device())
-        self.indices = np.array([0], dtype=np.int32)
+        session = self.ctx.session
+        # One fixture articulation per environment, all at the same local coordinates.
+        self.view = TensorView(SimulationManager.get_physics_sim_view().create_articulation_view(
+            [session.replica_path(self.path+'/root_joint', i) for i in range(session.envs)]),
+            SimulationManager.get_physics_sim_device())
+        self.indices = np.arange(session.envs, dtype=np.int32)
         names = self.view.shared_metatype.dof_names
         self.order = [names.index(name) for name in DOFS]
         self.link = self.view.shared_metatype.link_names.index(self.body.path.rsplit('/', 1)[-1])
@@ -191,10 +199,11 @@ class Fixture:
         # Start at the declared coordinates. Recovering a large initial limit
         # violation converges to a different orientation on CPU PhysX.
         positions = self.view.get_dof_positions()
-        positions[0, self.order] = self.coordinates
+        positions[:, self.order] = self.coordinates
         self.view.set_dof_positions(positions, self.indices)
 
     def apply(self):
+        """Write targets, gains and limits; each value is per coordinate or per environment row."""
         if self.view is None:
             return
         active = not (self.released or self.locked)
@@ -203,12 +212,12 @@ class Fixture:
                   'stiffness': self.view.get_dof_stiffnesses(), 'damping': self.view.get_dof_dampings(),
                   'actuation': self.view.get_dof_actuation_forces(),
                   'max_forces': self.view.get_dof_max_forces()}
-        values['targets'][0, self.order] = self.coordinates
-        values['velocity_targets'][0, self.order] = self.velocity_targets if active else 0
-        values['stiffness'][0, self.order] = self.stiffness if active else 0
-        values['damping'][0, self.order] = self.damping if active else 0
-        values['actuation'][0, self.order] = self.actuation if active else 0
-        values['max_forces'][0, self.order] = np.minimum(self.max_forces, 3.4e38)
+        values['targets'][:, self.order] = self.coordinates
+        values['velocity_targets'][:, self.order] = self.velocity_targets if active else 0
+        values['stiffness'][:, self.order] = self.stiffness if active else 0
+        values['damping'][:, self.order] = self.damping if active else 0
+        values['actuation'][:, self.order] = self.actuation if active else 0
+        values['max_forces'][:, self.order] = np.minimum(self.max_forces, 3.4e38)
         self.view.set_dof_position_targets(values['targets'], self.indices)
         self.view.set_dof_velocity_targets(values['velocity_targets'], self.indices)
         self.view.set_dof_stiffnesses(values['stiffness'], self.indices)
@@ -217,7 +226,7 @@ class Fixture:
         self.view.set_dof_max_forces(values['max_forces'], self.indices)
         limits = self.free_limits.copy()
         if self.locked and not self.released:
-            limits[0, self.order] = self.coordinates[:, None]
+            limits[:, self.order] = np.asarray(self.coordinates)[..., None]
         self.view.set_dof_limits(limits, self.indices)
 
     def release(self, released=True):
@@ -372,7 +381,7 @@ class Grip:
 
     # -- control -------------------------------------------------------------------------
     def initialize(self):
-        tree = self.tree_state()
+        tree = self.tree_state(0, self.fixture.positions())
         linear, angular = LINEAR_STEPS / self.ctx.dt, ANGULAR_STEPS / self.ctx.dt
         inertia = np.linalg.eigvalsh(tree['inertia']).max()
         self.gains = {'linear_stiffness_N_per_m': tree['mass']*linear**2, 'linear_damping_N_s_per_m': 2*tree['mass']*linear,
@@ -380,20 +389,30 @@ class Grip:
                       'held_mass_kg': tree['mass'], 'held_inertia_kg_m2': inertia,
                       'linear_natural_frequency_rad_s': linear, 'angular_natural_frequency_rad_s': angular}
 
-    def tree_state(self):
-        """Mass, center of mass and inertia (about the joint point) of the held tree."""
-        instance, point = self.body.instance, self.fixture.joint_point() if self.fixture.view else self.fixture.origin
+    def tree_state(self, environment=0, positions=None):
+        """Mass, center of mass and inertia (about the joint point) of the held tree.
+
+        Environment-local coordinates; ``positions`` are that environment's
+        fixture coordinates (default: the declared joint point).
+        """
+        instance = self.body.instance
+        point = self.fixture.origin + (positions[:3] if positions is not None else 0)
+        _, rotations, centers = instance.environment_states()
         mass, moment, inertia = 0., np.zeros(3), np.zeros((3, 3))
         for name in self.fixture.tree:
-            state, i = instance.body(name).state, instance.indices[name]
-            m, r = float(instance.mass[i]), state['com'] - point
+            i = instance.indices[name]
+            m, r, rotation = float(instance.mass[i]), centers[environment, i] - point, rotations[environment, i]
             mass += m
-            moment += m*state['com']
-            inertia += state['rotation'] @ instance.local_inertia[i] @ state['rotation'].T + m*(r@r*np.eye(3)-np.outer(r, r))
+            moment += m*centers[environment, i]
+            inertia += rotation @ instance.local_inertia[i] @ rotation.T + m*(r@r*np.eye(3)-np.outer(r, r))
         return {'mass': mass, 'com': moment/mass, 'inertia': inertia}
 
     def update(self, t, dt):
-        """Drive targets for the step ending at ``t + dt``."""
+        """Drive targets for the step ending at ``t + dt``, in every environment.
+
+        Each environment's grip follows the same trajectory and limits with
+        feedback and feedforward from its own state.
+        """
         if self.released:
             return
         # Motions are aligned with the step: the step ending at t+dt belongs to
@@ -412,21 +431,24 @@ class Grip:
                 # Hold the end pose at rest from the next step.
                 self.target = (position, quaternion, np.zeros(3), np.zeros(3))
         fixture, gains = self.fixture, self.gains
-        positions = fixture.positions()
-        fixture.coordinates = fixture.pose_coordinates(position, quaternion, reference=positions[3:])
+        positions = fixture.environment_positions()
+        fixture.coordinates = np.array([fixture.pose_coordinates(position, quaternion, reference=row[3:])
+                                        for row in positions])
         fixture.velocity_targets = fixture.velocity_coordinates(quaternion, velocity, omega)
         linear = self.linear_axes
         stiffness = np.r_[linear*gains['linear_stiffness_N_per_m'], [gains['angular_stiffness_N_m_per_rad']*self.angular]*3]
         damping = np.r_[linear*gains['linear_damping_N_s_per_m'], [gains['angular_damping_N_m_s_per_rad']*self.angular]*3]
         # Inverse dynamics of the held tree about the joint point: carry its
         # weight and supply the trajectory's acceleration.
-        tree = self.tree_state()
         gravity = np.asarray(self.ctx.gravity, dtype=float)
-        force = tree['mass']*(acceleration - gravity)
-        torque = tree['inertia'] @ alpha + np.cross(tree['com'] - fixture.joint_point(), force)
-        force = force*linear
-        torque = fixture.joint_rotation().inv().apply(torque) if self.angular else np.zeros(3)
-        feedforward = np.r_[force, torque]
+        feedforward = []
+        for environment, row in enumerate(positions):
+            tree = self.tree_state(environment, row)
+            force = tree['mass']*(acceleration - gravity)
+            torque = tree['inertia'] @ alpha + np.cross(tree['com'] - fixture.origin - row[:3], force)
+            torque = Rotation.from_rotvec(row[3:]).inv().apply(torque) if self.angular else np.zeros(3)
+            feedforward.append(np.r_[force*linear, torque])
+        feedforward = np.array(feedforward)
         # A limited axis whose force (drive estimate plus feedforward) would
         # exceed its limit pushes with the limit toward the target instead:
         # the trajectory feedforward assumes tracking, which no longer holds.
@@ -444,16 +466,19 @@ class Grip:
         fixture.apply()
 
     def measured_velocities(self, positions):
-        """Fixture velocities over the last step from coordinate differences.
+        """Fixture velocities over the last step from coordinate differences, one row per environment.
 
         CPU TGS can report a nonzero end-of-step velocity for a body at rest.
         """
         previous = getattr(self, 'previous_positions', None)
         if previous is None:
-            return self.fixture.view.get_dof_velocities()[0, self.fixture.order].astype(float)
-        rotation = Rotation.from_rotvec(positions[3:])
-        omega = (rotation*Rotation.from_rotvec(previous[3:]).inv()).as_rotvec() / self.ctx.dt
-        return np.r_[(positions[:3]-previous[:3])/self.ctx.dt, rotation.inv().apply(omega)]
+            return self.fixture.view.get_dof_velocities()[:, self.fixture.order].astype(float)
+        velocities = []
+        for now, before in zip(positions, previous):
+            rotation = Rotation.from_rotvec(now[3:])
+            omega = (rotation*Rotation.from_rotvec(before[3:]).inv()).as_rotvec() / self.ctx.dt
+            velocities.append(np.r_[(now[:3]-before[:3])/self.ctx.dt, rotation.inv().apply(omega)])
+        return np.array(velocities)
 
     @staticmethod
     def limit_value(limit, t):
@@ -497,7 +522,9 @@ class Grip:
             incoming = fixture.view.get_link_incoming_joint_force()[0, fixture.link].astype(float)
             frame = fixture.joint_rotation()
             return np.r_[frame.apply(incoming[:3]), frame.apply(incoming[3:])]
-        drive = (fixture.stiffness*(fixture.coordinates-positions) +
-                 fixture.damping*(fixture.velocity_targets-self.measured_velocities(positions)))
-        generalized = np.clip(drive, -fixture.max_forces, fixture.max_forces) + fixture.actuation
+        first = lambda value: np.broadcast_to(value, (len(self.fixture.indices), 6))[0]
+        velocities = self.measured_velocities(fixture.environment_positions())[0]
+        drive = (first(fixture.stiffness)*(first(fixture.coordinates)-positions) +
+                 first(fixture.damping)*(first(fixture.velocity_targets)-velocities))
+        generalized = np.clip(drive, -first(fixture.max_forces), first(fixture.max_forces)) + first(fixture.actuation)
         return np.r_[generalized[:3], fixture.joint_rotation().apply(generalized[3:])]

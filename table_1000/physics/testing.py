@@ -40,8 +40,13 @@ def interpolate(frames, t):
 
 
 class TestContext:
-    """One isolated experiment. Importing test definitions starts no simulator."""
-    def __init__(self, asset_path, *, name, render=False, app=None, physics='cpu'):
+    """One isolated experiment. Importing test definitions starts no simulator.
+
+    ``num_envs`` simulates that many copies of the experiment in parallel. The
+    copies receive identical inputs; the test reads, records and renders the
+    first, so test scripts are unchanged.
+    """
+    def __init__(self, asset_path, *, name, render=False, app=None, physics='cpu', num_envs=1):
         import omni.usd
         from isaaclab.sim import SimulationCfg, SimulationContext, PhysxCfg
         SimulationContext.clear_instance()
@@ -66,6 +71,8 @@ class TestContext:
             pc.set_broadphase_type('MBP')
         self.session = session_for(omni.usd.get_context().get_stage())
         self.session.active = False
+        self.session.set_environments(num_envs)
+        self.num_envs = num_envs
         self.asset = self.spawn(self.asset_path, name='asset')
         self.dt, self.gravity = .004, (0, 0, -9.81)
         self.initials, self.actions, self.action_values = {}, {}, {}
@@ -80,6 +87,8 @@ class TestContext:
         self.initialized = False
         self.integrating_seconds = self.preparation_seconds = 0.
         self.video_started = self.experiment_started = None
+        # Sampled from the first experiment step (see table_1000.physics.utilization).
+        self.utilization = None
         self.session.actions = self.apply_actions
 
     def spawn(self, asset_path, *, name, position=(0, 0, 0), rotation=(1, 0, 0, 0)):
@@ -143,6 +152,7 @@ class TestContext:
             saved[instance.name] = (np.array([t.GetTranslation() for t in transforms], dtype=np.float32),
                 np.array([[t.GetRotation().GetQuat().GetReal(), *t.GetRotation().GetQuat().GetImaginary()] for t in transforms], dtype=np.float32))
         self.session.active = False
+        self.session.replicate()
         self.world.reset()
         self.session.initialize()
         from table_1000.physics.joints import set_initial
@@ -173,7 +183,7 @@ class TestContext:
                 state = fixture.body.state
                 origin_velocity = velocity[:3] - np.cross(velocity[3:], state['com'] - state['position'])
                 values = fixture.view.get_dof_velocities()
-                values[0, fixture.order] = fixture.velocity_coordinates(state['quaternion'], origin_velocity, velocity[3:])
+                values[:, fixture.order] = fixture.velocity_coordinates(state['quaternion'], origin_velocity, velocity[3:])
                 fixture.view.set_dof_velocities(values, fixture.indices)
         self.session.time = 0.;self.session.steps = 0
         self.session.callback_steps = 0
@@ -302,7 +312,7 @@ class TestContext:
     def ground(self,*,z=0,static_friction=.35,dynamic_friction=.35,restitution=0,contact_offset=.02):
         from pxr import Gf, UsdGeom, UsdPhysics, UsdShade, PhysxSchema
         stage = self.session.stage
-        floor = UsdGeom.Cube.Define(stage,'/World/Ground');floor.CreateSizeAttr(1)
+        floor = UsdGeom.Cube.Define(stage,self.session.environment(0)+'/Ground');floor.CreateSizeAttr(1)
         transform = UsdGeom.Xformable(floor);transform.AddTranslateOp().Set(Gf.Vec3d(0,0,z-.05));transform.AddScaleOp().Set(Gf.Vec3f(4,4,.1))
         floor.CreateDisplayColorAttr([Gf.Vec3f(.46,.49,.53)]);UsdPhysics.CollisionAPI.Apply(floor.GetPrim())
         PhysxSchema.PhysxCollisionAPI.Apply(floor.GetPrim()).CreateContactOffsetAttr(contact_offset)
@@ -330,6 +340,7 @@ class TestContext:
                 self.images.append(self.camera_instance.capture(self))
         if self.experiment_started is None:
             self.experiment_started = time.perf_counter()
+            if self.utilization: self.utilization.start()
         stride = round(1/(self.dt*(self.camera_config or {'fps':25})['fps']))
         assert abs(1/(self.dt*(self.camera_config or {'fps':25})['fps'])-stride) < 1e-7
         for _ in range(round(duration/self.dt)):
