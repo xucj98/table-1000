@@ -19,7 +19,7 @@ robot.py (SPEC) ──> 运动学与规划模型、控制器 ──robot_test.py
 | --- | --- | --- |
 | `asset_sources/robots/<name>/` | `robot.urdf`、`meshes/visual/`、`meshes/collision/`、`prepare.py`（转换选择）、`physics.py`（物理层）、`robot.py`（机器人描述 `SPEC`）、`robot_test.py`（验收设置）、`README.md`、`three_quarter.jpg` | 是 |
 | `table_1000/robots/` | 与具体机器人无关的工具：描述类型（`spec.py`）、转换、构建、预览、运动学与规划（`kinematics.py`、`planning_model.py`）、相机安装与投影（`cameras.py`）、验收用例库（`checks.py`）、遥控（`teleop.py`）。仿真环境在 `table_1000/sim/isaaclab/` | 是 |
-| `scripts/robots/` | `prepare_robot.py`、`build_robot.py`、`check_robot.py`、`teleop.py` | 是 |
+| `scripts/robots/` | `prepare_robot.py`、`build_robot.py`、`check_robot.py`、`check_parallel.py`、`teleop.py` | 是 |
 | `tests/robots/` | 通用代码的单元测试（测试内生成的固定底座单臂）；`test_robot_sources.py` 对每台机器人检查描述、关键姿态、IK 与验收设置 | 是 |
 | `assets/robots/<name>/raw/` | 厂商原始包，原样保存 | 否；存档于数据集，版本记录在 `assets.lock.json` |
 | `assets/robots/<name>/` 其余 | `import/`、`robot.usda`、源码快照、`build.json`、`prepare.json`、`check.json` | 否；可由源码重建 |

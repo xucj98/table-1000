@@ -1,4 +1,4 @@
-"""Execute native USD asset TESTS and measure simulation and video costs."""
+"""Run asset physics TESTS on one or more backends and summarize each asset."""
 import argparse
 import csv
 import importlib.util
@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import statistics
 import subprocess
+import sys
 import time
 import traceback
 
@@ -207,6 +208,7 @@ def run_video(asset,name,test,output,app,startup,rtf,gpu,physics="cpu",num_envs=
                  'preparation':{'process_startup_seconds':startup,'construction_seconds':construction,'initialization_render_warmup_reset_seconds':ctx.preparation_seconds},
                  'independent_no_render_vs_video_final_max_scalar_error':max(errors) if errors else None},
             'reaction_forces':'contact reaction forces not sampled; grip columns record the force each grip applies'}
+        result['metrics'] = ctx.metrics
         if getattr(ctx, 'experiment_details', None):
             result['experiment'] = ctx.experiment_details
         if ctx.grips:
@@ -221,10 +223,15 @@ def run_video(asset,name,test,output,app,startup,rtf,gpu,physics="cpu",num_envs=
         ctx.close()
 
 
+def clear(output,name):
+    """Remove one test's previous results, so a rerun never reports them."""
+    if (output/name).exists():shutil.rmtree(output/name)
+    (output/(name+'.mp4')).unlink(missing_ok=True)
+
+
 def run_case(asset,name,test,output,app,startup,gpu,physics="cpu",num_envs=1,utilization=None,standard=False):
     directory=output/name
-    if directory.exists():shutil.rmtree(directory)
-    (output/(name+'.mp4')).unlink(missing_ok=True)
+    clear(output,name)
     directory.mkdir(parents=True)
     try:
         rtf=benchmark(asset,name,test,app,physics=physics,num_envs=num_envs,utilization=utilization) if standard else None
@@ -235,46 +242,77 @@ def run_case(asset,name,test,output,app,startup,gpu,physics="cpu",num_envs=1,uti
         raise
 
 
-def main(argv=None):
-    parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('asset',type=Path,help='asset directory or USD entry')
-    parser.add_argument('--script',type=Path)
-    parser.add_argument('--output',type=Path,help='results directory; default physics_test/<physics> beside the asset')
-    parser.add_argument('--tests',nargs='+')
-    parser.add_argument('--gpu',type=int,default=0)
-    parser.add_argument('--physics',choices=('cpu','gpu'),default='cpu',help='physics backend; --gpu selects the physical device')
-    parser.add_argument('--num-envs',type=int,help='parallel copies of each experiment; default 1 on CPU, 4 on GPU')
-    parser.add_argument('--benchmark',action='store_true',help='standard RTF measurement: warmup and three timed rounds before the video run')
-    parser.add_argument('--plots-only',action='store_true')
-    args=parser.parse_args(argv)
-    num_envs=args.num_envs or (4 if args.physics=='gpu' else 1)
-    if num_envs<1:parser.error('--num-envs must be positive')
-    asset=args.asset.resolve()
-    if asset.is_dir():asset=asset/('object.usda' if (asset/'object.usda').exists() else 'object.usdz')
-    script=args.script or asset.parent/'physics_test.py'
-    # Each backend keeps its own results: physics_test/cpu or physics_test/gpu.
-    output=(args.output or asset.parent/'physics_test'/args.physics).resolve();output.mkdir(parents=True,exist_ok=True)
-    if args.plots_only:
-        tests=load_tests(script)
-        if args.tests:tests={name:tests[name] for name in args.tests}
-        from table_1000.physics.plots import plot_trace
-        for name in tests:
-            result=json.loads((output/name/'result.json').read_text())
-            plot_trace(output/name/'trace.csv',result['plots'],result['columns'])
-        return
+# Backend name -> PhysX device. Each backend writes physics_test/<name>/.
+BACKENDS={'isaac-cpu':'cpu','isaac-gpu':'gpu'}
+ENTRY=Path(__file__).resolve().parents[2]/'scripts/assets/physics_test.py'
+
+
+def significant(value,digits=4):
+    return float(f'{value:.{digits}g}')
+
+
+def summary(directory,names,error=None):
+    """Collect each backend's result.json into one human-facing digest."""
+    asset=str(directory.relative_to(directory.parents[1]))
+    if error:
+        return {'asset':asset,'error':error,'backends':{},'tests':{}}
+    backends,tests={},{}
+    for backend in BACKENDS:
+        output=directory/'physics_test'/backend
+        for name in names:
+            path=output/name/'result.json'
+            if not path.exists():continue
+            result=json.loads(path.read_text())
+            test=tests.setdefault(name,{'status':{},'metrics':{},'rtf':{}})
+            status=test['status'][backend]=result['execution_status']
+            entry=backends.setdefault(backend,{'completed':0,'failed':[]})
+            if status!='completed':
+                entry['failed'].append(name)
+                test.setdefault('error',{})[backend]=result['error'].strip().splitlines()[-1]
+                continue
+            entry['completed']+=1
+            entry.setdefault('engine',f"Isaac Sim {result['conditions']['isaac_version'][0]} {BACKENDS[backend].upper()} PhysX")
+            entry.setdefault('environments',result['environments']['count'])
+            for key,metric in result.get('metrics',{}).items():
+                test['metrics'].setdefault(key,{'label':metric['label'],'unit':metric['unit']})[backend]=significant(metric['value'])
+            performance=result['performance']
+            physics=performance['no_render']
+            test['rtf'][backend]={'physics':significant(physics.get('median_RTF',physics.get('RTF')),3),
+                                  'video':significant(performance['video_end_to_end']['RTF'],3)}
+    ordered={name:tests[name] for name in names if name in tests}
+    return {'asset':asset,'backends':backends,'tests':ordered}
+
+
+def write_summary(directory,names,error=None):
+    path=directory/'physics_test'/'summary.json'
+    path.parent.mkdir(parents=True,exist_ok=True)
+    path.write_text(json.dumps(summary(directory,names,error),indent=2,ensure_ascii=False)+'\n',encoding='utf-8')
+    return path
+
+
+def entry(directory):
+    return directory/('object.usda' if (directory/'object.usda').exists() else 'object.usdz')
+
+
+def run_backend(asset,backend,*,gpu,script,tests=None,num_envs=None,benchmark=False):
+    """Run one asset on one backend in this process; Kit's close ends the process."""
+    physics=BACKENDS[backend]
+    num_envs=num_envs or (4 if physics=='gpu' else 1)
+    output=asset.parent/'physics_test'/backend
+    output.mkdir(parents=True,exist_ok=True)
     started=time.perf_counter()
-    gpu={'physical_index':args.gpu,'before_process_start':subprocess.run(
+    gpu_info={'physical_index':gpu,'before_process_start':subprocess.run(
         ['nvidia-smi','--query-gpu=index,name,driver_version,memory.used,utilization.gpu','--format=csv'],
         check=True,capture_output=True,text=True).stdout.strip()}
     from table_1000.sim.isaaclab.app import start_app
     from table_1000.sim.isaaclab.render import RT2_ARGS
-    app=start_app(gpu=args.gpu, device='cpu' if args.physics=='cpu' else 'cuda:0',
+    app=start_app(gpu=gpu, device='cpu' if physics=='cpu' else 'cuda:0',
                   extra_args=(*RT2_ARGS,'--/rtx/post/motionblur/enabled=False'))
     startup=time.perf_counter()-started
     failed=False
     try:
-        tests=load_tests(script)
-        if args.tests:tests={name:tests[name] for name in args.tests}
+        selected=load_tests(script)
+        if tests:selected={name:selected[name] for name in tests}
         import carb
         from threadpoolctl import threadpool_limits
         from table_1000.physics.simulation import enable_scripting
@@ -286,11 +324,17 @@ def main(argv=None):
         carb.settings.get_settings().set('/rtx/post/motionblur/enabled',False)
         # OpenMP is set before startup; changing it after Kit starts can stall RTX.
         from table_1000.physics.utilization import Utilization
-        utilization=Utilization(args.gpu)
+        utilization=Utilization(gpu)
         try:
             with threadpool_limits(limits=1, user_api='blas'):
-                for name,test in tests.items():
-                    run_case(asset,name,test,output,app,startup,gpu,physics=args.physics,num_envs=num_envs,utilization=utilization,standard=args.benchmark)
+                for name,test in selected.items():
+                    try:
+                        run_case(asset,name,test,output,app,startup,gpu_info,physics=physics,num_envs=num_envs,
+                                 utilization=utilization,standard=benchmark)
+                    except Exception:
+                        # run_case recorded the failure; the remaining tests still run.
+                        failed=True
+                        traceback.print_exc()
         finally:
             utilization.close()
     except BaseException:
@@ -299,3 +343,105 @@ def main(argv=None):
         raise
     finally:
         app.close(exit_code=int(failed))
+
+
+def run_jobs(jobs,gpus):
+    """Run (command, log) jobs, one at a time per listed GPU; returns failed jobs."""
+    from concurrent.futures import ThreadPoolExecutor
+    import queue
+    free=queue.Queue()
+    for gpu in gpus:free.put(gpu)
+    def run(job):
+        command,log,label=job
+        gpu=free.get()
+        try:
+            print('START',label,'GPU',gpu,flush=True)
+            log.parent.mkdir(parents=True,exist_ok=True)
+            with log.open('w') as stream:
+                code=subprocess.run([*command,'--gpu',str(gpu)],stdout=stream,stderr=subprocess.STDOUT).returncode
+            print('DONE' if code==0 else 'FAILED',label,log,flush=True)
+            return code
+        finally:
+            free.put(gpu)
+    with ThreadPoolExecutor(len(gpus)) as pool:
+        codes=list(pool.map(run,jobs))
+    return [job[2] for job,code in zip(jobs,codes) if code]
+
+
+def main(argv=None):
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--source',type=Path,default=Path('assets/objects'),help='built assets root')
+    parser.add_argument('--assets',nargs='+',help='asset directories relative to --source; default all with physics_test.py')
+    parser.add_argument('--physics',nargs='+',choices=tuple(BACKENDS),required=True,help='physics backends to run')
+    parser.add_argument('--gpus',type=int,nargs='+',default=[0],help='physical GPUs; one asset-backend run at a time on each')
+    parser.add_argument('--tests',nargs='+',help='only these tests')
+    parser.add_argument('--scripts',type=Path,help='read physics_test.py from this root (e.g. asset_sources/objects) instead of the build snapshot')
+    parser.add_argument('--num-envs',type=int,help='parallel copies of each experiment; default 1 on CPU, 4 on GPU')
+    parser.add_argument('--benchmark',action='store_true',help='standard RTF measurement: warmup and three timed rounds before the video run')
+    parser.add_argument('--plots-only',action='store_true')
+    parser.add_argument('--worker',type=Path,help=argparse.SUPPRESS)
+    parser.add_argument('--gpu',type=int,help=argparse.SUPPRESS)
+    parser.add_argument('--script',type=Path,help=argparse.SUPPRESS)
+    args=parser.parse_args(argv)
+    if args.num_envs is not None and args.num_envs<1:parser.error('--num-envs must be positive')
+    source=args.source.resolve()
+    if args.worker:
+        run_backend(entry(args.worker),args.physics[0],gpu=args.gpu,script=args.script,tests=args.tests,
+                    num_envs=args.num_envs,benchmark=args.benchmark)
+        return
+    references=([Path(reference) for reference in args.assets] if args.assets is not None
+                else sorted(path.parent.relative_to(source) for path in source.rglob('physics_test.py')))
+    scripts={reference:(args.scripts.resolve()/reference if args.scripts else source/reference)/'physics_test.py'
+             for reference in references}
+    names,broken={},{}
+    for reference,script in scripts.items():
+        try:
+            names[reference]=list(load_tests(script))
+        except Exception:
+            # A broken definition fails only its own asset.
+            traceback.print_exc()
+            broken[reference]=traceback.format_exc().strip().splitlines()[-1]
+            continue
+        unknown=set(args.tests or ())-set(names[reference])
+        if unknown:parser.error(f'{reference}: unknown tests {sorted(unknown)}')
+    if args.plots_only:
+        from table_1000.physics.plots import plot_trace
+        for reference in names:
+            for backend in args.physics:
+                output=source/reference/'physics_test'/backend
+                for name in args.tests or names[reference]:
+                    result=json.loads((output/name/'result.json').read_text())
+                    plot_trace(output/name/'trace.csv',result['plots'],result['columns'])
+        if broken:
+            raise SystemExit('failed: '+', '.join(f'{reference} (physics_test.py)' for reference in broken))
+        return
+    jobs,selected=[],{}
+    for reference in names:
+        for backend in args.physics:
+            output=source/reference/'physics_test'/backend
+            selected[reference,backend]=args.tests or names[reference]
+            for name in selected[reference,backend]:clear(output,name)
+            command=[sys.executable,str(ENTRY),'--worker',str(source/reference),'--physics',backend,
+                     '--script',str(scripts[reference])]
+            if args.tests:command+=['--tests',*args.tests]
+            if args.num_envs:command+=['--num-envs',str(args.num_envs)]
+            if args.benchmark:command.append('--benchmark')
+            jobs.append((command,source/reference/'physics_test'/backend/'run.log',f'{reference} {backend}'))
+    failed=run_jobs(jobs,args.gpus)
+    for (reference,backend),tests in selected.items():
+        output=source/reference/'physics_test'/backend
+        for name in tests:
+            # The worker exited before reaching this test, e.g. at startup.
+            if not (output/name/'result.json').exists():
+                (output/name).mkdir(parents=True,exist_ok=True)
+                (output/name/'result.json').write_text(json.dumps({'test':name,'execution_status':'failed',
+                    'error':f'not run: the {backend} process exited before this test; see {output/"run.log"}'},indent=2)+'\n')
+    for reference in references:
+        print('SUMMARY',write_summary(source/reference,names.get(reference,[]),broken.get(reference)),flush=True)
+    failed+=[f'{reference} (physics_test.py)' for reference in broken]
+    if failed:
+        raise SystemExit('failed: '+', '.join(failed))
+
+
+if __name__ == '__main__':
+    main()

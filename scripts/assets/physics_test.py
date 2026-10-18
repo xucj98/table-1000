@@ -1,4 +1,4 @@
-"""Run configured Isaac physics tests for a generated asset."""
+"""Run asset physics tests on the selected backends and GPUs."""
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))

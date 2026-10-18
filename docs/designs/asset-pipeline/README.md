@@ -68,7 +68,7 @@ robot.urdf ──Blender 渲染──> three_quarter.jpg
 | 位置 | 内容 | Git |
 | --- | --- | --- |
 | `asset_sources/objects/<category>/<id>/` | object.py、preview.json、metadata.json、README.md、three_quarter.jpg；第二阶段增加 physics.py、physics_test.py、可选 behavior.py | 提交 |
-| `assets/objects/<category>/<id>/` | object.blend、geometry.usdc、physics.usda、object.usdz、源码及配置快照、README.md、已有 three_quarter.jpg、可选 object.usda 与行为依赖、preview/、physics_test/cpu/ 与 physics_test/gpu/ | 忽略 |
+| `assets/objects/<category>/<id>/` | object.blend、geometry.usdc、physics.usda、object.usdz、源码及配置快照、README.md、已有 three_quarter.jpg、可选 object.usda 与行为依赖、preview/、physics_test/（summary.json 与各后端目录） | 忽略 |
 | `asset_sources/robots/<name>/` | robot.urdf 及其按相对路径引用的 meshes/、prepare.py、physics.py、robot.py（机器人描述）、robot_test.py（验收设置）、README.md、three_quarter.jpg | 提交 |
 | `assets/robots/<name>/raw/` | 厂商原始 URDF 包 | 忽略；存档于 Hugging Face 数据集，版本见 `assets.lock.json` |
 | `assets/robots/<name>/` 其余 | URDF 导入结果 import/、加载入口 robot.usda、源码快照、prepare.json、check.json | 忽略 |
@@ -94,7 +94,7 @@ cabinet
 
 资产树展示所有刚体及其部件，省略部件下的视觉与碰撞网格；使用空格缩进表示实际父子层级，森林保留多个根节点。
 
-带 `physics_test.py` 的资产另列[物理实测](physics-tests.md#人工验收)表，记录各测试测得的关键物理量，如拔出力、合紧力、起滑角：每行写明物理量、CPU 与 GPU 实测值、来源测试及测量方式。数值取自对应测试 `result.json` 的 `experiment`，注明软件版本，并标明为未标定的仿真值；修改几何、`physics.py` 或测试后重新运行并更新。已知后端差异在表下说明或链接 issue。
+带 `physics_test.py` 的资产另列[物理实测](physics-tests.md#人工验收)表，记录各测试测得的关键物理量，如拔出力、合紧力、起滑角：每行写明物理量、CPU 与 GPU 实测值、来源测试及测量方式。数值取自 `physics_test/summary.json`，注明软件版本，并标明为未标定的仿真值；修改几何、`physics.py` 或测试后重新运行并更新。已知后端差异在表下说明或链接 issue。
 
 同一节另列典型条件下的性能：CPU 后端 1 个环境、GPU 后端 4 个并行环境，分别给出无渲染和含视频的 RTF 范围，以及测量期间的本进程 CPU 占用和 GPU 利用率。数值取自 `--benchmark` 运行的 `result.json` 中的 `performance`，注明机器负载等条件，测量方法见 [RTF 基准](physics-tests.md#rtf-基准)。
 
