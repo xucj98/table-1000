@@ -1,4 +1,4 @@
-"""Initial COM velocities, tensor fixture release and first-step action checks."""
+"""Initial COM velocities, tensor fixture release, released rotations and first-step action checks."""
 import argparse
 import json
 from pathlib import Path
@@ -6,6 +6,61 @@ import sys
 import traceback
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+
+def released_rotation(app, args):
+    """A grip released at any orientation must leave all three rotations free.
+
+    An isotropic cube is held at each orientation, released, and driven by a
+    world torque with components on all three axes. Its angular velocity must
+    match a never-held cube; a lost rotational direction shows as a mismatch.
+    """
+    import numpy as np
+    from pxr import Gf, PhysxSchema, Usd, UsdGeom, UsdPhysics
+    from scipy.spatial.transform import Rotation
+    from table_1000.physics.testing import TestContext
+    path = (args.output.parent/'released_rotation_cube.usda').resolve()
+    stage = Usd.Stage.CreateNew(str(path))
+    cube = UsdGeom.Cube.Define(stage, '/cube')
+    cube.CreateSizeAttr(.02)
+    stage.SetDefaultPrim(cube.GetPrim())
+    cube.GetPrim().SetCustomDataByKey('table1000:name', 'cube')
+    UsdPhysics.RigidBodyAPI.Apply(cube.GetPrim())
+    UsdPhysics.CollisionAPI.Apply(cube.GetPrim())
+    mass = UsdPhysics.MassAPI.Apply(cube.GetPrim())
+    mass.CreateMassAttr(.1)
+    mass.CreateDiagonalInertiaAttr(Gf.Vec3f(.1*.02**2/6))
+    PhysxSchema.PhysxRigidBodyAPI.Apply(cube.GetPrim()).CreateDisableGravityAttr(True)
+    stage.GetRootLayer().Save()
+    torque = (1e-4, -.7e-4, 1.2e-4)
+    # Euler chains were singular at a relative Y rotation of +-90 degrees.
+    orientations = {'identity': (0, 0, 0), 'y_plus_90': (0, np.pi/2, 0),
+                    'y_minus_90': (0, -np.pi/2, 0), 'generic': (.8, -1.9, 1.3)}
+    velocities = {}
+    for name, rotvec in [('free', (0, 0, 0)), *orientations.items()]:
+        x, y, z, w = Rotation.from_rotvec(rotvec).as_quat()
+        ctx = TestContext(path, name='rotation_'+name, app=app, physics=args.physics)
+        try:
+            ctx.simulation(gravity=(0, 0, 0))
+            body = ctx.asset.body('cube')
+            if name == 'free':
+                ctx.ensure_initialized()
+            else:
+                with ctx.fixed(body, rotation=(w, x, y, z)):
+                    ctx.run(.1)
+                np.testing.assert_allclose(Rotation.from_quat(body.state['quaternion'][[1, 2, 3, 0]]).as_rotvec(),
+                                           rotvec, atol=1e-5, rtol=0)
+            start = ctx.session.time
+            ctx.torque('spin', body, keyframes=[{'time': start, 'torque': torque},
+                                                {'time': start+.1, 'torque': torque}])
+            ctx.run(.1)
+            velocities[name] = body.state['velocity'][3:].copy()
+        finally:
+            ctx.close()
+    for name in orientations:
+        np.testing.assert_allclose(velocities[name], velocities['free'],
+                                   atol=2e-3*np.linalg.norm(velocities['free']), rtol=0, err_msg=name)
+    return {name: value.tolist() for name, value in velocities.items()}
 
 
 def main():
@@ -65,9 +120,13 @@ def main():
             assert ctx.rows[0]['first_step.force.x'] == 0
             assert ctx.rows[1]['first_step.force.x'] == -10
             assert cap.state['velocity'][0] < -.01
-            result.update(execution_status='completed', separate_fixture_paths=[body_grip.path, cap_grip.path],
+            result.update(separate_fixture_paths=[body_grip.path, cap_grip.path],
                           native_mass_unchanged_kg=ctx.asset.mass.tolist(), initial_actions_zero=True,
                           fixed_body_held_under_force=True, released_cap_velocity_x=float(cap.state['velocity'][0]))
+        ctx.close()
+        ctx = None
+        result['released_rotation_angular_velocity'] = released_rotation(app, args)
+        result['execution_status'] = 'completed'
         args.output.write_text(json.dumps(result, indent=2)+'\n')
         print('INITIAL_ACTIONS_CHECK_COMPLETED', flush=True)
     except BaseException:

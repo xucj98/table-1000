@@ -37,10 +37,9 @@ def pull_release(ctx: TestContext, index):
         'native_resistance': {'static_joint_friction_N': .50, 'dynamic_joint_friction_N': .35,
             'viscous_drive_damping_N_s_per_m': 3,
             'note': 'constant native joint-axis friction; damping is additional viscous resistance'},
-        'fixture': 'housing held by a fixed articulation root',
+        'fixture': 'housing held by the locked six-axis fixture',
         'force_schedule_N': '0 to 0.80 over 1.5 s; withdraw over 0.1 s; observe to 5 s',
     }
-    ctx.clamp_root(ctx.asset.body('cabinet.housing'))
     ctx.force('pull', drawer, keyframes=[
         {'time': 0, 'force': (0, 0, 0)},
         {'time': .5, 'force': (0, 0, 0)},
@@ -48,7 +47,8 @@ def pull_release(ctx: TestContext, index):
         {'time': 2.1, 'force': (0, 0, 0)},
         {'time': 5, 'force': (0, 0, 0)},
     ])
-    ctx.run(5)
+    with ctx.fixed(ctx.asset.body('cabinet.housing')):
+        ctx.run(5)
     assert abs(ctx.rows[0][f'asset.{joint}.position'] - .045) < 1e-6, 'initial drawer opening was not applied'
 
 
@@ -61,10 +61,9 @@ def travel_stops(ctx: TestContext):
     ctx.experiment_details = {
         'purpose': 'B: sustained opening and closing force at both native travel limits',
         'initial_joint_m': .085, 'limits_m': [0, TRAVEL],
-        'fixture': 'housing held by a fixed articulation root',
+        'fixture': 'housing held by the locked six-axis fixture',
         'force_schedule_N': '2 N opening until 2 s, reverse to 2 N closing by 2.2 s, hold until 4 s',
     }
-    ctx.clamp_root(ctx.asset.body('cabinet.housing'))
     ctx.force('pull', ctx.asset.body('cabinet.drawer1'), keyframes=[
         {'time': 0, 'force': (0, -2, 0)},
         {'time': 2, 'force': (0, -2, 0)},
@@ -73,7 +72,8 @@ def travel_stops(ctx: TestContext):
         {'time': 4.1, 'force': (0, 0, 0)},
         {'time': 5, 'force': (0, 0, 0)},
     ])
-    ctx.run(5)
+    with ctx.fixed(ctx.asset.body('cabinet.housing')):
+        ctx.run(5)
     assert abs(ctx.rows[0][f'asset.{joint}.position'] - .085) < 1e-6, 'initial drawer opening was not applied'
 
 
@@ -114,14 +114,14 @@ def gravity_tilt(ctx: TestContext):
     ctx.plots('housing.angle', *(f'asset.cabinet.drawer{i}.slide.position' for i in (1, 2, 3)))
     ctx.video_annotation = lambda: f"Horizontal start | housing tilt {math.degrees(math.atan2(housing.state['rotation'][2, 1], housing.state['rotation'][1, 1])):.1f} deg | three drawers free | gravity only"
     original = ctx.session.actions
-    grip = ctx.clamp_root(housing)
-    def actions(t, dt):
-        original(t, dt)
-        u = min(1., max(0., (t-1)/15))
-        angle = math.radians(45)*(u*u*(3-2*u))
-        grip.move(quaternion=(math.cos(angle/2), math.sin(angle/2), 0, 0))
-    ctx.session.actions = actions
-    ctx.run(18)
+    with ctx.fixed(housing) as grip:
+        def actions(t, dt):
+            original(t, dt)
+            u = min(1., max(0., (t-1)/15))
+            angle = math.radians(45)*(u*u*(3-2*u))
+            grip.move(quaternion=(math.cos(angle/2), math.sin(angle/2), 0, 0))
+        ctx.session.actions = actions
+        ctx.run(18)
     ctx.session.actions = original
     starts = {}
     for i in (1, 2, 3):
@@ -133,7 +133,7 @@ def gravity_tilt(ctx: TestContext):
             'relative_displacement_m': row[column]-initial}
     ctx.experiment_details = {
         'purpose': 'continuous gravity inclination from horizontal to 45 degrees',
-        'fixture': 'fixed articulation root moved through tensors; drawers always free',
+        'fixture': 'locked six-axis fixture moved through tensors; drawers always free',
         'usd_pose_writes_during_experiment': False, 'external_drawer_forces': None,
         'initial_joints_m': [ctx.rows[0][f'asset.cabinet.drawer{i}.slide.position'] for i in (1, 2, 3)],
         'schedule': 'horizontal 1 s, smooth 45-degree tilt over 15 s, hold 2 s',

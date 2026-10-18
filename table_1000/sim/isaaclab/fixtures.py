@@ -1,9 +1,13 @@
 """Native six-axis fixture articulations controlled through PhysX tensors.
 
-A collision-free serial XYZ translation/XYZ rotation chain provides the six
-coordinates of a grasp. Each virtual link has 10 microgram mass and 1e-11 kg m²
-inertia; gravity is disabled. The tested body is the terminal link, avoiding a mass-ratio-sensitive external joint. Releasing opens all limits and disables all drives, leaving
-six free coordinates, without deleting joints or writing dynamic body poses.
+A collision-free serial XYZ translation chain and one spherical joint provide
+the six coordinates of a grasp. The spherical coordinates are a rotation vector
+with three orthogonal motion axes, so no orientation loses a rotational degree
+of freedom, unlike serial Euler joints. Each virtual link has 10 microgram mass
+and 1e-11 kg m² inertia; gravity is disabled. The tested body is the terminal
+link, avoiding a mass-ratio-sensitive external joint. Releasing opens all limits
+and disables all drives, leaving six free coordinates, without deleting joints
+or writing dynamic body poses.
 """
 
 import numpy as np
@@ -11,57 +15,6 @@ from scipy.spatial.transform import Rotation
 
 LINK_MASS = 1e-8
 LINK_INERTIA = 1e-11
-
-
-class RootClamp:
-    """Permanent moving clamp of an existing articulation's root.
-
-    The world joint is declared before initialization. Tensor root transforms
-    move the fixed base without adding degrees of freedom to the asset tree.
-    This fixture cannot be released during an experiment; use Grip for that.
-    """
-
-    def __init__(self, ctx, body, *, name):
-        from pxr import Gf, UsdPhysics, PhysxSchema
-        assert not ctx.initialized
-        assert body.path == body.instance.articulation_root
-        self.ctx, self.body = ctx, body
-        self.locked, self.released = True, False
-        self.position, self.quaternion = ctx.body_pose(body)
-        self.path = '/World/Fixtures/' + name
-        stage = ctx.session.stage
-        source = stage.GetPrimAtPath(body.path)
-        original = PhysxSchema.PhysxArticulationAPI(source)
-        joint = UsdPhysics.FixedJoint.Define(stage, self.path)
-        joint.CreateBody1Rel().SetTargets([body.path])
-        joint.CreateLocalPos0Attr(Gf.Vec3f(*self.position))
-        joint.CreateLocalRot0Attr(Gf.Quatf(float(self.quaternion[0]), Gf.Vec3f(*self.quaternion[1:])))
-        UsdPhysics.ArticulationRootAPI.Apply(joint.GetPrim())
-        api = PhysxSchema.PhysxArticulationAPI.Apply(joint.GetPrim())
-        api.CreateEnabledSelfCollisionsAttr(original.GetEnabledSelfCollisionsAttr().Get())
-        api.CreateSolverPositionIterationCountAttr(original.GetSolverPositionIterationCountAttr().Get())
-        api.CreateSolverVelocityIterationCountAttr(original.GetSolverVelocityIterationCountAttr().Get())
-        source.RemoveAPI(UsdPhysics.ArticulationRootAPI)
-        body.instance.fixture_root = self.path
-        self.view = None
-        ctx.fixtures.append(self)
-
-    def initialize(self):
-        from isaacsim.core.simulation_manager import SimulationManager
-        from table_1000.sim.isaaclab.asset_views import TensorView
-        self.view = TensorView(SimulationManager.get_physics_sim_view().create_articulation_view(self.path),
-                               SimulationManager.get_physics_sim_device())
-        self.indices = np.array([0], dtype=np.int32)
-        self.move()
-
-    def move(self, position=None, quaternion=None):
-        if position is not None:
-            self.position = np.asarray(position, dtype=float)
-        if quaternion is not None:
-            self.quaternion = np.asarray(quaternion, dtype=float)
-        if self.view is not None:
-            pose = np.array([[*self.position, *self.quaternion[[1, 2, 3, 0]]]], dtype=np.float32)
-            self.view.set_root_transforms(pose, self.indices)
 
 
 class Grip:
@@ -90,7 +43,7 @@ class Grip:
                            if body.instance.articulation_root else False)
         UsdGeom.Xform.Define(stage, self.path)
         previous = None
-        for i in range(6):
+        for i in range(4):
             path = f'{self.path}/link_{i}'
             link = UsdGeom.Xform.Define(stage, path)
             link.AddTranslateOp().Set(Gf.Vec3d(*self.origin))
@@ -111,35 +64,38 @@ class Grip:
                 api.CreateSolverPositionIterationCountAttr(position_iterations)
                 api.CreateSolverVelocityIterationCountAttr(velocity_iterations)
             else:
-                cls = UsdPhysics.PrismaticJoint if i <= 3 else UsdPhysics.RevoluteJoint
-                joint = cls.Define(stage, f'{self.path}/axis_{i-1}')
-                joint.CreateAxisAttr('XYZ'[(i-1) % 3])
+                joint = UsdPhysics.PrismaticJoint.Define(stage, f'{self.path}/axis_{i-1}')
+                joint.CreateAxisAttr('XYZ'[i-1])
                 joint.CreateBody0Rel().SetTargets([previous])
                 joint.CreateBody1Rel().SetTargets([path])
-                # Explicit large limits select PhysX's unwrapped revolute type.
                 joint.CreateLowerLimitAttr(-1e10)
                 joint.CreateUpperLimitAttr(1e10)
-                drive = UsdPhysics.DriveAPI.Apply(joint.GetPrim(), 'linear' if i <= 3 else 'angular')
-                factor = 1 if i <= 3 else np.pi/180
+                drive = UsdPhysics.DriveAPI.Apply(joint.GetPrim(), 'linear')
                 drive.CreateTypeAttr('force')
-                drive.CreateStiffnessAttr(float(self.stiffness[i-1]*factor))
-                drive.CreateDampingAttr(float(self.damping[i-1]*factor))
-                drive.CreateMaxForceAttr(linear_max_force if i <= 3 else angular_max_force)
-
+                drive.CreateStiffnessAttr(float(self.stiffness[i-1]))
+                drive.CreateDampingAttr(float(self.damping[i-1]))
+                drive.CreateMaxForceAttr(linear_max_force)
             previous = path
         # Put the tested body in the reduced-coordinate tree: an external
         # fixed joint to a near-massless proxy would be ill-conditioned.
-        joint = UsdPhysics.RevoluteJoint.Define(stage, self.path+'/axis_5')
-        joint.CreateAxisAttr('Z')
+        joint = UsdPhysics.Joint.Define(stage, self.path+'/rotation')
         joint.CreateBody0Rel().SetTargets([previous])
         joint.CreateBody1Rel().SetTargets([body.path])
-        joint.CreateLowerLimitAttr(-1e10)
-        joint.CreateUpperLimitAttr(1e10)
-        drive = UsdPhysics.DriveAPI.Apply(joint.GetPrim(), 'angular')
-        drive.CreateTypeAttr('force')
-        drive.CreateStiffnessAttr(float(angular_stiffness*np.pi/180))
-        drive.CreateDampingAttr(float(angular_damping*np.pi/180))
-        drive.CreateMaxForceAttr(angular_max_force)
+        for axis in ('transX', 'transY', 'transZ'):
+            limit = UsdPhysics.LimitAPI.Apply(joint.GetPrim(), axis)
+            limit.CreateLowAttr(1.)
+            limit.CreateHighAttr(-1.)
+        for axis in ('rotX', 'rotY', 'rotZ'):
+            # PhysX accepts spherical limits only within [-pi, pi]; authoring
+            # them selects the limited motion needed for a tensor lock.
+            limit = UsdPhysics.LimitAPI.Apply(joint.GetPrim(), axis)
+            limit.CreateLowAttr(-180.)
+            limit.CreateHighAttr(180.)
+            drive = UsdPhysics.DriveAPI.Apply(joint.GetPrim(), axis)
+            drive.CreateTypeAttr('force')
+            drive.CreateStiffnessAttr(float(angular_stiffness*np.pi/180))
+            drive.CreateDampingAttr(float(angular_damping*np.pi/180))
+            drive.CreateMaxForceAttr(angular_max_force)
         # Both frames meet at the body's declared initial origin.
         body_pos, body_q = ctx.body_pose(body)
         native_pos, native_q = ctx.usd_body_pose(body)
@@ -167,10 +123,17 @@ class Grip:
                                SimulationManager.get_physics_sim_device())
         self.indices = np.array([0], dtype=np.int32)
         names = self.view.shared_metatype.dof_names
-        self.order = [names.index("axis_"+str(i)) for i in range(6)]
+        self.order = [names.index(n) for n in ('axis_0', 'axis_1', 'axis_2', 'rotation:0', 'rotation:1', 'rotation:2')]
         if not hasattr(self, 'free_limits'):
             self.free_limits = self.view.get_dof_limits().copy()
         self.apply()
+        if self.locked and not self.released:
+            # Start at the declared lock. Recovering a large initial limit
+            # violation converges to a different orientation on CPU PhysX.
+            positions = self.view.get_dof_positions()
+            positions[0, self.order] = self.target
+            self.view.set_dof_positions(positions, self.indices)
+            self.view.set_dof_velocities(np.zeros_like(positions), self.indices)
 
     def apply(self):
         if self.view is None:
@@ -190,26 +153,25 @@ class Grip:
         self.view.set_dof_limits(limits, self.indices)
 
     def move(self, position=None, quaternion=None):
-        previous = self.target.copy()
         if position is not None:
             self.position = np.asarray(position, dtype=float)
         if quaternion is not None:
             self.quaternion = np.asarray(quaternion, dtype=float)
         self.target[:3] = self.basis.inv().apply(self.position-self.origin)
-        relative = self.basis.inv()*Rotation.from_quat(self.quaternion[[1, 2, 3, 0]])
-        angles = relative.as_euler('XYZ')
-        alternate = np.array([angles[0]+np.pi, np.pi-angles[1], angles[2]+np.pi])
-        candidates = [v+2*np.pi*np.round((self.target[3:]-v)/(2*np.pi)) for v in (angles, alternate)]
-        self.target[3:] = min(candidates, key=lambda v: np.linalg.norm(v-self.target[3:]))
+        # Spherical coordinates are the rotation vector in the parent frame.
+        rotation = self.basis.inv()*Rotation.from_quat(self.quaternion[[1, 2, 3, 0]])
+        self.target[3:] = rotation.as_rotvec()
         self.apply()
         if self.view is not None and self.locked and not self.released:
-            # A moving clamp prescribes fixture coordinates AND velocities.
-            # Moving only the hard limits makes the solver infer motion from
-            # constraint error and injects spurious acceleration into drawers.
+            # A moving clamp writes fixture coordinates, carrying the whole
+            # tree rigidly. Moving only the limits makes the solver infer motion
+            # from constraint error; a written velocity is removed by the equal
+            # limits within the step. Either injects spurious impulses into
+            # drawers, so the fixture coordinates are left at rest.
             positions = self.view.get_dof_positions()
             velocities = self.view.get_dof_velocities()
             positions[0, self.order] = self.target
-            velocities[0, self.order] = (self.target - previous) / self.ctx.dt
+            velocities[0, self.order] = 0
             self.view.set_dof_positions(positions, self.indices)
             self.view.set_dof_velocities(velocities, self.indices)
 

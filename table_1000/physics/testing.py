@@ -206,13 +206,6 @@ class TestContext:
         finally:
             grip.release()
 
-    def clamp_root(self, body):
-        """Permanently clamp an articulation root, allowing tensor pose targets."""
-        from table_1000.sim.isaaclab.fixtures import RootClamp
-        clamp = RootClamp(self, body, name='fixture_'+str(self.fixture_counter))
-        self.fixture_counter += 1
-        return clamp
-
     @contextmanager
     def spring(self, body, *, position, rotation=(1,0,0,0), linear_stiffness, linear_damping,
                angular_stiffness, angular_damping):
