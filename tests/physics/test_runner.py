@@ -38,7 +38,7 @@ class CaseResultsTests(unittest.TestCase):
             with patch('table_1000.physics.test.benchmark', side_effect=AssertionError('benchmark failed')), \
                  patch('table_1000.physics.test.run_video') as render:
                 with self.assertRaisesRegex(AssertionError, 'benchmark failed'):
-                    run_case(root / 'object.usda', 'pull', None, output, None, 0, {})
+                    run_case(root / 'object.usda', 'pull', None, output, None, 0, {}, standard=True)
                 render.assert_not_called()
             self.assertFalse(video.exists())
             self.assertFalse((case / 'frames').exists())
@@ -47,3 +47,12 @@ class CaseResultsTests(unittest.TestCase):
             self.assertIn('benchmark failed', result['error'])
             self.assertEqual(other.read_bytes(), b'other result')
             self.assertEqual(source.read_text(), 'TESTS = {}\n')
+
+    def test_default_run_skips_the_standard_benchmark(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / 'physics_test'
+            with patch('table_1000.physics.test.benchmark') as measure, \
+                 patch('table_1000.physics.test.run_video', return_value={}) as render:
+                run_case(Path(temporary) / 'object.usda', 'pull', None, output, None, 0, {})
+            measure.assert_not_called()
+            self.assertIsNone(render.call_args.args[6])

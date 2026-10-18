@@ -4,7 +4,7 @@
 
 资产目录中的 `physics_test.py` 验证当前资产，允许加载该资产的多个实例。不同资产的组合测试不属于本阶段验收。测试脚本随 Git 保存，调用 `table_1000.physics.testing` 的公共工具及官方仿真 API；不再定义测试 JSON 语言。
 
-验收关注两项：视频及选定曲线是否符合预期，以及在明确条件下测得的实时因子 RTF。自动执行完成不代表物理表现已经通过人工验收。
+验收包括两部分：人工检查每项测试的视频和曲线是否符合实验预期（见[人工验收](#人工验收)），以及在明确条件下测得的实时因子 RTF。
 
 ## 统一入口
 
@@ -43,7 +43,7 @@ TESTS = {"pull": pull}
 `--num-envs N` 在同一场景中并行运行 N 份相同的实验，默认 CPU 为 1、GPU 为 4。各环境接收相同的动作、夹持轨迹和限值，夹持按各自环境的状态反馈；记录、曲线和视频取第一个环境，测试脚本无需修改。接触临界或限力切换等敏感过程中，各环境可能分化成不同的结果，`result.json` 的 `environments` 记录其他环境与第一个环境的终态最大位置差。GPU 上第一个环境的结果也可能随环境数略有不同，比较时保持相同的环境数。
 
 ```bash
-uv run python scripts/assets/physics_test.py assets/objects/pen/000002 --script asset_sources/objects/pen/000002/physics_test.py --physics gpu --gpu 0 --output outputs/physics/pen-gpu
+uv run python scripts/assets/physics_test.py assets/objects/pen/000002 --script asset_sources/objects/pen/000002/physics_test.py --physics gpu --gpu 0
 ```
 
 每个测试开始时，仅加载默认实例 `ctx.asset`，名称为 `asset`，恢复资产保存的初态，时间为零。不同测试以及计时重复之间不残留上一次的实例、约束或行为状态。
@@ -120,22 +120,35 @@ Python 接口统一使用 SI 单位、弧度和 wxyz 四元数。默认重力为
 
 每个测试只生成一张 `plots.jpg`，按选择顺序上下排列；标签使用列名，单位由观测定义确定，长度可显示为 m 或 mm，CSV 保持 SI。不选择曲线时不出图。已有 CSV 可以独立重画，不重新仿真。
 
-默认写入资产目录下的 `physics_test/`，与 `preview/` 并列；可覆盖输出目录。测试 `pull` 的结果为：
+结果写入资产目录下的 `physics_test/cpu/` 或 `physics_test/gpu/`，按物理后端分开，与 `preview/` 并列；`--output` 可改为其他目录。测试 `pull` 的结果为：
 
 ```text
 physics_test/
-  pull.mp4
-  pull/
-    trace.csv
-    plots.jpg
-    result.json
+  cpu/
+    pull.mp4          完整视频
+    pull/
+      plots.jpg       关注曲线
+      result.json     执行状态、实测量、条件与性能
+      trace.csv       每个物理步的全部记录列
+  gpu/
+    ...
 ```
 
-重跑仅清理对应测试的结果。报告包含测试名、资产与软件版本、生效物理/渲染条件、实例数、自动检查及性能数据。`execution_status` 为 `completed` 或 `failed`；`review_status` 初始为 `pending`，人工确认后为 `accepted` 或 `needs_changes`。脚本可使用普通断言检查明确要求，不需要另建断言语言。
+重跑仅清理所选测试的结果。`result.json` 包含测试名、资产与软件版本、生效物理/渲染条件、环境数、实测量及性能数据。其中 `execution_status` 由执行器写入：测试函数正常结束为 `completed`；抛出异常（包括脚本中的断言失败）为 `failed`，此时 `error` 记录异常信息，不生成视频和曲线。脚本用普通断言检查明确要求，不需要另建断言语言。
 
-测试把测得的关键物理量写入字典 `ctx.experiment_details`（SI 单位，键名带单位后缀，如 `peak_pull_N`），结果原样保存在 `result.json` 的 `experiment`。验收完成后，将这些量汇总到资产 README 的物理实测表，见 [README 与缩略图](README.md#readme-与缩略图)。
+测试把测得的关键物理量写入字典 `ctx.experiment_details`（SI 单位，键名带单位后缀，如 `peak_pull_N`），结果原样保存在 `result.json` 的 `experiment`。
 
-人工查看完整视频与关注曲线，判断是否符合实验预期和物理常识。观察到的限位、接触误差、振荡及步长敏感性如实记录；数值稳定不等同于真实材料参数已标定。
+### 人工验收
+
+CPU 与 GPU 的结果分别检查，每项测试看以下文件：
+
+| 文件 | 检查内容 |
+| --- | --- |
+| `<test>.mp4` | 完整过程是否符合实验意图和物理常识：物体是否按预期运动、停住或分离，有无穿透、抖动、飞出等异常 |
+| `<test>/plots.jpg` | 关注曲线的趋势、峰值和稳定段是否与视频一致，有无突跳或振荡 |
+| `<test>/result.json` | `execution_status` 为 `completed`；`experiment` 中的实测量是否合理；`conditions` 中的求解器、环境数与预期一致；`performance` 中的 RTF |
+
+`trace.csv` 仅在需要细查某一时刻或重画曲线时使用。观察到的限位、接触误差、振荡及步长敏感性如实记录；数值稳定不等于材料参数已经标定。检查通过后，把实测量和性能更新到资产 README 的[物理实测](README.md#readme-与缩略图)一节；发现问题时修改资产或测试并重跑受影响的测试。
 
 ## RTF 基准
 
@@ -156,14 +169,18 @@ physics_test/
 
 GPU 对照使用场景最小位置/速度迭代 64/16，TGS 开启逐次施加外力；GPU PhysX 不支持 CCD，因此关闭并披露。笔的 GPU 跌落实验单独使用 PGS，关闭不受 PGS 支持的逐次施加外力：TGS 在钢珠的 maximal-coordinate 关节撞击时出现异常能量增长。该选择保持资产材料、关节参数、4 ms 步长和验收阈值不变，报告记录实际求解器；它不属于与 CPU 同求解设置的性能比较。
 
-必须分别报告：
+默认每项测试只运行一遍带视频的正式实验，报告两项 RTF，用于确认速度没有明显异常：
 
-1. **无渲染 RTF**：包含物理推进、资产行为、测试动作、状态读取与内存采样；关闭相机采集和渲染，不以单独 `World.step` 时间冒充完整测试成本。先在独立场景执行一次完整实验（至少 1 s）作为预热，销毁后用全新场景测量。每轮累计至少 10 s 仿真时间，测量 3 轮并报告各轮与中位数。短实验以独立复位重复累计，复位耗时单列且不计入积分区间，不把实验尾部任意延长为静止计时。
-2. **含视频端到端 RTF**：对正式实验从首帧采集开始到最后视频/CSV 写入完成计时，包含动作、行为、采样、渲染和编码；同时报告仿真时长和墙钟时长。采用同一测试输入独立运行，核对物理结果的一致性。
-多环境时，RTF 按单个环境的仿真时间计算，另报告所有环境合计的 `environment_seconds_per_second`（RTF × 环境数）。两种 RTF 的测量区间内同时采样资源占用：本进程 CPU 占用（核数）、整机 CPU 利用率、所用显卡的 GPU 利用率和显存。GPU 数值为整卡数据，包含同卡其他进程；报告同时记录该卡上的计算进程数（含本进程）。
+- **含视频 RTF**：从首帧采集开始到视频和 CSV 写完，包含动作、采样、渲染和编码。
+- **物理推进 RTF**：同一遍运行中物理步与采样的耗时，不含相机采集。渲染与物理共用机器资源，这只是无渲染速度的估计。
 
-3. **准备成本**：进程启动、资产加载/初始化、首次渲染预热及复位单列，不混入稳态无渲染 RTF；端到端测量前的预热必须披露。
+`--benchmark` 执行标准测量，在资产 README 中记录性能时使用。它在正式实验之前另外测量：
 
-计时采用单调墙钟时钟。更细步长或不同硬件结果作为独立对照，不外推标准 RTF；不能从带渲染耗时中简单减去渲染耗时得到无渲染结果。
+1. **无渲染 RTF**：包含物理推进、资产行为、测试动作、状态读取与内存采样；关闭相机采集和渲染，不以单独 `World.step` 时间冒充完整测试成本。先在独立场景执行一次完整实验（至少 1 s）作为预热，销毁后用全新场景测量。每轮累计至少 10 s 仿真时间，测量 3 轮并报告各轮与中位数。短实验以独立复位重复累计，复位耗时单列且不计入积分区间，不把实验尾部任意延长为静止计时。无渲染运行与正式实验的终态差也写入报告，用于核对两次运行的一致性。
+2. **准备成本**：进程启动、资产加载/初始化、首次渲染预热及复位单列，不混入稳态无渲染 RTF。
+
+多环境时，RTF 按单个环境的仿真时间计算，另报告所有环境合计的 `environment_seconds_per_second`（RTF × 环境数）。测量区间内同时采样资源占用：本进程 CPU 占用（核数）、整机 CPU 利用率、所用显卡的 GPU 利用率和显存。GPU 数值为整卡数据，包含同卡其他进程；报告同时记录该卡上的计算进程数（含本进程）。
+
+计时采用单调墙钟时钟。更细步长或不同硬件结果作为独立对照，不外推标准 RTF；标准无渲染 RTF 必须由 `--benchmark` 单独测量，不能从带渲染耗时中减去渲染耗时得到。
 
 参考：[官方独立 Python 工作流](https://docs.isaacsim.omniverse.nvidia.com/5.1.0/introduction/workflows.html)、[Isaac Lab 刚体示例](https://isaac-sim.github.io/IsaacLab/main/source/tutorials/01_assets/run_rigid_object.html)。

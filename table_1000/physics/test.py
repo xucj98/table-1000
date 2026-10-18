@@ -187,8 +187,14 @@ def run_video(asset,name,test,output,app,startup,rtf,gpu,physics="cpu",num_envs=
         plots(ctx.rows,ctx.plot_columns,directory,ctx.units)
         # Fresh independent input executions, not subtraction of render costs.
         errors=[max(abs(float(row[key])-float(ctx.rows[-1][key])) for key in row.keys() & ctx.rows[-1].keys() if key!='time')
-                for round in rtf['rounds'] for row in round['final_states']]
-        result={'test':name,'execution_status':'completed','review_status':'pending','asset':str(asset),
+                for round in rtf['rounds'] for row in round['final_states']] if rtf else []
+        if rtf is None:
+            # One pass: physics steps and sampling of this run, camera capture excluded.
+            rtf={'method':'physics steps and sampling within the video run, camera capture excluded; use --benchmark for the standard measurement',
+                 'simulated_seconds':ctx.session.time,'wall_seconds':ctx.integrating_seconds,
+                 'RTF':ctx.session.time/ctx.integrating_seconds,'environments':num_envs,
+                 'environment_seconds_per_second':num_envs*ctx.session.time/ctx.integrating_seconds}
+        result={'test':name,'execution_status':'completed','asset':str(asset),
             'conditions':{**conditions(ctx),'gpu':gpu},
             'environments':{'count':num_envs,'recorded_and_rendered':'environment 0; replicas receive identical inputs and are hidden',
                 'spacing_m':float(ctx.session.offsets[1][1]) if num_envs>1 else None,
@@ -199,7 +205,7 @@ def run_video(asset,name,test,output,app,startup,rtf,gpu,physics="cpu",num_envs=
                      'environments':num_envs,'environment_seconds_per_second':num_envs*ctx.session.time/wall,
                      'utilization':video_utilization},
                  'preparation':{'process_startup_seconds':startup,'construction_seconds':construction,'initialization_render_warmup_reset_seconds':ctx.preparation_seconds},
-                 'independent_no_render_vs_video_final_max_scalar_error':max(errors)},
+                 'independent_no_render_vs_video_final_max_scalar_error':max(errors) if errors else None},
             'reaction_forces':'contact reaction forces not sampled; grip columns record the force each grip applies'}
         if getattr(ctx, 'experiment_details', None):
             result['experiment'] = ctx.experiment_details
@@ -215,17 +221,17 @@ def run_video(asset,name,test,output,app,startup,rtf,gpu,physics="cpu",num_envs=
         ctx.close()
 
 
-def run_case(asset,name,test,output,app,startup,gpu,physics="cpu",num_envs=1,utilization=None):
+def run_case(asset,name,test,output,app,startup,gpu,physics="cpu",num_envs=1,utilization=None,standard=False):
     directory=output/name
     if directory.exists():shutil.rmtree(directory)
     (output/(name+'.mp4')).unlink(missing_ok=True)
     directory.mkdir(parents=True)
     try:
-        rtf=benchmark(asset,name,test,app,physics=physics,num_envs=num_envs,utilization=utilization)
+        rtf=benchmark(asset,name,test,app,physics=physics,num_envs=num_envs,utilization=utilization) if standard else None
         return run_video(asset,name,test,output,app,startup,rtf,gpu,physics=physics,num_envs=num_envs,utilization=utilization)
     except Exception:
         (directory/'result.json').write_text(json.dumps({'test':name,'execution_status':'failed',
-            'review_status':'pending','error':traceback.format_exc()},indent=2)+'\n')
+            'error':traceback.format_exc()},indent=2)+'\n')
         raise
 
 
@@ -233,11 +239,12 @@ def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('asset',type=Path,help='asset directory or USD entry')
     parser.add_argument('--script',type=Path)
-    parser.add_argument('--output',type=Path)
+    parser.add_argument('--output',type=Path,help='results directory; default physics_test/<physics> beside the asset')
     parser.add_argument('--tests',nargs='+')
     parser.add_argument('--gpu',type=int,default=0)
     parser.add_argument('--physics',choices=('cpu','gpu'),default='cpu',help='physics backend; --gpu selects the physical device')
     parser.add_argument('--num-envs',type=int,help='parallel copies of each experiment; default 1 on CPU, 4 on GPU')
+    parser.add_argument('--benchmark',action='store_true',help='standard RTF measurement: warmup and three timed rounds before the video run')
     parser.add_argument('--plots-only',action='store_true')
     args=parser.parse_args(argv)
     num_envs=args.num_envs or (4 if args.physics=='gpu' else 1)
@@ -245,7 +252,8 @@ def main(argv=None):
     asset=args.asset.resolve()
     if asset.is_dir():asset=asset/('object.usda' if (asset/'object.usda').exists() else 'object.usdz')
     script=args.script or asset.parent/'physics_test.py'
-    output=(args.output or asset.parent/'physics_test').resolve();output.mkdir(parents=True,exist_ok=True)
+    # Each backend keeps its own results: physics_test/cpu or physics_test/gpu.
+    output=(args.output or asset.parent/'physics_test'/args.physics).resolve();output.mkdir(parents=True,exist_ok=True)
     if args.plots_only:
         tests=load_tests(script)
         if args.tests:tests={name:tests[name] for name in args.tests}
@@ -282,7 +290,7 @@ def main(argv=None):
         try:
             with threadpool_limits(limits=1, user_api='blas'):
                 for name,test in tests.items():
-                    run_case(asset,name,test,output,app,startup,gpu,physics=args.physics,num_envs=num_envs,utilization=utilization)
+                    run_case(asset,name,test,output,app,startup,gpu,physics=args.physics,num_envs=num_envs,utilization=utilization,standard=args.benchmark)
         finally:
             utilization.close()
     except BaseException:

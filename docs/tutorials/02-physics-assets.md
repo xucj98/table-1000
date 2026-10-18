@@ -42,15 +42,15 @@ uv run python scripts/assets/build_physics.py --assets pen/000002 cabinet/000000
 
 ## 3. 运行测试并验收
 
-测试使用 Isaac Lab，`--physics cpu|gpu` 选择物理后端（默认 CPU），`--gpu` 选择物理显卡。GPU 后端默认并行运行 4 个相同的环境，记录和视频取第一个环境；`--num-envs` 可改变环境数。分别运行笔帽的 CPU、GPU 验收，并使用不同输出目录：
+测试使用 Isaac Lab，`--physics cpu|gpu` 选择物理后端（默认 CPU），`--gpu` 选择物理显卡。GPU 后端默认并行运行 4 个相同的环境，记录和视频取第一个环境；`--num-envs` 可改变环境数。分别运行笔帽的 CPU、GPU 验收：
 
 ```bash
 uv run python scripts/assets/physics_test.py assets/objects/pen/000002 \
   --script asset_sources/objects/pen/000002/physics_test.py \
-  --physics cpu --gpu 0 --output outputs/physics/pen-cpu
+  --physics cpu --gpu 0
 uv run python scripts/assets/physics_test.py assets/objects/pen/000002 \
   --script asset_sources/objects/pen/000002/physics_test.py \
-  --physics gpu --gpu 0 --output outputs/physics/pen-gpu
+  --physics gpu --gpu 0
 ```
 
 使用 `--tests` 可选择测试名；省略时运行全部四项。省略 `--script` 时使用资产目录中的测试快照；修改几何后需重新执行建模与预览；修改 `physics.py` 或行为后需重新构建物理资产。
@@ -67,35 +67,42 @@ uv run python scripts/assets/physics_test.py assets/objects/pen/000002 \
 ```bash
 uv run python scripts/assets/physics_test.py assets/objects/cabinet/000000 \
   --script asset_sources/objects/cabinet/000000/physics_test.py \
-  --physics cpu --gpu 0 --output outputs/physics/cabinet-cpu
+  --physics cpu --gpu 0
 uv run python scripts/assets/physics_test.py assets/objects/cabinet/000000 \
   --script asset_sources/objects/cabinet/000000/physics_test.py \
-  --physics gpu --gpu 0 --output outputs/physics/cabinet-gpu
+  --physics gpu --gpu 0
 ```
 
 测试覆盖三个抽屉拉动后撤力、上下限位持续受力、到限位后继续拉动整个盒子，以及夹持外壳从水平连续下倾至 45° 的重力滑动（`gravity_tilt`）。记录三个抽屉达到 0.5 mm 相对位移时的实际角度；本例使用原生关节轴静/动摩擦力 0.50/0.35 N，静摩擦对应的解析起滑角约 18.6°。实测 CPU 约 18.9°、GPU 约 15.8–16.6° 起滑，满足至少 15° 的设计目标；GPU 偏早约 2.5°。
 
 静止锁定 `ctx.fixed` 与夹持 `ctx.grip` 在初始化前声明，运行中移动、驱动与释放，不改变资产材料、质量、惯量及原有关节参数；夹持的增益写入 `result.json` 的 `grips`。GPU 使用更高求解迭代数，关闭不支持的 CCD，笔跌落单独使用 PGS；实际配置记录在 `result.json`，详见[测试规范](../designs/asset-pipeline/physics-tests.md)。
 
-结果默认写入资产的 `physics_test/`，与 `preview/` 并列。例如：
+结果按后端写入资产的 `physics_test/cpu/` 和 `physics_test/gpu/`，与 `preview/` 并列。例如：
 
 ```text
-physics_test/
-  pull_comparison.mp4
-  pull_comparison/
-    trace.csv
-    plots.jpg
-    result.json
+assets/objects/pen/000002/physics_test/
+  cpu/
+    pull_comparison.mp4
+    pull_comparison/
+      plots.jpg
+      result.json
+      trace.csv
+  gpu/
+    ...
 ```
 
 `--output DIR` 可指定其他输出目录。重跑会先清理所选测试的旧结果，其他测试保留。
 
-**验收分两步：** 查看完整视频和关注曲线，判断是否符合实验预期；查看 `result.json` 中的执行状态、实际条件及无渲染/含视频两种 RTF。标准条件与计时方法见 [RTF 基准](../designs/asset-pipeline/physics-tests.md#rtf-基准)。
+**验收：** CPU 与 GPU 的结果分别检查，笔 4 项、抽屉柜 6 项，每项看三个文件：
 
-CPU 与 GPU 各自执行笔 4 项、抽屉柜 6 项检查，自动执行完成不代表人工验收通过：`execution_status=completed` 时，`review_status` 仍为 `pending`，需审查完整视频与曲线。无渲染性能先用独立场景执行完整实验预热，再测三轮、每轮累计至少 10 s；含视频 RTF 独立测量，并在报告中核对两种运行的终态差异。RTF 为仿真时间除以实际耗时，1 表示实时；小场景的 GPU 吞吐不一定高于 CPU，不同求解配置不能直接作为同条件加速比。
+1. `<测试名>.mp4`：完整视频，过程是否符合上表的实验意图；
+2. `<测试名>/plots.jpg`：关注曲线，趋势和峰值是否与视频一致；
+3. `<测试名>/result.json`：`execution_status` 应为 `completed`（测试中断言失败或出错时为 `failed`，并在 `error` 中给出原因），再看 `experiment` 中的实测量和 `performance` 中的 RTF。
+
+细则见[人工验收](../designs/asset-pipeline/physics-tests.md#人工验收)。默认每项测试只运行一遍，`result.json` 给出含视频 RTF 和同一遍中的物理推进 RTF，用来确认速度没有明显异常。需要在 README 记录性能时，加 `--benchmark` 执行标准测量（预热后测三轮、每轮累计至少 10 s），标准条件见 [RTF 基准](../designs/asset-pipeline/physics-tests.md#rtf-基准)。RTF 为仿真时间除以实际耗时，1 表示实时；小场景的 GPU 吞吐不一定高于 CPU，不同求解配置不能直接作为同条件加速比。
 
 笔帽采用未标定的钢珠弹簧代理，每颗半径 0.8 mm 的球使用 1 g 质量。主要通过视频验收紧松帽拔出、分段施力盖合和重力翻转，结合力与位置曲线判断过程。载荷和动作速度应根据实际响应调整，保留上述测试意图；高速跌落允许短时穿透，但应检查后续能否稳定恢复，不能据此推断真实脱帽高度。抽屉的质量与摩擦参数同样未经实物标定。
 
-验收后，把 `result.json` 中 `experiment` 记录的关键物理量（本例的拔帽力、合帽力和抽屉起滑角），以及 `performance` 中的 RTF 和资源占用，更新到资产 README 的“物理实测”一节，见 [README 规范](../designs/asset-pipeline/README.md#readme-与缩略图)。
+验收后，把 `result.json` 中 `experiment` 记录的关键物理量（本例的拔帽力、合帽力和抽屉起滑角），以及 `--benchmark` 测得的 RTF 和资源占用，更新到资产 README 的“物理实测”一节，见 [README 规范](../designs/asset-pipeline/README.md#readme-与缩略图)。
 
 有问题时修改对应源码，重新构建并运行受影响的测试。按[资产布局](../designs/asset-pipeline/README.md#资产布局)保存源码和生成物。
