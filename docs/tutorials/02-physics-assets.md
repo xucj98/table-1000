@@ -32,7 +32,7 @@ uv run python scripts/assets/physics_test.py --assets pen/000002 cabinet/000000 
 ```
 
 - `--physics` 必填，列出要运行的物理后端：`isaac-cpu`、`isaac-gpu`。
-- 每个资产的每个后端单独运行，分到 `--gpus` 列出的显卡上并行，每张卡同时只跑一个。本例 4 组在三张卡上约 9 分钟。
+- 每个资产的每个后端单独运行，分到 `--gpus` 列出的显卡上并行，每张卡同时只跑一个。本例 4 组在三张卡上约 5 分钟。
 - `--tests close pull_comparison` 只运行指定的测试。
 - `--scripts asset_sources/objects` 使用源码目录中正在修改的测试，默认用构建时复制的快照。
 - GPU 默认同时模拟 4 个相同的环境，结果取第一个环境；`--num-envs` 可修改。
@@ -53,8 +53,7 @@ uv run python scripts/assets/physics_test.py --assets pen/000002 cabinet/000000 
 
 | 测试 | 内容 | 关键指标（CPU / GPU） |
 | --- | --- | --- |
-| `pull_release_drawer1..3` | 逐渐拉开一个抽屉后松手 | 松手后由摩擦减速停下 |
-| `travel_stops` | 在全开和全关两端持续推拉 | 停在限位，不越界 |
+| `drawer_slide` | 固定外壳，逐渐拉开第一个抽屉后松手，再以 2 N 推拉到全开和全关 | 松手后立即被摩擦停住；停在两端限位（0–173 mm），不越界 |
 | `pull_cabinet` | 盒子靠橡胶脚垫放在地面上，拉力逐渐加到 8 N 拉第三个抽屉 | 抽屉拉到底（0.173 m）后，盒子在地面上被拉动 15.3 / 15.9 cm |
 | `gravity_tilt` | 夹住外壳，从水平慢慢前倾到 45° | 抽屉起滑角 18.9° / 15.8–16.6°（解析值约 18.6°，要求不低于 15°） |
 
