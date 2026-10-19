@@ -5,22 +5,21 @@
 The chosen episodes of all the given files (one scene) are split over the GPUs,
 one process at a time on each (logs in ``outputs/scenes/<scene>/render/``); at
 the end the ``preview`` section of ``assets/scenes/<scene>/summary.json`` lists
-what is rendered. Per episode ``<output>/<demo>/``, by default in the scene's preview directory
-``assets/scenes/<scene>/preview/``:
+what is rendered. Per episode, in the scene's directory ``assets/scenes/<scene>/`` (or ``--output``):
 
-- ``<view>.mp4`` for each fixed view of the scene (``VIEWS``, or ``--views``), captioned with the
-  time and the subtask, one frame per control step (25 fps, 1x);
-- ``frames/<camera>/%05d.jpg``: the robot cameras' images before each step
+- ``<demo>.mp4``: the fixed views of the scene (``VIEWS``, or ``--views``) side by side, captioned
+  with the time and the subtask, one frame per control step (25 fps, 1x);
+- ``demos/<demo>/frames/<camera>/%05d.jpg``: the robot cameras' images before each step
   (the observation the step's action answers), uncaptioned, for
   ``scripts/scenes/to_lerobot.py``;
-- ``sheet.jpg``: twelve frames of the first view spread over the episode with
+- ``demos/<demo>/sheet.jpg``: twelve frames of the first view spread over the episode with
   their subtasks, for reviewing the trajectory at a glance.
 
 Every frame restores the recorded state of that step; nothing is simulated.
 ``--count`` picks that many episodes at random (``--seed``); the default is all.
 ``--sheets`` renders only the twelve frames of each review sheet (no videos, no
 robot cameras), enough to review every episode of a batch; it replaces only
-``sheet.jpg`` and keeps videos and frames from the same trajectory. Products
+``sheet.jpg`` and keeps the video and frames from the same trajectory. Products
 from a different trajectory (or without provenance) are regenerated.
 """
 
@@ -56,7 +55,7 @@ def sheet(frames, captions, path):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('trajectories', type=Path, nargs='+', help='trajectory files of one scene')
-    parser.add_argument('--output', type=Path, help='default: assets/scenes/<scene>/preview')
+    parser.add_argument('--output', type=Path, help='default: assets/scenes/<scene>')
     parser.add_argument('--demos', nargs='*')
     parser.add_argument('--count', type=int)
     parser.add_argument('--seed', type=int, default=0)
@@ -96,7 +95,7 @@ def main(argv=None):
         available = [available[i] for i in sorted(picked)]
     if not available:
         parser.error('no episodes to render')
-    output = (args.output or args.assets / 'scenes' / scene / 'preview').resolve()
+    output = (args.output or args.assets / 'scenes' / scene).resolve()
     logs = args.root.resolve() / 'outputs' / 'scenes' / scene / 'render'
     jobs = []
     for index in range(min(len(args.gpus), len(available))):
@@ -126,7 +125,7 @@ def worker(args):
         import numpy as np
         from table_1000.robots import load_spec
         from table_1000.scenes import load
-        from table_1000.scenes.recordings import begin_render, fingerprint, write_render
+        from table_1000.scenes.recordings import begin_render, demo_dir, fingerprint, video_path, write_render
         from table_1000.sim import CONTROL_HZ
         from table_1000.sim.isaaclab import render, replay
         from table_1000.sim.isaaclab.env import RobotEnv
@@ -136,7 +135,7 @@ def worker(args):
         meta = replay.env_args(file)
         scene = load(meta['scene'], 'scene', args.root)
         spec = load_spec(meta['robot'], args.root)
-        output = (args.output or args.assets / 'scenes' / meta['scene'] / 'preview').resolve()
+        output = (args.output or args.assets / 'scenes' / meta['scene']).resolve()
         names = args.demos or list(episodes)
         cameras = {name: camera for name, camera in spec.cameras.items() if not args.sheets and (
             (args.cameras is None and camera.sensor.kind == 'rgb') or name in (args.cameras or ()))}
@@ -145,8 +144,8 @@ def worker(args):
         for name in names:
             started = time.perf_counter()
             episode = episodes[name]
-            directory = output / name
-            record = begin_render(directory, fingerprint(episode.group), sheets=args.sheets)
+            directory = demo_dir(output, name)
+            record = begin_render(output, name, fingerprint(episode.group), sheets=args.sheets)
             videos = Video(env, list(views), directory / 'views', CONTROL_HZ)
             frames = Video(env, list(cameras), directory / 'frames', CONTROL_HZ)
             picks = np.linspace(0, episode.length, SHEET[0] * SHEET[1]).round().astype(int)
@@ -163,13 +162,13 @@ def worker(args):
             if args.sheets:
                 shots = [first / f'{i:05d}.jpg' for i in range(len(picks))]
             else:
-                videos.encode(directory)
+                videos.encode_side_by_side(video_path(output, name))
                 shots = [first / f'{t:05d}.jpg' for t in picks]
             sheet(shots, [f't={t / CONTROL_HZ:.1f}s {episode.subtask(t) or ""}' for t in picks], directory / 'sheet.jpg')
             shutil.rmtree(directory / 'views')
             record['sheet'] = True
             if not args.sheets:
-                record.update(cameras=list(cameras), videos=[f'{view}.mp4' for view in views])
+                record.update(cameras=list(cameras), views=list(views))
             write_render(directory, record)
             print(name, episode.length, f'{time.perf_counter() - started:.0f} s', flush=True)
         env.close()

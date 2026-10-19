@@ -12,13 +12,14 @@
 
 | 位置 | 内容 | Git |
 | --- | --- | --- |
-| `asset_sources/scenes/<scene>/` | `scene.py`（场景与随机初始化）、`expert.py`（专家程序） | 是 |
+| `asset_sources/scenes/<scene>/` | `scene.py`（场景与随机初始化）、`expert.py`（专家程序）、`thumbnail.jpg`（seed 0 初态的头部相机图像，宽 480，约 20 KB） | 是 |
 | `table_1000/scenes/` | 场景加载、资产几何（`geometry.py`）、初始化接口（`layout.py`）、初态检查（`initial.py`） | 是 |
 | `table_1000/experts/` | 专家上下文（`context.py`）、运动求解器（`solver.py`）、抓取几何（`grasps.py`）、批量生成（`generate.py`） | 是 |
 | `table_1000/sim/isaaclab/` | 环境（物体接入）、录制（`recording.py`）、按状态重放（`replay.py`） | 是 |
 | `scripts/scenes/` | `check_scene`、`generate`、`render`、`to_lerobot` | 是 |
-| `assets/scenes/<scene>/summary.json` | 验收入口：`initial`（初态检查）、`generation.<后端>`（轨迹位置、提交、成功率、失败分布、意外接触、耗时）、`preview`（已渲染的轨迹）；各脚本更新对应部分，重新生成同时失效旧 preview 统计 | 否 |
-| `assets/scenes/<scene>/preview/` | 供验收查看的预览：初态检查 `initial.json` 与拼图 `initial_states.jpg`，渲染轨迹的视频、评审图、机器人相机图像（`demo_<seed>/`） | 否 |
+| `assets/scenes/<scene>/summary.json` | 验收入口：`initial`（初态检查）、`generation.<后端>`（轨迹位置、提交、成功率、失败分布、意外接触、耗时）、`preview`（已渲染的轨迹）；各脚本更新对应部分，重新生成同时失效旧 preview 统计并删除旧的渲染 | 否 |
+| `assets/scenes/<scene>/` | 人工查看的文件放在顶层：初态检查 `initial.json` 与 5 × 5 拼图 `initial_states.jpg`，录像 `demo_<seed>.mp4`（各固定视角左右并排） | 否 |
+| `assets/scenes/<scene>/demos/demo_<seed>/` | 每条渲染过的轨迹：评审图 `sheet.jpg`、机器人相机图像 `frames/<相机>/`、来源记录 `render.json` | 否 |
 | `outputs/scenes/<scene>/<后端>/` | 轨迹文件（分段 `part<k>/`）、每个 seed 的报告、汇总；LeRobot 数据集也放在 `outputs/` | 否 |
 
 ## 场景源码 `scene.py`
@@ -29,7 +30,7 @@
 - `TABLE`：尺寸、高度、板厚、腿尺寸、摩擦。
 - `ROBOT`：机器人资产（`robots/<name>`，描述取自 `asset_sources/robots/<name>/robot.py`）、底盘位置与偏航、起始关节（未列出的为 0）。格式上可以有多个机器人，环境目前只支持一个。
 - `OBJECTS`：`{名字: {'asset': 'objects/<类别>/<编号>'}}`。尺寸、碰撞几何、关节都从资产读取，场景里不手写。场景原样引用资产的构建产物，不缩放、不覆盖质量、材料或驱动。
-- `VIEWS`：录像与预览用的固定视角。
+- `VIEWS`：录像用的固定视角，录像中左右并排。初态拼图用机器人头部相机，不另设视角。
 - `initialize(layout)`：随机初始化，见下节。
 
 资产按结构接入 Isaac Lab：带 articulation root 的资产（抽屉柜）是一个 articulation；刚体之间有关节但没有 articulation root 的资产（笔帽靠钢珠卡在笔身上）整体加载，每个刚体各是一个 rigid object。这样 Isaac Lab 的状态读写和录制覆盖每个刚体。物体刚体的名字取自资产的 `table1000:name`，特权状态里写作 `<物体>:<刚体>`（如 `cabinet:cabinet.drawer3`）。
@@ -94,9 +95,9 @@
 
 `table_1000/scenes/recordings.py` 统一计算每条 HDF5 轨迹的 SHA-256 内容指纹，覆盖 `env_args`、轨迹属性、初态、逐步状态、观测与动作；按行读取以限制内存。文件搬迁不改变指纹，相同 seed 重新规划后若内容变化则指纹不同。不另造轨迹格式，也不修改 Isaac Lab 的 HDF5。
 
-每个 `preview/demo_<seed>/render.json` 保存指纹和已完成的评审图、视频、相机列表。渲染开始前失效本次要重建的产品，完成后原子更新记录；失败后留下的半成品不能导出。`--sheets` 仅在指纹匹配时保留视频和相机帧；不匹配或没有来源记录时，清理该 demo 的旧产品再生成评审图。完整渲染重新生成该 demo 的所有产品。
+每个 `demos/demo_<seed>/render.json` 保存指纹和已完成的评审图、录像视角、相机列表。渲染开始前失效本次要重建的产品，完成后原子更新记录；失败后留下的半成品不能导出。`--sheets` 仅在指纹匹配时保留录像和相机帧；不匹配或没有来源记录时，清理该 demo 的旧产品（包括顶层的 `demo_<seed>.mp4`）再生成评审图。完整渲染重新生成该 demo 的所有产品。
 
-生成新批次时，验收摘要的 `preview` 置为 `needs_render`。渲染后摘要只统计本次输入 HDF5 中指纹匹配、已完成的产品，`stale` 列出来源不匹配的目录；`output` 和 `files` 指向实际输出，包括自定义 `--output`。未选中的旧目录可留在磁盘上，但不能算作新批次已完成的预览。
+生成新批次时，验收摘要的 `preview` 置为 `needs_render`，并删除场景目录中旧批次的录像和 `demos/`。渲染后摘要只统计本次输入 HDF5 中指纹匹配、已完成的产品，`stale` 列出来源不匹配的目录；`output` 和 `files` 指向实际输出，包括自定义 `--output`（布局与场景目录相同）。自定义输出中的旧目录可留在磁盘上，但不能算作新批次已完成的预览。
 
 LeRobot 导出在创建或替换数据集之前，检查每条有相机目录的轨迹的指纹、完成记录、相机集合和帧编号。缺失来源、内容不匹配、渲染中断或缺帧会报错，要求不带 `--sheets` 重新渲染；只有评审图、没有相机目录的轨迹跳过。多份输入包含相同 demo 名称时拒绝处理，避免输出路径冲突。旧预览没有 `render.json`，需要重新渲染，不能仅凭 seed 补写来源记录。
 
@@ -121,9 +122,9 @@ LeRobot 导出在创建或替换数据集之前，检查每条有相机目录的
 
 **评审**：
 
-- 随机 25 个初态渲染成 5 × 5 拼图（`check_scene.py`），人工查看摆放是否合理、多样；
-- 每条轨迹由大模型看评审图（`render.py` 的 `sheet.jpg`，12 帧带子任务），判断流程是否完整、物体是否到位、有无异常；人工抽查；
-- 随机 5 条轨迹录制视频，人工查看：流程完整，手、臂与物体无可见穿模，夹持稳定，物体无异常滑移或跳动。
+- seed 0–24 的初态用头部相机渲染成 5 × 5 拼图（`check_scene.py`，每格 384 × 216，相机原图 1280 × 720），人工查看摆放是否合理、多样；seed 0 的图缩小后作为场景缩略图提交；
+- 每条轨迹由大模型看评审图（`render.py` 的 `demos/demo_<seed>/sheet.jpg`，12 帧带子任务），判断流程是否完整、物体是否到位、有无异常；人工抽查；
+- 随机 5 条轨迹录制视频（场景目录顶层的 `demo_<seed>.mp4`），人工查看：流程完整，手、臂与物体无可见穿模，夹持稳定，物体无异常滑移或跳动。
 
 批量运行从固定提交的独立检出进行，运行期间不改代码、场景和资产；`summary.json` 记下所用的提交。`generate.py` 与 `render.py` 和物体物理测试一样按 `--gpus` 分进程并行：seed（或要渲染的轨迹）分成几段，每段一个进程，每张卡同时一个；某一段失败不影响其他段。后端用 `--physics` 指定，命名与物理测试一致（`isaac-cpu`；场景生成尚未在 GPU 上验证）。
 

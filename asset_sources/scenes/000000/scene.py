@@ -28,14 +28,12 @@ OBJECTS = {
     'pen': {'asset': 'objects/pen/000002'},
 }
 
-# Fixed views for videos and previews; ``top`` shows the layout for the initial-state grid.
+# Fixed views for the review videos, side by side; the initial states are pictured by the head camera.
 VIEWS = {
     'wide': {'position': (1.45, -1.25, 1.6), 'target': (.05, -.25, .85), 'focal_length_mm': 22,
              'resolution': (960, 540)},
     'close': {'position': (.78, -.62, 1.25), 'target': (.17, -.24, .82), 'focal_length_mm': 26,
               'resolution': (960, 540)},
-    'top': {'position': (.10, -.55, 1.85), 'target': (.10, -.12, .755), 'focal_length_mm': 18,
-            'resolution': (960, 540)},
 }
 
 

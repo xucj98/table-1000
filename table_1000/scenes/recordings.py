@@ -2,6 +2,11 @@
 
 Fingerprints cover metadata, labels, states and actions and survive file copies.
 Only completed products are published in render.json.
+
+A render output (by default the scene's directory ``assets/scenes/<scene>/``) holds
+each episode's video ``<demo>.mp4`` at the top, where a person looks first, and
+its other products in ``demos/<demo>/``: ``sheet.jpg``, ``frames/<camera>/``,
+``render.json``.
 """
 
 import hashlib
@@ -35,6 +40,21 @@ def fingerprint(group):
     return digest.hexdigest()
 
 
+def demo_dir(output, name):
+    return Path(output) / 'demos' / name
+
+
+def video_path(output, name):
+    return Path(output) / f'{name}.mp4'
+
+
+def clear_renders(output):
+    """Remove every episode's products from ``output``, e.g. when a new batch replaces the episodes."""
+    shutil.rmtree(Path(output) / 'demos', ignore_errors=True)
+    for video in Path(output).glob('demo_*.mp4'):
+        video.unlink()
+
+
 def read_render(directory):
     file = Path(directory) / 'render.json'
     return json.loads(file.read_text()) if file.exists() else {}
@@ -47,13 +67,15 @@ def write_render(directory, record):
     temporary.replace(file)
 
 
-def begin_render(directory, identity, *, sheets):
-    """Invalidate products before rendering; keep full renders only for the same episode."""
-    directory = Path(directory)
+def begin_render(output, name, identity, *, sheets):
+    """Invalidate the episode's products in ``output`` before rendering; keep the video and camera
+    frames of a full render only for the same episode. Returns the record."""
+    directory = demo_dir(output, name)
     record = read_render(directory)
     if not sheets or record.get('trajectory') != identity:
         shutil.rmtree(directory, ignore_errors=True)
-        record = {'trajectory': identity, 'cameras': [], 'videos': []}
+        video_path(output, name).unlink(missing_ok=True)
+        record = {'trajectory': identity, 'cameras': [], 'views': []}
     record['sheet'] = False
     directory.mkdir(parents=True, exist_ok=True)
     (directory / 'sheet.jpg').unlink(missing_ok=True)

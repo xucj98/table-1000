@@ -4,7 +4,7 @@ import json
 
 from scripts.scenes.generate import split
 from table_1000.scenes import summary
-from table_1000.scenes.recordings import write_render
+from table_1000.scenes.recordings import demo_dir, video_path, write_render
 
 
 def test_seeds_split_into_contiguous_parts():
@@ -31,15 +31,14 @@ def test_initial_section_reports_the_largest_settling_motion():
 
 
 def test_preview_section_lists_rendered_episodes(tmp_path):
-    for name, files in {'demo_10': ['sheet.jpg', 'wide.mp4'], 'demo_2': ['sheet.jpg']}.items():
-        (tmp_path / name).mkdir()
-        for file in files:
-            (tmp_path / name / file).touch()
-    (tmp_path / 'demo_10' / 'frames').mkdir()
-    (tmp_path / 'demo_10' / 'frames' / 'face').mkdir()
-    write_render(tmp_path / 'demo_10', {'trajectory': 'ten', 'sheet': True,
-                                      'videos': ['wide.mp4'], 'cameras': ['face']})
-    write_render(tmp_path / 'demo_2', {'trajectory': 'two', 'sheet': True})
+    for name in ['demo_10', 'demo_2']:
+        demo_dir(tmp_path, name).mkdir(parents=True)
+        (demo_dir(tmp_path, name) / 'sheet.jpg').touch()
+    video_path(tmp_path, 'demo_10').touch()
+    (demo_dir(tmp_path, 'demo_10') / 'frames' / 'face').mkdir(parents=True)
+    write_render(demo_dir(tmp_path, 'demo_10'), {'trajectory': 'ten', 'sheet': True,
+                                                 'views': ['wide'], 'cameras': ['face']})
+    write_render(demo_dir(tmp_path, 'demo_2'), {'trajectory': 'two', 'sheet': True})
     section = summary.preview_section(tmp_path, {'demo_10': 'ten', 'demo_2': 'two'})
     assert section['sheets'] == 2 and section['videos'] == ['demo_10'] and section['camera_frames'] == ['demo_10']
     assert section['output'] == str(tmp_path)

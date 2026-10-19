@@ -45,3 +45,13 @@ class Video:
                             '-crf', '23', str(target)], check=True)
             written[name] = str(target)
         return written
+
+    def encode_side_by_side(self, target):
+        """Write one video ``target`` with every view's frames side by side (views of equal height)."""
+        inputs = []
+        for name in self.names:
+            inputs += ['-framerate', str(self.fps), '-i', str(self.output / name / '%05d.jpg')]
+        stack = ['-filter_complex', f'hstack=inputs={len(self.names)}'] if len(self.names) > 1 else []
+        subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-y', *inputs, *stack,
+                        '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '23', str(target)], check=True)
+        return str(target)

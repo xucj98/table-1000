@@ -2,8 +2,8 @@
 
 ``uv run python scripts/scenes/to_lerobot.py outputs/scenes/000000/gen/part*/trajectories.hdf5 --output outputs/scenes/000000/lerobot [--frames DIR] [--task subtask|instruction]``
 
-Every episode rendered by ``scripts/scenes/render.py`` (``<frames>/<demo>/frames/<camera>/``;
-``--frames`` defaults to the scene's preview directory ``assets/scenes/<scene>/preview/``)
+Every episode rendered by ``scripts/scenes/render.py`` (``<frames>/demos/<demo>/frames/<camera>/``;
+``--frames`` is render.py's ``--output``, by default the scene's directory ``assets/scenes/<scene>/``)
 becomes one LeRobot episode at the control rate (25 fps):
 
 - ``observation.state``: joint positions (``obs/qpos``, the robot's joints then
@@ -28,7 +28,7 @@ import h5py
 import numpy as np
 from PIL import Image
 
-from table_1000.scenes.recordings import fingerprint, read_render, subtask
+from table_1000.scenes.recordings import demo_dir, fingerprint, read_render, subtask
 
 
 def rendered_episodes(files, frames):
@@ -39,7 +39,7 @@ def rendered_episodes(files, frames):
             if name in names:
                 raise ValueError(f'duplicate episode {name}; give one recording per seed')
             names.add(name)
-            directory = frames / name
+            directory = demo_dir(frames, name)
             if not (directory / 'frames').is_dir():
                 continue
             record = read_render(directory)
@@ -60,7 +60,7 @@ def rendered_episodes(files, frames):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('trajectories', type=Path, nargs='+', help='trajectory files (e.g. the parts of a run)')
-    parser.add_argument('--frames', type=Path, help='output directory of render.py (default: assets/scenes/<scene>/preview)')
+    parser.add_argument('--frames', type=Path, help='output directory of render.py (default: assets/scenes/<scene>)')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--repo-id', default=None, help='default: table-1000/<scene>')
     parser.add_argument('--task', choices=('subtask', 'instruction'), default='subtask')
@@ -68,11 +68,11 @@ def main(argv=None):
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
     files = [h5py.File(path, 'r') for path in args.trajectories]
     meta = json.loads(files[0]['data'].attrs['env_args'])
-    args.frames = args.frames or Path(__file__).resolve().parents[2] / 'assets' / 'scenes' / meta['scene'] / 'preview'
+    args.frames = args.frames or Path(__file__).resolve().parents[2] / 'assets' / 'scenes' / meta['scene']
     episodes = rendered_episodes(files, args.frames)
     if not episodes:
         raise SystemExit(f'no rendered episodes of {[str(p) for p in args.trajectories]} in {args.frames}')
-    first = args.frames / episodes[0][1] / 'frames'
+    first = demo_dir(args.frames, episodes[0][1]) / 'frames'
     cameras = sorted(read_render(first.parent)['cameras'])
     sizes = {camera: Image.open(next((first / camera).iterdir())).size for camera in cameras}
     actions = [f'{group}.{i}' for group, (start, stop) in meta['action_layout'].items() for i in range(stop - start)]
@@ -93,7 +93,7 @@ def main(argv=None):
             frame = {'observation.state': qpos[t], 'action': action[t], 'task': task or meta['instruction']}
             for camera in cameras:
                 frame[f'observation.images.{camera}'] = np.asarray(
-                    Image.open(args.frames / name / 'frames' / camera / f'{t:05d}.jpg').convert('RGB'))
+                    Image.open(demo_dir(args.frames, name) / 'frames' / camera / f'{t:05d}.jpg').convert('RGB'))
             dataset.add_frame(frame)
         dataset.save_episode()
         print(name, length, flush=True)

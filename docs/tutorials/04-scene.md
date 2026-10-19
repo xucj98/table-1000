@@ -2,7 +2,7 @@
 
 用第 2 章的物体和第 3 章的机器人搭一个场景，编写专家程序，批量生成专家轨迹，渲染后评审，再导出 LeRobot 数据集。以[场景 000000](../../asset_sources/scenes/000000/) 为例：X1Pro 站在桌前，桌上一个三抽屉柜和一支笔；机器人打开最下层抽屉，把笔放进去，再关上。各文件的要求见[场景与专家轨迹规范](../designs/asset-pipeline/scenes.md)。
 
-![场景 000000 的 25 个初态](../../asset_sources/scenes/000000/initial_states.jpg)
+![场景 000000：seed 0 的初态，机器人头部相机](../../asset_sources/scenes/000000/thumbnail.jpg)
 
 ## 交付物
 
@@ -12,14 +12,14 @@
 | --- | --- |
 | `scene.py` | 场景：桌子、机器人及起始姿态、物体、录像视角，以及每个 seed 怎样随机摆放（`initialize`） |
 | `expert.py` | 专家程序 `solve(ctx)`：按英文子任务组织的阻塞式代码，用运动原语、几何查询和抓取几何完成任务 |
-| `initial_states.jpg` | 25 个初态的拼图（缩小），作为场景的缩略图 |
+| `thumbnail.jpg` | seed 0 初态的头部相机图像（宽 480），作为场景的缩略图，由 `check_scene.py` 生成 |
 
 生成的结果不进 Git：
 
 | 位置 | 内容 |
 | --- | --- |
-| `assets/scenes/<编号>/summary.json` | 验收入口：初态检查、各后端的生成统计、已渲染的轨迹 |
-| `assets/scenes/<编号>/preview/` | 初态检查 `initial.json` 与拼图 `initial_states.jpg`；每条渲染过的轨迹一个 `demo_<seed>/`：评审图、视频、机器人相机图像 |
+| `assets/scenes/<编号>/` | 验收时看的文件都在这一层：`summary.json`（验收入口：初态检查、各后端的生成统计、已渲染的轨迹）、初态检查 `initial.json` 与 5 × 5 拼图 `initial_states.jpg`、5 条录像 `demo_<seed>.mp4` |
+| `assets/scenes/<编号>/demos/` | 每条渲染过的轨迹一个 `demo_<seed>/`：评审图 `sheet.jpg`、机器人相机图像、来源记录 |
 | `outputs/scenes/<编号>/<后端>/` | 轨迹：每段 `part<k>/` 有 `trajectories.hdf5`（成功）、`trajectories_failed.hdf5`（失败）、每个 seed 的报告 `episodes/<seed>.json` 和日志 `run.log`；汇总 `summary.json`、`summary.csv` |
 | LeRobot 目录（`--output`） | LeRobot v3.0 数据集 |
 
@@ -29,7 +29,7 @@
 
 ## 命令
 
-**检查初态**：对 seed 0–24 做与生成时相同的初始化（无穿透检查、静置 1 s），约 2 分钟：
+**检查初态**：对 seed 0–24 做与生成时相同的初始化（无穿透检查、静置 1 s），用机器人头部相机拍成 5 × 5 拼图，并把 seed 0 的图缩小写成 `thumbnail.jpg`，约 2 分钟：
 
 ```bash
 uv run python scripts/scenes/check_scene.py 000000 --gpu 0
@@ -43,10 +43,10 @@ uv run python scripts/scenes/generate.py 000000 --seeds 0:100 --physics isaac-cp
 
 - `--physics` 必填，列出物理后端，与第 2 章的命名一致；场景生成目前只验证了 `isaac-cpu`。
 - seed 按 `--gpus` 分成连续的几段，每段一个进程，每张卡同时跑一段；某一段失败不影响其他段。本例 100 个 seed 在 4 张卡上约 30 分钟。
-- 可以同时给多个场景。每次运行会替换 `outputs/scenes/<编号>/<后端>/` 中原有的结果；`--output` 可以换根目录。
+- 可以同时给多个场景。每次运行会替换 `outputs/scenes/<编号>/<后端>/` 中原有的结果，并删除 `assets/scenes/<编号>/` 中旧批次的录像和 `demos/`；`--output` 可以换轨迹的根目录。
 - 批量运行用固定提交的独立检出，运行期间不改代码、场景和资产；`summary.json` 记下所用的提交。
 
-**渲染**：按录制的状态逐步恢复场景再渲染，不重新仿真。先为所有成功轨迹渲染评审图，再随机选 5 条渲染视频和机器人相机图像：
+**渲染**：按录制的状态逐步恢复场景再渲染，不重新仿真。先为所有成功轨迹渲染评审图，再随机选 5 条渲染录像和机器人相机图像。录像是 `assets/scenes/<编号>/demo_<seed>.mp4`，`wide` 与 `close` 视角左右并排：
 
 ```bash
 uv run python scripts/scenes/render.py outputs/scenes/000000/isaac-cpu/part*/trajectories.hdf5 --sheets --gpus 0 1 2 3
@@ -55,10 +55,10 @@ uv run python scripts/scenes/render.py outputs/scenes/000000/isaac-cpu/part*/tra
 
 - 选中的轨迹分到 `--gpus` 列出的卡上，每张卡同时一个进程。评审图每条约 1 s，视频和相机图像每条约 2.5 分钟，每个进程另有约 1 分钟启动。
 - `--count` 随机选择，`--seed` 固定选法；`--demos demo_27 demo_51` 指定轨迹；`--views`、`--cameras` 选择视角和相机。
-- `--sheets` 只替换同一轨迹的 `sheet.jpg`，通过 `render.json` 指纹匹配的视频和图像保留；换批次或旧预览没有来源记录时，清理该 demo 的旧产品。
-- `--output DIR` 指定自定义预览目录，摘要记录实际路径；导出时对应使用 `--frames DIR`。重新生成轨迹后摘要标为 `needs_render`，重新渲染后只统计与输入轨迹匹配的产品。
+- `--sheets` 只替换同一轨迹的 `sheet.jpg`，通过 `render.json` 指纹匹配的录像和图像保留；没有来源记录或来源不匹配时，清理该 demo 的旧产品。
+- `--output DIR` 代替场景目录，布局相同，摘要记录实际路径；导出时对应使用 `--frames DIR`。重新生成轨迹后摘要标为 `needs_render`，重新渲染后只统计与输入轨迹匹配的产品。
 
-**导出 LeRobot**：把预览目录中渲染过机器人相机图像的轨迹写成数据集，本例 5 条约 7.5 分钟：
+**导出 LeRobot**：把 `demos/` 中渲染过机器人相机图像的轨迹写成数据集，本例 5 条约 7.5 分钟：
 
 ```bash
 uv run python scripts/scenes/to_lerobot.py outputs/scenes/000000/isaac-cpu/part*/trajectories.hdf5 --output outputs/scenes/000000/lerobot
@@ -97,9 +97,9 @@ dataset = LeRobotDataset('table-1000/000000', root='outputs/scenes/000000/lerobo
 
 然后看图片和视频：
 
-1. `preview/initial_states.jpg`：摆放合理，变化足够（位置、朝向都在变），见本章开头。
-2. 每条成功轨迹的 `preview/demo_<seed>/sheet.jpg`（12 帧，标注子任务）由大模型逐条查看：流程完整，物体到位（笔在抽屉里），抽屉最后关好、手已撤开。
-3. 有视频的 5 条人工查看 `wide.mp4`、`close.mp4`：手、臂与物体无可见穿模，夹持稳定，物体无异常滑移或跳动。
+1. `initial_states.jpg`：摆放合理，变化足够（位置、朝向都在变）。
+2. 每条成功轨迹的 `demos/demo_<seed>/sheet.jpg`（12 帧，标注子任务）由大模型逐条查看：流程完整，物体到位（笔在抽屉里），抽屉最后关好、手已撤开。
+3. 5 条录像 `demo_<seed>.mp4` 人工查看：手、臂与物体无可见穿模，夹持稳定，物体无异常滑移或跳动。
 4. LeRobot 数据集能读回，帧数与轨迹步数一致。
 
 不通过时：摆放问题改 `scene.py` 的 `initialize`，专家问题改 `expert.py`，然后重新检查初态、生成和评审。同一 seed 单独重跑时动作相同，但规划有时限，负载不同时路径可能不同，复现以录制的轨迹文件为准。

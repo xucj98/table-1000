@@ -9,7 +9,8 @@ each part runs in its own process (``<output>/<scene>/<backend>/part<k>/``, log
 ``trajectories_failed.hdf5`` and ``episodes/<seed>.json``. At the end
 ``<output>/<scene>/<backend>/summary.json`` and ``summary.csv`` summarize every
 part, and the ``generation`` section of ``assets/scenes/<scene>/summary.json``
-is updated. ``--seeds`` takes ``a:b`` ranges and single seeds. Failed episodes are
+is updated; the scene's renders of an earlier batch (``assets/scenes/<scene>/demo_*.mp4``
+and ``demos/``) are removed. ``--seeds`` takes ``a:b`` ranges and single seeds. Failed episodes are
 part of the result; the exit status is non-zero only when a part fails to run.
 See ``table_1000/experts/generate.py``.
 """
@@ -100,6 +101,7 @@ def summarize_run(directory, scene, backend, seed_list, failed_parts, root, asse
 def main(argv=None):
     from table_1000.physics.test import run_jobs
     from table_1000.scenes import summary as scene_summary
+    from table_1000.scenes.recordings import clear_renders
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('scenes', nargs='+')
     parser.add_argument('--seeds', nargs='+', default=['0:10'])
@@ -119,6 +121,7 @@ def main(argv=None):
     jobs, runs = [], []
     for scene in args.scenes:
         scene_summary.update(args.assets.resolve(), scene, 'preview', {'status': 'needs_render'})
+        clear_renders(args.assets.resolve() / 'scenes' / scene)
         for backend in args.physics:
             directory = args.output.resolve() / scene / backend
             shutil.rmtree(directory, ignore_errors=True)

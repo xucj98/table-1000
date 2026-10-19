@@ -10,6 +10,9 @@ the preview counts until the recordings are rendered again:
   contacts, durations and wall times;
 - ``preview`` (``render.py``): the rendered episodes, with or without videos and
   robot camera frames.
+
+Next to it are what a person looks at: ``initial_states.jpg`` and the videos
+``demo_<seed>.mp4``; see :mod:`table_1000.scenes.recordings`.
 """
 
 import json
@@ -62,16 +65,17 @@ def initial_section(report):
             'without_state': [seed for seed, record in report['seeds'].items() if record['attempt'] is None],
             'mean_attempts': report['mean_attempts'], 'settle': objects,
             'robot_contacts': sum(len(settle['robot_contacts']) for settle in settled),
-            'view': report['view'], 'files': ['preview/initial.json', 'preview/initial_states.jpg']}
+            'view': report['view'], 'files': ['initial.json', 'initial_states.jpg']}
 
 
-def preview_section(preview, identities):
-    """Only completed products matching the supplied episodes count toward acceptance."""
-    from table_1000.scenes.recordings import read_render
-    preview = Path(preview).resolve()
+def preview_section(output, identities):
+    """Only completed products in render output ``output`` matching the supplied episodes count
+    toward acceptance."""
+    from table_1000.scenes.recordings import demo_dir, read_render, video_path
+    output = Path(output).resolve()
     sheets, videos, cameras, stale = [], [], [], []
     for name in sorted(identities, key=lambda name: int(name.split('_')[1])):
-        directory = preview / name
+        directory = demo_dir(output, name)
         record = read_render(directory)
         if record.get('trajectory') != identities[name]:
             if directory.exists():
@@ -79,10 +83,10 @@ def preview_section(preview, identities):
             continue
         if record.get('sheet') and (directory / 'sheet.jpg').is_file():
             sheets.append(name)
-        if record.get('videos') and all((directory / video).is_file() for video in record['videos']):
+        if record.get('views') and video_path(output, name).is_file():
             videos.append(name)
         if record.get('cameras') and all((directory / 'frames' / camera).is_dir() for camera in record['cameras']):
             cameras.append(name)
-    return {'output': str(preview), 'sheets': len(sheets), 'videos': videos,
+    return {'output': str(output), 'sheets': len(sheets), 'videos': videos,
             'camera_frames': cameras, 'stale': stale,
-            'files': str(preview / 'demo_<seed>') + '/: sheet.jpg, <view>.mp4, frames/<camera>/, render.json'}
+            'files': 'demo_<seed>.mp4, demos/demo_<seed>/: sheet.jpg, frames/<camera>/, render.json'}
