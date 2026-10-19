@@ -324,6 +324,31 @@ class RobotEnv:
         self.contacts.clear()
         return self.observe()
 
+    def reset_to_state(self, state):
+        """Reset to a scene state (``InteractiveScene.get_state(is_relative=True)``, as NumPy or
+        tensors with the environment axis): every body where it was, the action targets holding
+        the restored joints."""
+        def to_tensors(tree):
+            return {key: to_tensors(value) if isinstance(value, dict) else torch.as_tensor(value, device=self.device)
+                    for key, value in tree.items()}
+
+        self.env.pending_reset = ({}, self.initial_robot_q(), {})
+        self.env.reset_to(to_tensors(state), None, is_relative=True)
+        # Lab resets the action terms before writing the state; they hold the joints written.
+        for term in self.terms.values():
+            term.reset()
+        origins = self.env.scene.env_origins
+        for name in self.shapes:
+            shape = self.env.scene[name]
+            if kinematic(shape):
+                pose = to_tensors(state)['rigid_object'][name]['root_pose'].clone()
+                pose[:, :3] += origins
+                place(self.env, shape, pose, list(range(self.num_envs)))
+        self.env.sim.forward()
+        self.steps = 0
+        self.contacts.clear()
+        return self.observe()
+
     def observe(self):
         obs = self.env.observation_manager.compute()
         agent = {key: value.cpu().numpy() for key, value in obs['agent'].items()}

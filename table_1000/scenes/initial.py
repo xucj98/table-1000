@@ -14,8 +14,15 @@ A failed attempt is retried with the next attempt number, at most
 :data:`ATTEMPTS` times; the episode starts from the settled state, whatever the
 layout predicted. The positions are compared, not velocities: a pen whose cap
 balls jitter by micrometres never sleeps but stays put.
+
+``scripts/scenes/build_scene.py`` keeps the settled states in
+``initial_states.hdf5`` (:func:`write_states`), one group per seed named by it,
+with attributes ``seed`` and ``attempt`` and the scene state as
+``InteractiveScene.get_state(is_relative=True)`` gives it; the file's attributes
+name the scene, robot and physics backend. Trajectories start from these states.
 """
 
+import math
 import time
 
 import numpy as np
@@ -106,3 +113,54 @@ def initial_state(env, scene, assets, seed, attempts=ATTEMPTS):
         if not entry['problems']:
             return layout, {'seed': seed, 'attempt': attempt, 'attempts': tried}
     raise InitializationFailed(seed, tried)
+
+
+def write_states(path, states, attrs):
+    """Write ``{seed: (attempt, state)}`` (a state: nested dict of arrays) with file attributes ``attrs``."""
+    import h5py
+
+    def write(group, tree):
+        for key, value in tree.items():
+            if isinstance(value, dict):
+                write(group.create_group(key), value)
+            else:
+                group.create_dataset(key, data=np.asarray(value))
+
+    with h5py.File(path, 'w') as file:
+        file.attrs.update(attrs)
+        for seed, (attempt, state) in sorted(states.items()):
+            group = file.create_group(str(seed))
+            group.attrs.update(seed=seed, attempt=attempt)
+            write(group, state)
+
+
+def read_states(path):
+    """``(attrs, {seed: (attempt, state)})`` of an ``initial_states.hdf5`` file, states as nested NumPy dicts."""
+    import h5py
+
+    def read(group):
+        return {key: read(value) if isinstance(value, h5py.Group) else value[()] for key, value in group.items()}
+
+    with h5py.File(path, 'r') as file:
+        return dict(file.attrs), {int(name): (int(group.attrs['attempt']), read(group))
+                                  for name, group in sorted(file.items(), key=lambda item: int(item[0]))}
+
+
+def summarize(records):
+    """Numbers to accept initial states by, from :func:`initial_state`'s records ``{seed: record}``
+    (``attempt`` None for a seed without a valid state): seeds with and without a state, mean
+    attempts, the largest settling motion of each object body, robot contacts while settling."""
+    accepted = [record['attempt'] + 1 for record in records.values() if record['attempt'] is not None]
+    settled = [attempt['settle'] for record in records.values() for attempt in record['attempts']
+               if attempt.get('settle')]
+    objects = {}
+    for settle in settled:
+        for name, motion in settle['objects'].items():
+            entry = objects.setdefault(name, {'max_move_mm': 0., 'max_turn_deg': 0.})
+            entry['max_move_mm'] = max(entry['max_move_mm'], 1000 * motion['move_m'])
+            entry['max_turn_deg'] = max(entry['max_turn_deg'], math.degrees(motion['turn_rad']))
+    return {'valid': len(accepted), 'invalid': len(records) - len(accepted),
+            'without_state': sorted(seed for seed, record in records.items() if record['attempt'] is None),
+            'mean_attempts': float(np.mean(accepted)) if accepted else None, 'settle': objects,
+            'robot_contacts': sum(len(settle['robot_contacts']) for settle in settled)}
+

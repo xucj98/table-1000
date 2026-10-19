@@ -1,13 +1,12 @@
-"""Expert trajectories of a scene: initial state, ``expert.solve(ctx)``, recording and a report per seed.
+"""Expert trajectories of a scene: ``expert.solve(ctx)`` from a stored initial state, recording and a report per seed.
 
 One :class:`Generator` builds the environment once and runs seeds one after
-another (each from a reset). A seed whose initial state cannot be made is
-reported and skipped; an expert failure is recorded as a failed episode
-(``trajectories_failed.hdf5``) with the subtask and reason, so the success rate
-is a metric, not a requirement. Each seed also gets ``episodes/<seed>.json``:
-initial-state attempts, subtasks, failure, planning log, robot contacts (the
-fingers' on objects, and unexpected ones), the objects' final positions and
-joints, and timings.
+another, each from its initial state of ``initial_states.hdf5``
+(:mod:`table_1000.scenes.initial`). An expert failure is recorded as a failed
+episode (``trajectories_failed.hdf5``) with the subtask and reason, so the
+success rate is a metric, not a requirement. Each seed also gets
+``episodes/<seed>.json``: subtasks, failure, planning log, the parts the fingers
+touched, the objects' final positions and joints, and timings.
 """
 
 import json
@@ -19,29 +18,21 @@ import numpy as np
 
 from table_1000.experts.context import Context, ExpertFailed
 from table_1000.scenes import INSTRUCTION, load
-from table_1000.scenes.initial import InitializationFailed, initial_state
 from table_1000.sim import CONTROL_HZ, PHYSICS_DT
 
+# A seed without a report: its process stopped before finishing it.
+PROCESS_EXITED = '-: process exited'
 
-def finger_links(spec):
-    return {f'robot.{link}' for arm in spec.arms.values() for link in arm.finger_links}
 
-
-def contact_summary(intervals, spec):
-    """Robot contacts by pair, ``{pair: {'max_penetration_m', 'seconds', 'subtasks'}}``, split into
-    ``fingers`` (a finger on something other than the robot: what the expert touches, to be
-    checked against what it means to touch) and ``unexpected`` (everything else but the two
-    fingers of one gripper)."""
-    fingers = finger_links(spec)
-    grippers = [{f'robot.{link}' for link in arm.finger_links} for arm in spec.arms.values()]
-    summary = {'fingers': {}, 'unexpected': {}}
+def finger_contacts(intervals, spec):
+    """What the fingers touched outside the robot, ``{pair: {'max_penetration_m', 'seconds', 'subtasks'}}``."""
+    fingers = {f'robot.{link}' for arm in spec.arms.values() for link in arm.finger_links}
+    summary = {}
     for entry in intervals:
         a, b = entry['pair']
-        if {a, b} in grippers:
+        if not ((a in fingers and not b.startswith('robot')) or (b in fingers and not a.startswith('robot'))):
             continue
-        on_object = (a in fingers and not b.startswith('robot')) or (b in fingers and not a.startswith('robot'))
-        item = summary['fingers' if on_object else 'unexpected'].setdefault(
-            ' / '.join(entry['pair']), {'max_penetration_m': 0., 'seconds': 0., 'subtasks': []})
+        item = summary.setdefault(' / '.join(entry['pair']), {'max_penetration_m': 0., 'seconds': 0., 'subtasks': []})
         item['max_penetration_m'] = max(item['max_penetration_m'], entry['max_penetration_m'])
         if entry.get('end') is not None:
             item['seconds'] += entry['end'] - entry['start']
@@ -74,21 +65,18 @@ class Generator:
                          'action_layout': self.env.action_layout}
         self.load_s = time.perf_counter() - started
 
-    def run(self, seed):
+    def run(self, seed, attempt, state):
+        """Episode ``seed`` from its initial ``state`` (made by sub-seed ``attempt``)."""
         started = time.perf_counter()
-        report = {'scene': self.name, 'seed': seed}
-        try:
-            layout, report['initial'] = initial_state(self.env, self.scene, self.assets, seed)
-        except InitializationFailed as error:
-            report.update(status='init_failed', initial={'attempts': error.attempts})
-            return self.save(report, started)
+        report = {'scene': self.name, 'seed': seed, 'attempt': attempt}
+        self.env.reset_to_state(state)
         init_s = time.perf_counter() - started
         self.recording.begin(self.env)
         # MPlib's IK restarts and RRTConnect draw from its own generator.
         import mplib.pymp
         mplib.pymp.set_global_seed(seed + 1)   # OMPL rejects 0
         ctx = Context(self.env, self.model, self.scene, self.assets,
-                      np.random.default_rng([seed, report['initial']['attempt'], 1]))
+                      np.random.default_rng([seed, attempt, 1]))
         try:
             self.expert.solve(ctx)
             report['status'] = 'success'
@@ -104,13 +92,13 @@ class Generator:
         report.update(
             steps=ctx.steps, duration_s=ctx.steps / CONTROL_HZ, subtasks=ctx.subtasks, events=ctx.events,
             plans=[entry for solver in ctx.solvers.values() for entry in solver.log],
-            robot_contacts=contact_summary(self.env.contacts.intervals(), self.spec),
+            finger_contacts=finger_contacts(self.env.contacts.intervals(), self.spec),
             final={'objects': {name: self.env.object_pose(name)[0][:3, 3].tolist() for name in self.scene.OBJECTS},
                    'joints': {name: {joint: float(value[0]) for joint, value in joints.items()}
                               for name, joints in self.env.privileged()['joints'].items()}},
             timings={'init_s': init_s, **{key: sum(s.timings[key] for s in ctx.solvers.values())
                                           for key in ('planning_s', 'executing_s')}})
-        attrs = {'scene': self.name, 'seed': seed, 'attempt': report['initial']['attempt'],
+        attrs = {'scene': self.name, 'seed': seed, 'attempt': attempt,
                  'instruction': INSTRUCTION, 'subtasks': ctx.subtasks, 'status': report['status']}
         if 'failure' in report:
             attrs['failure'] = {key: report['failure'][key] for key in ('subtask', 'reason')}
@@ -127,37 +115,24 @@ class Generator:
         self.env.close()
 
 
-SUMMARY_FIELDS = ('seed', 'status', 'attempt', 'failed_subtask', 'reason', 'steps', 'duration_s', 'plans',
-                  'unexpected_contacts', 'max_unexpected_penetration_mm', 'wall_s')
-
-
-def summary_row(report):
-    contacts = report.get('robot_contacts', {}).get('unexpected', {})
+def failure_key(report):
     failure = report.get('failure', {})
-    return {'seed': report['seed'], 'status': report['status'], 'attempt': report.get('initial', {}).get('attempt'),
-            'failed_subtask': failure.get('subtask'), 'reason': failure.get('reason'),
-            'steps': report.get('steps'), 'duration_s': report.get('duration_s'), 'plans': len(report.get('plans', [])),
-            'unexpected_contacts': len(contacts),
-            'max_unexpected_penetration_mm': 1000 * max((c['max_penetration_m'] for c in contacts.values()), default=0.),
-            'wall_s': report['wall_s']}
+    return f'{failure.get("subtask")}: {failure.get("reason")}'
 
 
-def summarize(reports):
-    """Counts, success rate (of seeds with an initial state), failures by subtask and reason, means."""
-    rows = [summary_row(report) for report in reports]
-    started = [row for row in rows if row['status'] != 'init_failed']
-    succeeded = [row for row in started if row['status'] == 'success']
+def summarize(reports, seeds):
+    """A batch over ``seeds`` from its episode reports: success rate of all the seeds, the failed
+    seeds by ``"subtask: reason"`` (seeds without a report under :data:`PROCESS_EXITED`), means."""
+    from table_1000.scenes.batch import seeds_record
+    reports = {report['seed']: report for report in reports}
+    succeeded = [report for report in reports.values() if report['status'] == 'success']
     failures = {}
-    for row in started:
-        if row['status'] != 'success':
-            key = f'{row["failed_subtask"]}: {row["reason"]}'
-            failures[key] = failures.get(key, 0) + 1
-    attempts = [report['initial']['attempt'] + 1 for report in reports if report['status'] != 'init_failed']
-    return {'seeds': len(rows), 'init_failed': len(rows) - len(started), 'episodes': len(started),
-            'succeeded': len(succeeded), 'success_rate': len(succeeded) / len(started) if started else None,
-            'mean_init_attempts': float(np.mean(attempts)) if attempts else None,
-            'failures': failures,
-            'mean_duration_s': float(np.mean([row['duration_s'] for row in succeeded])) if succeeded else None,
-            'with_unexpected_contacts': sum(1 for row in started if row['unexpected_contacts']),
-            'mean_wall_s': float(np.mean([row['wall_s'] for row in rows])) if rows else None,
-            'rows': rows}
+    for seed in seeds:
+        report = reports.get(seed)
+        if report is None or report['status'] != 'success':
+            failures.setdefault(PROCESS_EXITED if report is None else failure_key(report), []).append(seed)
+    return {'seeds': seeds_record(seeds), 'succeeded': len(succeeded),
+            'success_rate': len(succeeded) / len(seeds) if seeds else None,
+            'failures': dict(sorted(failures.items(), key=lambda item: (-len(item[1]), item[0]))),
+            'mean_duration_s': float(np.mean([report['duration_s'] for report in succeeded])) if succeeded else None,
+            'mean_wall_s': float(np.mean([report['wall_s'] for report in reports.values()])) if reports else None}

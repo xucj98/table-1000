@@ -1,63 +1,65 @@
-"""Where a scene's renders go and which of them are complete, without changing Isaac Lab's HDF5 format.
+"""A batch of trajectories in ``data/scenes/<scene>/<backend>/``, without changing Isaac Lab's HDF5 format.
 
-A render output (by default the scene's directory ``assets/scenes/<scene>/``) holds
-each episode's video ``<demo>.mp4`` at the top, where a person looks first, and
-its other products in ``demos/<demo>/``: ``sheet.jpg``, ``frames/<camera>/``,
-``render.json``. ``render.json`` lists only completed products, so an interrupted
-render is not exported. Renders belong to the batch they were made from;
-generating a new batch removes them (:func:`clear_renders`).
+``trajectories.hdf5`` and ``trajectories_failed.hdf5`` hold one ``data/demo_<seed>``
+group per episode; the processes of a batch write their own files, merged at the
+end (:func:`merge`). Renders sit next to them: review sheets
+``sheets/demo_<seed>.jpg`` and videos ``demo_<seed>.mp4``, each written to a
+temporary name and renamed when complete, so an interrupted render leaves
+nothing half-written.
 """
 
 import json
 from pathlib import Path
-import shutil
 
 
-def demo_dir(output, name):
-    return Path(output) / 'demos' / name
+def merge(sources, target):
+    """Copy every episode of the Isaac Lab trajectory files ``sources`` into ``target``, in seed order;
+    returns the number of episodes. ``data`` keeps the first file's attributes, with the summed ``total``."""
+    import h5py
+    episodes, attrs = [], {}
+    files = [h5py.File(path, 'r') for path in sources if Path(path).is_file()]
+    try:
+        for file in files:
+            attrs = attrs or dict(file['data'].attrs)
+            episodes += [(int(name.split('_')[1]), file, name) for name in file['data']]
+        with h5py.File(target, 'w') as out:
+            data = out.create_group('data')
+            data.attrs.update(attrs)
+            total = 0
+            for _, file, name in sorted(episodes, key=lambda episode: episode[0]):
+                file.copy(file['data'][name], data, name)
+                total += int(file['data'][name].attrs.get('num_samples', 0))
+            data.attrs['total'] = total
+    finally:
+        for file in files:
+            file.close()
+    return len(episodes)
 
 
-def video_path(output, name):
-    return Path(output) / f'{name}.mp4'
+def demo_name(seed):
+    return f'demo_{seed}'
 
 
-def clear_renders(output):
-    """Remove every episode's products from ``output``, e.g. when a new batch replaces the episodes."""
-    shutil.rmtree(Path(output) / 'demos', ignore_errors=True)
-    for video in Path(output).glob('demo_*.mp4'):
-        video.unlink()
+def sheet_path(directory, seed):
+    return Path(directory) / 'sheets' / f'{demo_name(seed)}.jpg'
 
 
-def read_render(directory):
-    file = Path(directory) / 'render.json'
-    return json.loads(file.read_text()) if file.exists() else {}
+def video_path(directory, seed):
+    return Path(directory) / f'{demo_name(seed)}.mp4'
 
 
-def write_render(directory, record):
-    file = Path(directory) / 'render.json'
-    temporary = file.with_suffix('.tmp')
-    temporary.write_text(json.dumps(record, indent=1) + '\n')
-    temporary.replace(file)
+def rendered(directory):
+    """Seeds with a review sheet and with a video in a batch directory."""
+    directory = Path(directory)
 
+    def seeds(paths):
+        return sorted(int(path.stem.split('_')[1]) for path in paths)
 
-def begin_render(output, name, *, sheets):
-    """Invalidate the episode's products about to be rendered: all of them, or only the review sheet
-    (``sheets``). Returns the record."""
-    directory = demo_dir(output, name)
-    record = read_render(directory) if sheets else {}
-    if not sheets:
-        shutil.rmtree(directory, ignore_errors=True)
-        video_path(output, name).unlink(missing_ok=True)
-    record = {'sheet': False, 'cameras': record.get('cameras', []), 'views': record.get('views', [])}
-    directory.mkdir(parents=True, exist_ok=True)
-    (directory / 'sheet.jpg').unlink(missing_ok=True)
-    shutil.rmtree(directory / 'views', ignore_errors=True)
-    write_render(directory, record)
-    return record
+    return {'sheets': seeds((directory / 'sheets').glob('demo_*.jpg')), 'videos': seeds(directory.glob('demo_*.mp4'))}
 
 
 def subtask(attrs, t, length):
-    """Instruction of the subtask at step t, shared by rendering and export."""
+    """Instruction of the subtask at step t."""
     entries = attrs.get('subtasks', [])
     if isinstance(entries, str):
         entries = json.loads(entries)
