@@ -17,8 +17,9 @@
 | `table_1000/experts/` | 专家上下文（`context.py`）、运动求解器（`solver.py`）、抓取几何（`grasps.py`）、批量生成（`generate.py`） | 是 |
 | `table_1000/sim/isaaclab/` | 环境（物体接入）、录制（`recording.py`）、按状态重放（`replay.py`） | 是 |
 | `scripts/scenes/` | `check_scene`、`generate`、`render`、`to_lerobot` | 是 |
-| `assets/scenes/<scene>/preview/` | 供验收查看的预览：初态检查 `initial.json` 与拼图 `initial_states.jpg`，渲染轨迹的视频、评审图、机器人相机图像（`<demo>/`） | 否 |
-| `outputs/` | 轨迹文件、生成报告、LeRobot 数据集 | 否 |
+| `assets/scenes/<scene>/summary.json` | 验收入口：`initial`（初态检查）、`generation.<后端>`（轨迹位置、提交、成功率、失败分布、意外接触、耗时）、`preview`（已渲染的轨迹）；各脚本只改写自己的部分 | 否 |
+| `assets/scenes/<scene>/preview/` | 供验收查看的预览：初态检查 `initial.json` 与拼图 `initial_states.jpg`，渲染轨迹的视频、评审图、机器人相机图像（`demo_<seed>/`） | 否 |
+| `outputs/scenes/<scene>/<后端>/` | 轨迹文件（分段 `part<k>/`）、每个 seed 的报告、汇总；LeRobot 数据集也放在 `outputs/` | 否 |
 
 ## 场景源码 `scene.py`
 
@@ -93,7 +94,7 @@
 
 **自动化硬性检查**：初态无穿透、静置稳定（见上）。
 
-**量化指标**（不设硬性门槛，写入 `summary.json`）：
+**量化指标**（不设硬性门槛，写入场景的 `summary.json`）：
 
 - 初态平均尝试次数、无法初始化的 seed；
 - 生成成功率，失败按子任务和原因分布；
@@ -106,7 +107,7 @@
 - 每条轨迹由大模型看评审图（`render.py` 的 `sheet.jpg`，12 帧带子任务），判断流程是否完整、物体是否到位、有无异常；人工抽查；
 - 随机 5 条轨迹录制视频，人工查看：流程完整，手、臂与物体无可见穿模，夹持稳定，物体无异常滑移或跳动。
 
-批量运行从固定提交的独立检出进行，运行期间不改代码、场景和资产。
+批量运行从固定提交的独立检出进行，运行期间不改代码、场景和资产；`summary.json` 记下所用的提交。`generate.py` 与 `render.py` 和物体物理测试一样按 `--gpus` 分进程并行：seed（或要渲染的轨迹）分成几段，每段一个进程，每张卡同时一个；某一段失败不影响其他段。后端用 `--physics` 指定，命名与物理测试一致（`isaac-cpu`；场景生成尚未在 GPU 上验证）。
 
 ## 已知限制
 

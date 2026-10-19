@@ -18,8 +18,9 @@
 
 | 位置 | 内容 |
 | --- | --- |
+| `assets/scenes/<编号>/summary.json` | 验收入口：初态检查、各后端的生成统计、已渲染的轨迹 |
 | `assets/scenes/<编号>/preview/` | 初态检查 `initial.json` 与拼图 `initial_states.jpg`；每条渲染过的轨迹一个 `demo_<seed>/`：评审图、视频、机器人相机图像 |
-| 生成目录（`--output`） | 轨迹文件 `trajectories.hdf5`（成功）、`trajectories_failed.hdf5`（失败），每个 seed 的报告 `episodes/<seed>.json`，汇总 `summary.json` |
+| `outputs/scenes/<编号>/<后端>/` | 轨迹：每段 `part<k>/` 有 `trajectories.hdf5`（成功）、`trajectories_failed.hdf5`（失败）、每个 seed 的报告 `episodes/<seed>.json` 和日志 `run.log`；汇总 `summary.json`、`summary.csv` |
 | LeRobot 目录（`--output`） | LeRobot v3.0 数据集 |
 
 轨迹文件是 Isaac Lab 录制器的格式，可在物理中重放，也可逐步恢复状态；带图片的数据只来自渲染后的 LeRobot 数据集。
@@ -28,38 +29,38 @@
 
 ## 命令
 
-**检查初态**：对 seed 0–24 做与生成时相同的初始化（无穿透检查、静置 1 s），结果写入预览目录，约 2 分钟：
+**检查初态**：对 seed 0–24 做与生成时相同的初始化（无穿透检查、静置 1 s），约 2 分钟：
 
 ```bash
 uv run python scripts/scenes/check_scene.py 000000 --gpu 0
 ```
 
-**生成轨迹**：一个进程连续跑一段 seed。100 个 seed 分 4 个进程在 4 张卡上约 30 分钟：
+**生成轨迹**（省略的参数有默认值）：
 
 ```bash
-uv run python scripts/scenes/generate.py 000000 --seeds 0:25 --output outputs/scenes/000000/gen/part0 --gpu 0
-uv run python scripts/scenes/generate.py 000000 --seeds 25:50 --output outputs/scenes/000000/gen/part1 --gpu 1
-# ……其余各段同理，然后汇总：
-uv run python scripts/scenes/summarize.py outputs/scenes/000000/gen/part* --output outputs/scenes/000000/gen/summary.json
+uv run python scripts/scenes/generate.py 000000 --seeds 0:100 --physics isaac-cpu --gpus 0 1 2 3
 ```
 
-批量运行用固定提交的独立检出，运行期间不改代码、场景和资产。
+- `--physics` 必填，列出物理后端，与第 2 章的命名一致；场景生成目前只验证了 `isaac-cpu`。
+- seed 按 `--gpus` 分成连续的几段，每段一个进程，每张卡同时跑一段；某一段失败不影响其他段。本例 100 个 seed 在 4 张卡上约 30 分钟。
+- 可以同时给多个场景。每次运行会替换 `outputs/scenes/<编号>/<后端>/` 中原有的结果；`--output` 可以换根目录。
+- 批量运行用固定提交的独立检出，运行期间不改代码、场景和资产；`summary.json` 记下所用的提交。
 
-**渲染**：按录制的状态逐步恢复场景再渲染，不重新仿真。先为所有成功轨迹渲染评审图（每条约 1 s，另有约 1 分钟启动），再随机选 5 条渲染视频和机器人相机图像（每条约 2.5 分钟）：
+**渲染**：按录制的状态逐步恢复场景再渲染，不重新仿真。先为所有成功轨迹渲染评审图，再随机选 5 条渲染视频和机器人相机图像：
 
 ```bash
-uv run python scripts/scenes/render.py outputs/scenes/000000/gen/part0/trajectories.hdf5 --sheets --gpu 0
-uv run python scripts/scenes/render.py outputs/scenes/000000/gen/part0/trajectories.hdf5 --count 5 --gpu 0
+uv run python scripts/scenes/render.py outputs/scenes/000000/isaac-cpu/part*/trajectories.hdf5 --sheets --gpus 0 1 2 3
+uv run python scripts/scenes/render.py outputs/scenes/000000/isaac-cpu/part*/trajectories.hdf5 --count 5 --gpus 0 1 2 3
 ```
 
-- 每次给一个轨迹文件；分段生成时每段各运行一次，或用 `--demos demo_27 demo_51` 指定轨迹。
-- `--count` 随机选择，`--seed` 固定选法；`--views`、`--cameras` 选择视角和相机。
+- 选中的轨迹分到 `--gpus` 列出的卡上，每张卡同时一个进程。评审图每条约 1 s，视频和相机图像每条约 2.5 分钟，每个进程另有约 1 分钟启动。
+- `--count` 随机选择，`--seed` 固定选法；`--demos demo_27 demo_51` 指定轨迹；`--views`、`--cameras` 选择视角和相机。
 - `--sheets` 只替换 `sheet.jpg`，已渲染的视频和图像保留。
 
 **导出 LeRobot**：把预览目录中渲染过机器人相机图像的轨迹写成数据集，本例 5 条约 7.5 分钟：
 
 ```bash
-uv run python scripts/scenes/to_lerobot.py outputs/scenes/000000/gen/part*/trajectories.hdf5 --output outputs/scenes/000000/lerobot
+uv run python scripts/scenes/to_lerobot.py outputs/scenes/000000/isaac-cpu/part*/trajectories.hdf5 --output outputs/scenes/000000/lerobot
 ```
 
 `task` 默认是每步所属子任务的英文指令，`--task instruction` 改用高层指令 `tidy up the table`。读取时用 `video_backend='pyav'`：LeRobot 默认的 torchcodec 需要系统里有 FFmpeg 4–7 的共享库。
@@ -71,31 +72,29 @@ dataset = LeRobotDataset('table-1000/000000', root='outputs/scenes/000000/lerobo
 
 ## 验收
 
-**初态**：先看预览目录的 `initial.json`，再看拼图。
+生成失败的段或渲染失败的进程会让脚本以非零退出码结束。先看 `assets/scenes/<编号>/summary.json`，不设硬性门槛，用于判断场景和专家是否可用、比较不同版本：
 
-| 内容 | 本例 | 要求 |
+| 字段 | 本例 | 看什么 |
 | --- | --- | --- |
-| `invalid` | 0 | 没有无法初始化的 seed |
-| `mean_attempts` | 1.0 | 越接近 1 越好；偏大说明摆放区域太挤或静置不稳 |
-| `seeds.<seed>.attempts[].settle` | 静置时笔最多移动 0.4 mm、转动 0.2°，柜子不动，机器人无接触 | 移动不超过 3 mm、2° |
-| `initial_states.jpg` | 见本章开头 | 摆放合理，变化足够（位置、朝向都在变） |
-
-**生成**：看汇总 `summary.json`，不设硬性门槛，用于判断专家是否可用、比较不同版本：
-
-| 字段 | 本例（seed 0–99） | 看什么 |
-| --- | --- | --- |
-| `success_rate` | 0.98 | 不要求 100%，失败的轨迹不进数据集 |
-| `failures` | 2 条，都在 `close the drawer` | 按子任务和原因分组，集中出现的原因值得修 |
-| `with_unexpected_contacts` | 0 | 机器人除手指外碰到物体的轨迹数，应为 0 |
-| `mean_duration_s` | 27.7 s | 轨迹时长 |
-| `mean_wall_s` | 63 s（最长 152 s） | 每条墙钟耗时，其中规划约 32 s |
+| `initial.invalid`、`without_state` | 0 | 没有无法初始化的 seed |
+| `initial.mean_attempts` | 1.0 | 越接近 1 越好；偏大说明摆放区域太挤或静置不稳 |
+| `initial.settle` | 笔最多移动 0.4 mm、转动 0.2°，柜子不动 | 每件物体移动不超过 3 mm、2° |
+| `initial.robot_contacts` | 0 | 静置时机器人不碰任何东西 |
+| `generation.<后端>.commit` | 生成所用的提交 | 不带 `+dirty` |
+| `generation.<后端>.success_rate` | 0.98 | 不要求 100%，失败的轨迹不进数据集 |
+| `generation.<后端>.failures` | 2 条都在关抽屉：没握住把手、推动了柜子 | 按子任务和原因分组，集中出现的原因值得修 |
+| `generation.<后端>.with_unexpected_contacts` | 0 | 机器人除手指外碰到物体的轨迹数，应为 0 |
+| `generation.<后端>.missing_seeds`、`failed_parts` | 空 | 每个 seed 都有结果 |
+| `generation.<后端>.mean_duration_s`、`mean_wall_s` | 27.7 s、64 s | 轨迹时长与每条墙钟耗时 |
+| `preview` | 98 条评审图，5 条视频 | 评审图覆盖所有成功轨迹 |
 
 单条轨迹的细节在 `episodes/<seed>.json`：每次尝试的初态、子任务起止、每次规划、手指碰过的部件、换用的候选、物体终态。
 
-**评审**：
+然后看图片和视频：
 
-1. 每条成功轨迹的 `sheet.jpg`（12 帧，标注子任务）由大模型逐条查看：流程完整，物体到位（笔在抽屉里），抽屉最后关好、手已撤开。本例 98 条全部通过。
-2. 随机 5 条的视频人工查看：手、臂与物体无可见穿模，夹持稳定，物体无异常滑移或跳动。
-3. LeRobot 数据集能读回，帧数与轨迹步数一致。
+1. `preview/initial_states.jpg`：摆放合理，变化足够（位置、朝向都在变），见本章开头。
+2. 每条成功轨迹的 `preview/demo_<seed>/sheet.jpg`（12 帧，标注子任务）由大模型逐条查看：流程完整，物体到位（笔在抽屉里），抽屉最后关好、手已撤开。
+3. 有视频的 5 条人工查看 `wide.mp4`、`close.mp4`：手、臂与物体无可见穿模，夹持稳定，物体无异常滑移或跳动。
+4. LeRobot 数据集能读回，帧数与轨迹步数一致。
 
 不通过时：摆放问题改 `scene.py` 的 `initialize`，专家问题改 `expert.py`，然后重新检查初态、生成和评审。同一 seed 单独重跑时动作相同，但规划有时限，负载不同时路径可能不同，复现以录制的轨迹文件为准。
