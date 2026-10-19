@@ -115,9 +115,9 @@ uv run python scripts/scenes/run_expert.py 000000 --physics isaac-cpu --gpus 0 1
 按录制的状态逐步恢复场景再渲染，不重新仿真。验收时看前 5 条成功轨迹和全部失败轨迹，机器人的三个相机和 `wide` 视角合成一条，带标注：
 
 ```bash
-uv run python scripts/scenes/render.py 000000 --physics isaac-cpu --gpus 0 1 2 3 \
+uv run python scripts/scenes/render.py 000000 --physics isaac-cpu --gpus 0 1 2 3 --jobs-per-gpu 2 \
     --cameras face_view left_wrist_view right_wrist_view wide --merge --captions --count 5
-uv run python scripts/scenes/render.py 000000 --physics isaac-cpu --gpus 0 1 2 3 \
+uv run python scripts/scenes/render.py 000000 --physics isaac-cpu --gpus 0 1 2 3 --jobs-per-gpu 2 \
     --cameras face_view left_wrist_view right_wrist_view wide --merge --captions --failed
 ```
 
@@ -130,6 +130,7 @@ uv run python scripts/scenes/render.py 000000 --physics isaac-cpu --gpus 0 1 2 3
 - 只写本次渲染的录像，已有的其他录像保留；同一 seed 再渲染时覆盖。
 - 帧与轨迹对齐：T 步的轨迹，录像正好 T 帧（25 fps，1 倍速），第 t 帧是第 t 步动作之前的状态，与 HDF5 的 `obs[t]`、`actions[t]` 对应。不带标注的单相机录像可以直接用来制作数据集。
 - 每帧恢复状态后渲染一次；每条的第 0 帧多渲染几次，因为它接在上一条轨迹的结尾之后（RT2 在时间上降噪，会混入之前的画面）。
+- 耗时：本例 4 个相机合成一条，每条约 1–1.5 分钟（约 650 帧），每个进程另需约 35 s 启动。轨迹数不多于进程数时每条一个进程最快，所以上面用 `--jobs-per-gpu 2`：5 条约 2 分钟。
 
 **产出**（与轨迹同一目录 `data/scenes/<编号>/<后端>/`，失败的轨迹在 `fails/` 下，结构相同）：
 
