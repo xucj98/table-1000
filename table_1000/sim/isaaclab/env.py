@@ -410,12 +410,14 @@ class RobotEnv:
         """
         origins = self.env.scene.env_origins
         poses, velocities, joints = {}, {}, {}
+        # On CPU, .numpy() of a PhysX data buffer shares its memory, which later steps overwrite:
+        # what is returned is copied.
 
         def add(key, pose, velocity):
             pose = pose.clone()
             pose[:, :3] -= origins
             poses[key] = transforms(pose).cpu().numpy()
-            velocities[key] = velocity.cpu().numpy()
+            velocities[key] = velocity.cpu().numpy().copy()
 
         for name in self.shapes:
             data = self.env.scene[name].data
@@ -427,7 +429,7 @@ class RobotEnv:
                 for body, path in structure.paths.items():
                     index = articulation.body_names.index(path.rsplit('/', 1)[-1])
                     add(f'{name}:{body}', data.body_link_pose_w[:, index], data.body_com_vel_w[:, index])
-                joints[name] = dict(zip(articulation.joint_names, data.joint_pos.T.cpu().numpy()))
+                joints[name] = dict(zip(articulation.joint_names, data.joint_pos.T.cpu().numpy().copy()))
             else:
                 for body in structure.paths:
                     data = self.env.scene[lab_scene.body_entity(name, body)].data

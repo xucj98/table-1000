@@ -54,6 +54,16 @@ def test_merge_orders_episodes_by_seed(tmp_path):
         assert file['data'].attrs['total'] == 6 and 'env_args' in file['data'].attrs
 
 
+def test_merge_takes_attributes_from_a_file_with_episodes(tmp_path):
+    with h5py.File(tmp_path / 'stopped.hdf5', 'w') as file:     # created, stopped before the first export
+        file.create_group('data').attrs.update(total=0, env_args=json.dumps({'env_name': '', 'type': 2}))
+    trajectory_file(tmp_path / 'b.hdf5', [7])
+    merge([tmp_path / 'stopped.hdf5', tmp_path / 'b.hdf5'], tmp_path / 'all.hdf5')
+    with h5py.File(tmp_path / 'all.hdf5', 'r') as file:
+        assert list(file['data']) == ['demo_7']
+        assert json.loads(file['data'].attrs['env_args'])['robot'] == 'x1pro'
+
+
 def test_summary_counts_every_seed():
     reports = [{'seed': 0, 'status': 'success', 'duration_s': 20., 'wall_s': 60.},
                {'seed': 1, 'status': 'failed', 'failure': {'subtask': 'close the drawer', 'reason': 'handle not held'},

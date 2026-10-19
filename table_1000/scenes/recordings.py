@@ -15,14 +15,18 @@ from pathlib import Path
 
 def merge(sources, target):
     """Copy every episode of the Isaac Lab trajectory files ``sources`` into ``target``, in seed order;
-    returns the number of episodes. ``data`` keeps the first file's attributes, with the summed ``total``."""
+    returns the number of episodes. ``data`` keeps the attributes of the first file with an episode
+    (Isaac Lab completes ``env_args`` at the first export; a process that stopped before it left
+    only ``env_name`` and ``type``), with the summed ``total``."""
     import h5py
     episodes, attrs = [], {}
     files = [h5py.File(path, 'r') for path in sources if Path(path).is_file()]
     try:
         for file in files:
-            attrs = attrs or dict(file['data'].attrs)
+            if not attrs and len(file['data']):
+                attrs = dict(file['data'].attrs)
             episodes += [(int(name.split('_')[1]), file, name) for name in file['data']]
+        attrs = attrs or (dict(files[0]['data'].attrs) if files else {})
         with h5py.File(target, 'w') as out:
             data = out.create_group('data')
             data.attrs.update(attrs)
