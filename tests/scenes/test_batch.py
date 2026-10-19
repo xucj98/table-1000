@@ -65,13 +65,18 @@ def test_summary_counts_every_seed():
                                    'pick up the pen: error': [3]}
 
 
-def test_render_chooses_succeeded_seeds():
-    assert render.choose([9, 2, 5]) == [2, 5, 9]
-    assert render.choose([9, 2, 5], count=2) == [2, 5]
-    assert render.choose([9, 2, 5], seeds=[9, 5], count=1) == [5]
+def test_render_chooses_episodes():
+    succeeded, failed = [9, 2, 5], [7, 3]
+    assert render.choose(succeeded, failed) == [2, 5, 9]
+    assert render.choose(succeeded, failed, count=2) == [2, 5]
+    assert render.choose(succeeded, failed, failures=True) == [3, 7]
+    assert render.choose(succeeded, failed, failures=True, count=1) == [3]
+    assert render.choose(succeeded, failed, seeds=[9, 3, 5], count=2) == [3, 5]
     with pytest.raises(ValueError) as error:
-        render.choose([9, 2, 5], seeds=[2, 3])
-    assert error.value.args[0] == [3]
+        render.choose(succeeded, failed, seeds=[2, 4])
+    assert error.value.args[0] == [4]
+    with pytest.raises(ValueError):
+        render.choose(succeeded, failed, seeds=[2], failures=True)
 
 
 @pytest.fixture
@@ -87,10 +92,11 @@ def batch(tmp_path):
 def test_render_rejects_seeds_without_episode(batch, tmp_path, capsys):
     with pytest.raises(SystemExit):
         render.main(['000000', '--physics', 'isaac-cpu', '--seeds', '1:4', '--input', str(tmp_path / 'data')])
-    assert 'seeds 2:4 have no succeeded episode; the batch covers 0:5, failed: 2:4' in capsys.readouterr().err
+    assert 'seeds 2:4 have no episode; the batch covers 0:5, failed: none' in capsys.readouterr().err
 
 
-def test_render_replaces_earlier_videos(batch, tmp_path, monkeypatch):
+def test_render_keeps_other_videos(batch, tmp_path, monkeypatch):
+    trajectory_file(batch / 'trajectories_failed.hdf5', [3, 2])
     video_path(batch, 4).write_bytes(b'old')
     chosen = []
 
@@ -98,21 +104,19 @@ def test_render_replaces_earlier_videos(batch, tmp_path, monkeypatch):
         assert gpus == [0, 1, 0, 1]
         for command, _, _ in commands:
             seeds = parse_seeds(command[command.index('--seeds') + 1:command.index('--batch')])
-            chosen.extend(seeds)
+            chosen.append(seeds)
             for seed in seeds:
                 video_path(batch, seed).write_bytes(b'new')
         return []
 
     monkeypatch.setattr(physics_test, 'run_jobs', jobs)
-    render.main(['000000', '--physics', 'isaac-cpu', '--count', '2', '--gpus', '0', '1',
-                 '--jobs-per-gpu', '2', '--input', str(tmp_path / 'data'), '--root', str(tmp_path)])
-    assert chosen == [0, 1] and videos(batch) == [0, 1]
-    assert json.loads((batch / 'summary.json').read_text())['videos'] == '0:2'
-    chosen.clear()
-    trajectory_file(batch / 'trajectories_failed.hdf5', [3, 2])
-    render.main(['000000', '--physics', 'isaac-cpu', '--count', '1', '--failed', '--gpus', '0', '1',
-                 '--jobs-per-gpu', '2', '--input', str(tmp_path / 'data'), '--root', str(tmp_path)])
-    assert chosen == [0, 2, 3] and videos(batch) == [0, 2, 3]
+    common = ['000000', '--physics', 'isaac-cpu', '--gpus', '0', '1', '--jobs-per-gpu', '2',
+              '--input', str(tmp_path / 'data'), '--root', str(tmp_path)]
+    render.main([*common, '--count', '2'])
+    render.main([*common, '--failed'])
+    assert chosen == [[0], [1], [2], [3]]
+    assert videos(batch) == [0, 1, 2, 3, 4] and video_path(batch, 4).read_bytes() == b'old'
+    assert json.loads((batch / 'summary.json').read_text())['videos'] == '0:5'
 
 
 def test_run_expert_merges_parts(tmp_path, monkeypatch):

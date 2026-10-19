@@ -110,16 +110,18 @@ uv run python scripts/scenes/run_expert.py 000000 --physics isaac-cpu --gpus 0 1
 
 ## 3. 渲染录像
 
-按录制的状态逐步恢复场景再渲染，不重新仿真。验收时取前 5 条成功轨迹：
+按录制的状态逐步恢复场景再渲染，不重新仿真。验收时看前 5 条成功轨迹和全部失败轨迹：
 
 ```bash
 uv run python scripts/scenes/render.py 000000 --physics isaac-cpu --gpus 0 1 2 3 --count 5
+uv run python scripts/scenes/render.py 000000 --physics isaac-cpu --gpus 0 1 2 3 --failed
 ```
 
-- 轨迹默认是这一批全部成功的轨迹，可以缩小：`--count N` 按 seed 从小到大取前 N 条成功轨迹；`--seeds` 指定 seed，写法同第 1 步，如 `--seeds 20 64` 或 `--seeds 50:100`。两者可以同时用，如 `--seeds 50:100 --count 5`。指定的 seed 不在成功轨迹中时报错，并列出这一批的 seed 区间和失败的 seed。
-- `--failed` 另外渲染这一批全部失败的轨迹，画面上标注失败的子任务和原因，用来查看失败的过程：`--count 5 --failed`。
+- 默认从这一批成功的轨迹中选，`--failed` 改为从失败的轨迹中选；失败的录像标注失败的子任务和原因。
+- `--count N` 取所选轨迹中按 seed 从小到大的前 N 条，如 `--count 5`、`--failed --count 2`；不给就是全部。
+- `--seeds` 指定 seed，写法同第 1 步，如 `--seeds 20 64` 或 `--seeds 50:100`，成功或失败的都可以（带 `--failed` 时只能是失败的）。指定的 seed 没有对应轨迹时报错，并列出这一批的 seed 区间和失败的 seed。
 - `--input DIR` 指定轨迹的根目录（默认 `data/scenes`），读取并写回 `DIR/<编号>/<后端>/`。
-- 每次运行替换这一批已有的录像。
+- 只写本次渲染的录像，已有的其他录像保留；同一 seed 再渲染时覆盖。
 - 录像每个控制步一帧，本例每条约 700 帧、约 2 分钟；5 条在 4 张卡上约 4 分钟。
 
 **产出**（与轨迹同一目录 `data/scenes/<编号>/<后端>/`）：
@@ -130,7 +132,7 @@ uv run python scripts/scenes/render.py 000000 --physics isaac-cpu --gpus 0 1 2 3
 
 `summary.json` 的 `videos` 记下有录像的 seed。
 
-**验收**：人工看这 5 条录像：流程完整，物体到位（笔在抽屉里），抽屉最后关好、手已撤开；手、臂与物体无可见穿模，夹持稳定，物体无异常滑移或跳动。
+**验收**：人工看 5 条成功轨迹的录像：流程完整，物体到位（笔在抽屉里），抽屉最后关好、手已撤开；手、臂与物体无可见穿模，夹持稳定，物体无异常滑移或跳动。失败轨迹的录像用来判断失败原因是否值得修改专家。
 
 ## 不通过时
 

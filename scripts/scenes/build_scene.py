@@ -165,6 +165,7 @@ def main(argv=None):
     output = ((args.output or args.assets / 'scenes') / args.scene).resolve()
     staging = root / 'outputs' / 'scenes' / args.scene / 'build'
     shutil.rmtree(staging, ignore_errors=True)
+    checkout = commit(root)
     first = args.grid[0] * args.grid[1] if args.grid else 0
     jobs = []
     for index, part in enumerate(split(seeds, len(args.gpus) * args.jobs_per_gpu)):
@@ -196,9 +197,9 @@ def main(argv=None):
             shutil.rmtree(path)
         else:
             path.unlink(missing_ok=True)
-    attrs.update(commit=commit(root) or '')
+    attrs.update(commit=checkout or '')
     write_states(output / 'initial_states.hdf5', states, attrs)
-    summary = {'scene': args.scene, 'robot': robot, 'physics': 'isaac-cpu', 'commit': commit(root),
+    summary = {'scene': args.scene, 'robot': robot, 'physics': 'isaac-cpu', 'commit': checkout,
                'seeds': seeds_record(seeds), **summarize(records), 'camera': camera,
                'total_s': time.perf_counter() - started}
     (output / 'initial.json').write_text(json.dumps({**summary, 'records': dict(sorted(records.items()))},

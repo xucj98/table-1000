@@ -7,11 +7,12 @@ written by ``run_expert.py``) and writes ``demo_<seed>.mp4`` into it: the
 scene's fixed views side by side, one frame per control step (25 fps, 1x),
 captioned with the time and subtask.
 
-The episodes are the batch's succeeded ones, by default all; ``--seeds`` (as in
-``build_scene.py``) and ``--count N`` (the first N by seed) narrow them;
-``--failed`` adds every failed episode, captioned with its failure. A run
-replaces the batch's earlier videos. Every frame restores the recorded state of
-that step; nothing is simulated. The episodes are split into
+The episodes are the batch's succeeded ones, or with ``--failed`` its failed
+ones (captioned with the failure); ``--seeds`` (as in ``build_scene.py``) picks
+episodes, succeeded or failed (only failed ones with ``--failed``), and
+``--count N`` keeps the first N by seed. A run writes the videos of its episodes
+and keeps the others. Every frame restores the recorded state of that step;
+nothing is simulated. The episodes are split into
 ``len(gpus) × jobs-per-gpu`` parts, one process each (logs in
 ``outputs/scenes/<scene>/<backend>/render/``); ``summary.json`` lists the
 seeds with a video.
@@ -28,12 +29,15 @@ import traceback
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-def choose(succeeded, seeds=None, count=None):
-    """The succeeded seeds to render: those of ``seeds`` (all by default), the first ``count``.
-    Raises ``ValueError`` naming the requested seeds that did not succeed."""
-    chosen = sorted(succeeded)
-    if seeds is not None:
-        missing = sorted(set(seeds) - set(succeeded))
+def choose(succeeded, failed, seeds=None, count=None, failures=False):
+    """The episodes to render: the succeeded ones (the failed ones with ``failures``), or those of
+    ``seeds`` among them (among all episodes without ``failures``); the first ``count``.
+    Raises ``ValueError`` naming the requested seeds without such an episode."""
+    pool = set(failed) if failures else set(succeeded) | set(failed)
+    if seeds is None:
+        chosen = sorted(failed if failures else succeeded)
+    else:
+        missing = sorted(set(seeds) - pool)
         if missing:
             raise ValueError(missing)
         chosen = sorted(seeds)
@@ -95,9 +99,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('scene')
     parser.add_argument('--physics', required=True, help='the backend the batch was generated on')
-    parser.add_argument('--count', type=int, help='the first N succeeded episodes by seed')
-    parser.add_argument('--seeds', nargs='+', help='a:b (a to b - 1) and single seeds of succeeded episodes')
-    parser.add_argument('--failed', action='store_true', help='also every failed episode')
+    parser.add_argument('--failed', action='store_true', help='the failed episodes instead of the succeeded ones')
+    parser.add_argument('--seeds', nargs='+', help='a:b (a to b - 1) and single seeds')
+    parser.add_argument('--count', type=int, help='the first N of the chosen episodes by seed')
     parser.add_argument('--gpus', type=int, nargs='+', default=[0], help='physical GPUs')
     parser.add_argument('--jobs-per-gpu', type=int, default=1, help='processes at a time on each GPU')
     parser.add_argument('--input', type=Path, default=ROOT / 'data' / 'scenes',
@@ -124,24 +128,24 @@ def main(argv=None):
     if not trajectories.is_file():
         parser.error(f'no trajectories {trajectories}; run run_expert.py first')
     summary = json.loads((directory / 'summary.json').read_text())
-    with h5py.File(trajectories, 'r') as file:
-        succeeded = [int(name.split('_')[1]) for name in file['data']]
+    def episodes(path):
+        if not path.is_file():
+            return []
+        with h5py.File(path, 'r') as file:
+            return [int(name.split('_')[1]) for name in file['data']]
+
+    succeeded, failed = episodes(trajectories), episodes(directory / 'trajectories_failed.hdf5')
     try:
-        seeds = choose(succeeded, parse_seeds(args.seeds) if args.seeds else None, args.count)
+        seeds = choose(succeeded, failed, parse_seeds(args.seeds) if args.seeds else None, args.count, args.failed)
     except ValueError as error:
-        failed = sorted(seed for seeds in summary['failures'].values() for seed in seeds)
-        parser.error(f'seeds {seed_range(error.args[0])} have no succeeded episode; the batch covers '
+        kind = 'failed episode' if args.failed else 'episode'
+        parser.error(f'seeds {seed_range(error.args[0])} have no {kind}; the batch covers '
                      f'{summary["seeds"]["range"]}, failed: {seed_range(failed) or "none"}')
-    if args.failed and (directory / 'trajectories_failed.hdf5').is_file():
-        with h5py.File(directory / 'trajectories_failed.hdf5', 'r') as file:
-            seeds = sorted(seeds + [int(name.split('_')[1]) for name in file['data']])
     if not seeds:
         parser.error('no episodes to render')
     root = args.root.resolve()
     staging = root / 'outputs' / 'scenes' / args.scene / args.physics / 'render'
     shutil.rmtree(staging, ignore_errors=True)
-    for video in directory.glob('demo_*.mp4'):
-        video.unlink()
     jobs = []
     for index, part in enumerate(split(seeds, len(args.gpus) * args.jobs_per_gpu)):
         command = [sys.executable, str(Path(__file__).resolve()), args.scene, '--worker', '--physics', args.physics,

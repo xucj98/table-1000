@@ -110,6 +110,7 @@ def main(argv=None):
     staging = root / 'outputs' / 'scenes' / args.scene / args.physics
     shutil.rmtree(directory, ignore_errors=True)
     shutil.rmtree(staging, ignore_errors=True)
+    checkout = commit(root)
     jobs = []
     for index, part in enumerate(split(seeds, len(args.gpus) * args.jobs_per_gpu)):
         work = staging / f'part{index}'
@@ -129,7 +130,7 @@ def main(argv=None):
     for path in sorted(staging.glob('part*/episodes/*.json')):
         reports.append(json.loads(path.read_text()))
         shutil.move(path, directory / 'episodes' / path.name)
-    summary = {'scene': args.scene, 'robot': robot, 'physics': args.physics, 'commit': commit(root),
+    summary = {'scene': args.scene, 'robot': robot, 'physics': args.physics, 'commit': checkout,
                **summarize(reports, seeds), 'total_s': time.perf_counter() - started, 'videos': ''}
     (directory / 'summary.json').write_text(json.dumps(summary, indent=1, ensure_ascii=False, default=float) + '\n')
     print('SUMMARY', directory / 'summary.json',
