@@ -40,7 +40,7 @@ uv run python scripts/scenes/build_scene.py 000000 --seeds 0:100 --gpus 0 1 2 3 
 - `--output DIR` 指定输出根目录（默认 `assets/scenes`），结果写到 `DIR/<编号>/`；自定义输出时不更新缩略图。
 - 每次运行整体替换输出目录中的初态。代码不变时同一 seed 的摆放相同，静置后的状态可能有微小差异；已生成的轨迹各自记录了起点，不受影响。换相机重新出图也是重跑这一步。
 
-不渲染时 GPU 几乎不参与计算，每个进程约占 0.5 GB 显存和 5 个 CPU 核，可以把 `--jobs-per-gpu` 调大；渲染时显存占用大，`--jobs-per-gpu` 宜小。本例 100 个 seed 每个约 1.6 s（带拼图约 2.1 s），4 张卡约 1 分钟。
+不渲染时 GPU 几乎不参与计算，每个进程约占 0.5 GB 显存和 5 个 CPU 核，可以把 `--jobs-per-gpu` 调大；渲染时显存占用大，`--jobs-per-gpu` 宜小。本例 100 个 seed，带 `--grid 5x5` 在 4 张卡上约 3 分钟：每个进程都会渲染本段的前 25 个有效初态，本例每段正好 25 个，所以全部渲染了。
 
 **产出** `assets/scenes/<编号>/`：
 
@@ -74,7 +74,7 @@ uv run python scripts/scenes/run_expert.py 000000 --physics isaac-cpu --gpus 0 1
 - 对 `initial_states.hdf5` 中的全部 seed 生成轨迹，seed 由第 1 步确定，这一步不再选择。初态记录的机器人与 `scene.py` 不一致时报错，先重跑第 1 步。
 - `--input DIR` 指定初态的根目录（默认 `assets/scenes`，读取 `DIR/<编号>/initial_states.hdf5`），`--output DIR` 指定轨迹的根目录（默认 `data/scenes`，写到 `DIR/<编号>/<后端>/`）。
 - 每次运行整体替换输出目录，包括上一批的录像。
-- 本例 100 个 seed、8 个进程约 16 分钟。
+- 本例 100 个 seed，`--gpus` 4 张卡、`--jobs-per-gpu 2` 共 8 个进程，约 16 分钟，每条墙钟约 62 s。这和 8 张卡各跑 1 个进程差不多快：物理和规划都在 CPU 上，GPU 不是瓶颈。
 
 **产出** `data/scenes/<编号>/<后端>/`：
 
@@ -93,20 +93,22 @@ uv run python scripts/scenes/run_expert.py 000000 --physics isaac-cpu --gpus 0 1
 | --- | --- | --- |
 | `commit` | 生成所用的提交 | 不带 `+dirty` |
 | `seeds` | `{"range": "0:100", "count": 100}` | 这一批覆盖的 seed；除 `failures` 列出的以外都成功 |
-| `success_rate` | 0.97 | 成功的 seed 占全部 seed 的比例；不要求 100%，失败的轨迹不进数据集 |
-| `failures` | 3 条都在关抽屉：没握住把手（seed 20）、推动了柜子（seed 64、66） | 按“子任务: 原因”列出失败的 seed，集中出现的原因值得修 |
-| `mean_duration_s`、`mean_wall_s` | 27.7 s、64 s | 轨迹时长与每条墙钟耗时 |
+| `success_rate` | 0.95 | 成功的 seed 占全部 seed 的比例；不要求 100%，失败的轨迹不进数据集 |
+| `failures` | 5 条：关抽屉时推动了柜子（seed 11、72）、没握住把手（seed 25），抓笔时 IK 无解（seed 82），放笔时碰撞（seed 55） | 按“子任务: 原因”列出失败的 seed，集中出现的原因值得修 |
+| `mean_duration_s`、`mean_wall_s` | 27.7 s、62 s | 轨迹时长与每条墙钟耗时 |
 
 失败原因有三个来源：专家脚本自己的检查（`ctx.fail('handle not held')`）、运动规划失败（如 `IK Failed`）、专家代码出错（`error`，报告中附调用栈）。进程中途退出时，没有留下结果的 seed 记为 `-: process exited`，日志在 `outputs/` 中。例：
 
 ```json
 "failures": {
-  "close the drawer: handle not held": [20],
-  "close the drawer: cabinet moved instead of the drawer": [64, 66]
+  "close the drawer: cabinet moved instead of the drawer": [11, 72],
+  "close the drawer: handle not held": [25],
+  "pick up the pen: IK Failed! Cannot find valid solution.": [82],
+  "put the pen into the drawer: collision": [55]
 }
 ```
 
-表中数值来自 b4c35d4 的批次，新批次以实际生成的摘要为准。
+表中数值来自 bc80e2a 的批次，新批次以实际生成的摘要为准。代码不变时，失败的 seed 在不同批次间也会变化（上一批失败的是 20、64、66）：静置后的初态有微小差异，规划也有时限。
 
 ## 3. 渲染录像
 
@@ -122,7 +124,7 @@ uv run python scripts/scenes/render.py 000000 --physics isaac-cpu --gpus 0 1 2 3
 - `--seeds` 指定 seed，写法同第 1 步，如 `--seeds 20 64` 或 `--seeds 50:100`，成功或失败的都可以（带 `--failed` 时只能是失败的）。指定的 seed 没有对应轨迹时报错，并列出这一批的 seed 区间和失败的 seed。
 - `--input DIR` 指定轨迹的根目录（默认 `data/scenes`），读取并写回 `DIR/<编号>/<后端>/`。
 - 只写本次渲染的录像，已有的其他录像保留；同一 seed 再渲染时覆盖。
-- 录像每个控制步一帧，本例每条约 700 帧、约 2 分钟；5 条在 4 张卡上约 4 分钟。
+- 本例每条录像约 700 帧、长约 28 s。渲染时每帧要恢复状态、渲染两次（RT2 在时间上降噪，第一次会混入上一个状态），每条约 1 分钟；5 条在 4 张卡上约 3 分钟，含进程启动。
 
 **产出**（与轨迹同一目录 `data/scenes/<编号>/<后端>/`）：
 
