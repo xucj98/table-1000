@@ -4,8 +4,8 @@
 
 Reads the batch ``<input>/<scene>/<backend>/`` (``<input>`` = ``data/scenes``,
 written by ``run_expert.py``) and writes, per episode, one video per camera
-``videos/<camera>/demo_<seed>.mp4`` (``fails/`` for failed episodes), or with
-``--merge`` the cameras in one grid ``videos/demo_<seed>.mp4``. ``--cameras``
+``videos/<seed>/<camera>.mp4`` (``fails/`` for failed episodes), or with
+``--merge`` the cameras in one grid ``videos/<seed>/merge.mp4``. ``--cameras``
 names robot cameras (RGB) and fixed views of the scene. A video of an episode
 of T steps has T frames at 25 fps: frame t is the state before step t, the
 observation that ``actions[t]`` answers. ``--captions`` adds a band above the

@@ -3,8 +3,8 @@
 ``trajectories.hdf5`` and ``trajectories_failed.hdf5`` hold one ``data/demo_<seed>``
 group per episode; the processes of a batch write their own files, merged at the
 end (:func:`merge`). Videos sit next to them, those of succeeded episodes in
-``videos/``, of failed ones in ``fails/``: ``<camera>/demo_<seed>.mp4`` per
-camera, ``demo_<seed>.mp4`` for the cameras merged into one. Each is encoded
+``videos/``, of failed ones in ``fails/``: ``<seed>/<camera>.mp4`` per camera,
+``<seed>/merge.mp4`` for the cameras merged into one. Each is encoded
 elsewhere and moved in when complete, so an interrupted render leaves nothing
 half-written.
 """
@@ -41,8 +41,8 @@ def demo_name(seed):
     return f'demo_{seed}'
 
 
-# The key of the merged videos in :func:`videos`.
-MERGED = 'merged'
+# The name of the merged video, in place of a camera's.
+MERGED = 'merge'
 
 
 def video_dir(directory, failed=False):
@@ -51,22 +51,19 @@ def video_dir(directory, failed=False):
 
 def video_path(directory, seed, camera=None, failed=False):
     """A camera's video of episode ``seed``, or the merged one (``camera`` None)."""
-    folder = video_dir(directory, failed)
-    return (folder if camera is None else folder / camera) / f'{demo_name(seed)}.mp4'
+    return video_dir(directory, failed) / str(seed) / f'{camera or MERGED}.mp4'
 
 
 def videos(directory):
     """Seeds with a video in a batch directory, ``{'videos': {camera: seeds}, 'fails': {...}}``,
     the merged videos under :data:`MERGED`."""
-    def seeds(folder):
-        return sorted(int(path.stem.split('_')[1]) for path in folder.glob('demo_*.mp4'))
-
     found = {}
     for failed, key in ((False, 'videos'), (True, 'fails')):
-        folder = video_dir(directory, failed)
-        kinds = {MERGED: seeds(folder)} if folder.is_dir() else {}
-        kinds.update({camera.name: seeds(camera) for camera in sorted(folder.glob('*/'))})
-        found[key] = {kind: values for kind, values in kinds.items() if values}
+        kinds = {}
+        for path in video_dir(directory, failed).glob('*/*.mp4'):
+            if path.parent.name.isdigit():
+                kinds.setdefault(path.stem, []).append(int(path.parent.name))
+        found[key] = {kind: sorted(seeds) for kind, seeds in sorted(kinds.items())}
     return found
 
 

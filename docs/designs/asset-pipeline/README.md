@@ -73,7 +73,7 @@ data/scenes/000000/<后端>/        一批专家轨迹：run_expert.py 生成，
   summary.json        验收入口：提交、seed、成功率、失败的 seed、耗时、有录像的 seed
   trajectories.hdf5、trajectories_failed.hdf5    成功与失败的轨迹，每条 data/demo_<seed>
   episodes/<seed>.json                           每条轨迹的报告
-  videos/<相机>/demo_<seed>.mp4                  成功轨迹的录像，每个相机一条；--merge 时为 videos/demo_<seed>.mp4
+  videos/<seed>/<相机>.mp4                       成功轨迹的录像，每个相机一条；--merge 时为 videos/<seed>/merge.mp4
   fails/                                         失败轨迹的录像，结构同 videos/
 ```
 

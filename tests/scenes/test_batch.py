@@ -106,6 +106,7 @@ def test_render_rejects_unknown_cameras(batch, tmp_path, capsys):
 def test_render_keeps_other_videos(batch, tmp_path, monkeypatch):
     trajectory_file(batch / 'trajectories_failed.hdf5', [3, 2])
     video_path(batch, 4, 'wide').parent.mkdir(parents=True)
+    assert video_path(batch, 4, 'wide') == batch / 'videos' / '4' / 'wide.mp4'
     video_path(batch, 4, 'wide').write_bytes(b'old')
     chosen = []
 
@@ -128,10 +129,11 @@ def test_render_keeps_other_videos(batch, tmp_path, monkeypatch):
     render.main([*common, '--cameras', 'wide', '--count', '2'])
     render.main([*common, '--cameras', 'wide', 'face_view', '--merge', '--failed'])
     assert chosen == [[0], [1], [2], [3]]
-    assert videos(batch) == {'videos': {'wide': [0, 1, 4]}, 'fails': {'merged': [2, 3]}}
+    assert videos(batch) == {'videos': {'wide': [0, 1, 4]}, 'fails': {'merge': [2, 3]}}
+    assert (batch / 'fails' / '2' / 'merge.mp4').is_file()
     assert video_path(batch, 4, 'wide').read_bytes() == b'old'
     summary = json.loads((batch / 'summary.json').read_text())
-    assert summary['videos'] == {'wide': '0:2 4'} and summary['fails'] == {'merged': '2:4'}
+    assert summary['videos'] == {'wide': '0:2 4'} and summary['fails'] == {'merge': '2:4'}
 
 
 def test_run_expert_merges_parts(tmp_path, monkeypatch):

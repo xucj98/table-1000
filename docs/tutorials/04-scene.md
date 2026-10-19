@@ -136,10 +136,10 @@ uv run python scripts/scenes/render.py 000000 --physics isaac-cpu --gpus 0 1 2 3
 
 | 文件 | 内容 |
 | --- | --- |
-| `videos/<相机>/demo_<seed>.mp4` | 一个相机的录像 |
-| `videos/demo_<seed>.mp4` | `--merge` 的合成录像 |
+| `videos/<seed>/<相机>.mp4` | 一个相机的录像 |
+| `videos/<seed>/merge.mp4` | `--merge` 的合成录像 |
 
-`summary.json` 的 `videos`、`fails` 按相机记下有录像的 seed，合成录像记在 `merged` 下。
+`summary.json` 的 `videos`、`fails` 按相机记下有录像的 seed，合成录像记在 `merge` 下。
 
 **验收**：人工看 5 条成功轨迹的录像：流程完整，物体到位（笔在抽屉里），抽屉最后关好、手已撤开；手、臂与物体无可见穿模，夹持稳定，物体无异常滑移或跳动。失败轨迹的录像用来判断失败原因是否值得修改专家。
 
