@@ -8,7 +8,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation, Slerp
 
 from table_1000.assets.references import expand_mapping
-from table_1000.physics.simulation import session_for, rotation as quaternion_matrix
+from table_1000.physics.simulation import session_for
 
 
 def keyframes(frames, dt):
@@ -40,36 +40,62 @@ def interpolate(frames, t):
 
 
 class TestContext:
-    """One isolated experiment. Importing test definitions starts no simulator."""
-    def __init__(self, asset_path, *, name, render=False, app=None, warmup=False):
+    """One isolated experiment. Importing test definitions starts no simulator.
+
+    ``num_envs`` simulates that many copies of the experiment in parallel. The
+    copies receive identical inputs; the test reads, records and renders the
+    first, so test scripts are unchanged.
+    """
+    def __init__(self, asset_path, *, name, render=False, app=None, physics='cpu', num_envs=1):
         import omni.usd
-        from isaacsim.core.api import World
-        World.clear_instance()
+        from isaaclab.sim import SimulationCfg, SimulationContext, PhysxCfg
+        SimulationContext.clear_instance()
         omni.usd.get_context().new_stage()
-        self.app, self.name, self.render, self.warmup = app, name, render, warmup
+        self.app, self.name, self.render = app, name, render
+        self.physics = physics
         self.asset_path = Path(asset_path).resolve()
-        self.world = World(physics_dt=.004, rendering_dt=.04, stage_units_in_meters=1, backend='numpy', device='cpu')
+        if physics == 'cpu':
+            import carb
+            settings = carb.settings.get_settings()
+            settings.set_bool('/physics/updateToUsd', True)
+            settings.set_bool('/physics/updateVelocitiesToUsd', True)
+        self.world = SimulationContext(SimulationCfg(
+            device='cpu' if physics == 'cpu' else 'cuda:0', dt=.004, render_interval=10,
+            use_fabric=physics == 'gpu',
+            physx=PhysxCfg(solver_type=1, enable_ccd=physics == 'cpu',
+                           enable_external_forces_every_iteration=physics == 'gpu',
+                           min_position_iteration_count=64 if physics == 'gpu' else 1,
+                           min_velocity_iteration_count=16 if physics == 'gpu' else 0)))
         pc = self.world.get_physics_context()
-        pc.enable_gpu_dynamics(False);pc.set_solver_type('TGS');pc.set_broadphase_type('MBP');pc.enable_ccd(True)
+        if physics == 'cpu':
+            pc.set_broadphase_type('MBP')
         self.session = session_for(omni.usd.get_context().get_stage())
         self.session.active = False
+        self.session.set_environments(num_envs)
+        self.num_envs = num_envs
         self.asset = self.spawn(self.asset_path, name='asset')
         self.dt, self.gravity = .004, (0, 0, -9.81)
         self.initials, self.actions, self.action_values = {}, {}, {}
         self.observers, self.units, self.plot_columns = {}, {}, []
+        self.metrics = {}
         self.rows, self.images = [], []
         self.camera_config = None
         self.camera_instance = None
         self.fixture_counter = 0
+        self.fixtures = []
+        self.grips = []
+        self.session.fixtures = self.fixtures
         self.initialized = False
-        self.integrating_seconds = self.preparation_seconds = self.warmup_seconds = 0.
+        self.integrating_seconds = self.preparation_seconds = 0.
         self.video_started = self.experiment_started = None
+        # Sampled from the first experiment step (see table_1000.physics.utilization).
+        self.utilization = None
         self.session.actions = self.apply_actions
 
     def spawn(self, asset_path, *, name, position=(0, 0, 0), rotation=(1, 0, 0, 0)):
         return self.session.load(asset_path, name, position, rotation)
 
-    def simulation(self, *, dt=.004, gravity=(0, 0, -9.81)):
+    def simulation(self, *, dt=.004, gravity=(0, 0, -9.81), gpu_solver=None):
         assert not self.initialized
         self.dt, self.gravity = dt, gravity
         self.world.set_simulation_dt(physics_dt=dt, rendering_dt=.04)
@@ -79,6 +105,14 @@ class TestContext:
         magnitude = np.linalg.norm(gravity)
         scene.CreateGravityMagnitudeAttr(float(magnitude))
         scene.CreateGravityDirectionAttr(Gf.Vec3f(*(np.asarray(gravity)/magnitude if magnitude else [0,0,-1])))
+        if self.physics == 'gpu' and gpu_solver is not None:
+            from pxr import PhysxSchema
+            assert gpu_solver in ('PGS', 'TGS')
+            api = PhysxSchema.PhysxSceneAPI(scene.GetPrim())
+            api.CreateSolverTypeAttr(gpu_solver)
+            api.CreateEnableExternalForcesEveryIterationAttr(gpu_solver == 'TGS')
+            self.world.cfg.physx.solver_type = int(gpu_solver == 'TGS')
+            self.world.cfg.physx.enable_external_forces_every_iteration = gpu_solver == 'TGS'
 
     def initial(self, instance=None, *, position=(0,0,0), rotation=(1,0,0,0), linear_velocity=(0,0,0),
                 angular_velocity=(0,0,0), bodies=None, joints=None):
@@ -91,6 +125,18 @@ class TestContext:
         self.initials[instance.name] = {'position': np.array(position), 'linear_velocity': np.array(linear_velocity),
             'angular_velocity': np.array(angular_velocity),
             'bodies': expand_mapping(bodies or {}, instance.body_names), 'joints': expand_mapping(joints or {}, instance.joint_names)}
+        # Author body overrides before fixtures capture their initial frames.
+        for name, values in self.initials[instance.name]['bodies'].items():
+            prim = self.session.stage.GetPrimAtPath(instance.paths[name])
+            cache = UsdGeom.XformCache()
+            world = Gf.Transform(cache.GetLocalToWorldTransform(prim))
+            if 'position' in values:
+                world.SetTranslation(Gf.Vec3d(*values['position']))
+            if 'rotation' in values:
+                q = values['rotation']
+                world.SetRotation(Gf.Rotation(Gf.Quatd(float(q[0]), Gf.Vec3d(*q[1:]))))
+            local = world.GetMatrix()*cache.GetLocalToWorldTransform(prim.GetParent()).GetInverse()
+            UsdGeom.Xformable(prim).MakeMatrixXform().Set(local)
 
     def ensure_initialized(self):
         if self.initialized:
@@ -107,6 +153,7 @@ class TestContext:
             saved[instance.name] = (np.array([t.GetTranslation() for t in transforms], dtype=np.float32),
                 np.array([[t.GetRotation().GetQuat().GetReal(), *t.GetRotation().GetQuat().GetImaginary()] for t in transforms], dtype=np.float32))
         self.session.active = False
+        self.session.replicate()
         self.world.reset()
         self.session.initialize()
         from table_1000.physics.joints import set_initial
@@ -128,57 +175,78 @@ class TestContext:
                 i = instance.indices[name]
                 velocity[i,:3] = values.get('linear_velocity', velocity[i,:3]);velocity[i,3:] = values.get('angular_velocity', velocity[i,3:])
             instance.restore_body_velocities(velocity.astype(np.float32))
+            instance.initial_velocities = velocity
+        for fixture in self.fixtures:
+            fixture.initialize()
+            if not fixture.locked:
+                instance = fixture.body.instance
+                velocity = instance.initial_velocities[instance.indices[fixture.body.name]]
+                state = fixture.body.state
+                origin_velocity = velocity[:3] - np.cross(velocity[3:], state['com'] - state['position'])
+                values = fixture.view.get_dof_velocities()
+                values[:, fixture.order] = fixture.velocity_coordinates(state['quaternion'], origin_velocity, velocity[3:])
+                fixture.view.set_dof_velocities(values, fixture.indices)
         self.session.time = 0.;self.session.steps = 0
         self.session.callback_steps = 0
+        self.world.forward()
         self.session.refresh()
+        for grip in self.grips:
+            grip.initialize()
         self.action_values.clear()
         self.initialized = True
         self.preparation_seconds += time.perf_counter()-started
 
-    @contextmanager
-    def fixed(self, body, *, position=None, rotation=None):
-        self.ensure_initialized()
-        from pxr import Gf, UsdPhysics
-        state = body.state
-        pos = state['position'] if position is None else np.asarray(position)
-        q = state['quaternion'] if rotation is None else np.asarray(rotation)
-        assert np.allclose(pos,state['position'],atol=1e-6) and np.allclose(quaternion_matrix(q),state['rotation'],atol=1e-6)
-        path = '/World/Fixtures/fixture_' + str(self.fixture_counter)
-        self.fixture_counter += 1
-        joint = UsdPhysics.FixedJoint.Define(self.session.stage,path)
-        if body.instance.articulation:
-            joint.CreateExcludeFromArticulationAttr(True)
-        joint.CreateBody1Rel().SetTargets([body.path])
-        joint.CreateLocalPos0Attr(Gf.Vec3f(*pos));joint.CreateLocalRot0Attr(Gf.Quatf(q[0],Gf.Vec3f(*q[1:])))
-        joint.CreateLocalPos1Attr(Gf.Vec3f(0));joint.CreateLocalRot1Attr(Gf.Quatf(1))
-        try:
-            yield joint
-        finally:
-            self.session.stage.RemovePrim(path)
+    def usd_body_pose(self, body):
+        """Read the declared initial pose without initializing physics."""
+        from pxr import UsdGeom, Gf
+        transform = Gf.Transform(UsdGeom.XformCache().GetLocalToWorldTransform(
+            self.session.stage.GetPrimAtPath(body.path)))
+        quat = transform.GetRotation().GetQuat()
+        return np.asarray(transform.GetTranslation(), dtype=float), np.asarray([quat.GetReal(), *quat.GetImaginary()], dtype=float)
+
+    def body_pose(self, body):
+        position, quaternion = self.usd_body_pose(body)
+        values = self.initials.get(body.instance.name, {}).get('bodies', {}).get(body.name, {})
+        return np.asarray(values.get('position', position)), np.asarray(values.get('rotation', quaternion))
 
     @contextmanager
-    def spring(self, body, *, position, rotation=(1,0,0,0), linear_stiffness, linear_damping,
-               angular_stiffness, angular_damping):
-        self.ensure_initialized()
-        from pxr import Gf, UsdPhysics
-        path = '/World/Fixtures/fixture_' + str(self.fixture_counter)
+    def fixed(self, body, *, position=None, rotation=None):
+        """Rigidly lock a body at a static world pose (default: its declared pose).
+
+        The lock cannot move; use :meth:`grip` for any prescribed motion.
+        Leaving the scope releases the body.
+        """
+        from table_1000.sim.isaaclab.fixtures import Fixture
+        lock = Fixture(self, body, name='fixture_'+str(self.fixture_counter), locked=True,
+                       position=position, rotation=rotation)
         self.fixture_counter += 1
-        joint = UsdPhysics.Joint.Define(self.session.stage,path)
-        joint.CreateBody1Rel().SetTargets([body.path])
-        joint.CreateLocalPos0Attr(Gf.Vec3f(*position));joint.CreateLocalRot0Attr(Gf.Quatf(rotation[0],Gf.Vec3f(*rotation[1:])))
-        joint.CreateLocalPos1Attr(Gf.Vec3f(0));joint.CreateLocalRot1Attr(Gf.Quatf(1))
-        for axis in ['transX','transY','transZ','rotX','rotY','rotZ']:
-            limit = UsdPhysics.LimitAPI.Apply(joint.GetPrim(),axis)
-            limit.CreateLowAttr(-float('inf'));limit.CreateHighAttr(float('inf'))
-            drive = UsdPhysics.DriveAPI.Apply(joint.GetPrim(),axis)
-            factor = 180/np.pi if axis.startswith('rot') else 1
-            drive.CreateTypeAttr('force');drive.CreateTargetPositionAttr(0)
-            drive.CreateStiffnessAttr((angular_stiffness if factor != 1 else linear_stiffness)/factor)
-            drive.CreateDampingAttr((angular_damping if factor != 1 else linear_damping)/factor)
         try:
-            yield joint
+            yield lock
         finally:
-            self.session.stage.RemovePrim(path)
+            lock.release()
+
+    def grip(self, body, *, name=None):
+        """Ideal six-axis grip of ``body`` at its declared pose; declare before the first step.
+
+        See :class:`table_1000.sim.isaaclab.fixtures.Grip` for its motions.
+        Records ``<name>.target.position``, ``.force``, ``.torque`` (world, about
+        the held point) and ``.error.position`` / ``.error.angle``.
+        """
+        from table_1000.sim.isaaclab.fixtures import Grip
+        name = name or 'grip_'+str(len(self.grips))
+        return Grip(self, body, name=name)
+
+    def wait(self, *motions):
+        """Step until every given grip motion has ended."""
+        self.ensure_initialized()
+        end = max(motion.end for motion in motions)
+        remaining = round((end - self.session.time)/self.dt)
+        if remaining > 0:
+            self.run(remaining*self.dt)
+
+    def grip_details(self):
+        return {grip.name: {'body': f'{grip.body.instance.name}.{grip.body.name}', **(grip.gains or {})}
+                for grip in self.grips}
 
     def force(self, name, body, *, keyframes, frame='world', point_frame='world'):
         self._action(name,body,'force',keyframes,frame,point_frame)
@@ -196,19 +264,27 @@ class TestContext:
 
     def apply_actions(self,t,dt):
         self.action_values = {}
+        for grip in self.grips:
+            grip.update(t, dt)
+        states = {}
         for name, action in self.actions.items():
-            body = action['body'];state = body.state
+            body = action['body']
+            instance, i = body.instance, body.instance.indices[body.name]
+            if instance.name not in states:
+                states[instance.name] = instance.environment_states()
+            # Each environment resolves body-frame inputs with its own pose.
+            positions, rotations, centers = (value[:, i] for value in states[instance.name])
             value = interpolate(action['frames'],t)
-            vector, point = np.zeros(3), state['com']
+            vector, point = np.zeros((self.num_envs, 3)), centers
             if value is not None:
-                vector = value[action['kind']]
-                if action['frame'] == 'body': vector = state['rotation'] @ vector
+                vector = np.broadcast_to(value[action['kind']], (self.num_envs, 3)).astype(float)
+                if action['frame'] == 'body': vector = np.einsum('eij,j->ei', rotations, value[action['kind']])
                 if 'point' in value:
-                    point = value['point']
-                    if action['point_frame'] == 'body': point = state['position'] + state['rotation'] @ point
+                    point = np.broadcast_to(value['point'], (self.num_envs, 3)).astype(float)
+                    if action['point_frame'] == 'body': point = positions + np.einsum('eij,j->ei', rotations, value['point'])
                 self.session.force(body, vector if action['kind']=='force' else np.zeros(3), point,
                                    vector if action['kind']=='torque' else None)
-            self.action_values[name] = {action['kind']:vector,'point':point}
+            self.action_values[name] = {action['kind']:vector[0],'point':point[0]}
 
     def observe(self,name,getter,*,unit):
         self.observers[name] = getter
@@ -233,6 +309,10 @@ class TestContext:
         for field in ['position','velocity']:
             self.observe(f'{instance.name}.{name}.{field}',lambda field=field: frames(instance,name)[field],unit=unit+('/s' if field=='velocity' else ''))
 
+    def metric(self,name,value,*,unit,label):
+        """Declare a key result; the asset's physics_test/summary.json lists it per backend."""
+        self.metrics[name] = {'label':label,'unit':unit,'value':float(value)}
+
     def plots(self,*columns):
         self.plot_columns = list(columns)
 
@@ -243,7 +323,7 @@ class TestContext:
     def ground(self,*,z=0,static_friction=.35,dynamic_friction=.35,restitution=0,contact_offset=.02):
         from pxr import Gf, UsdGeom, UsdPhysics, UsdShade, PhysxSchema
         stage = self.session.stage
-        floor = UsdGeom.Cube.Define(stage,'/World/Ground');floor.CreateSizeAttr(1)
+        floor = UsdGeom.Cube.Define(stage,self.session.environment(0)+'/Ground');floor.CreateSizeAttr(1)
         transform = UsdGeom.Xformable(floor);transform.AddTranslateOp().Set(Gf.Vec3d(0,0,z-.05));transform.AddScaleOp().Set(Gf.Vec3f(4,4,.1))
         floor.CreateDisplayColorAttr([Gf.Vec3f(.46,.49,.53)]);UsdPhysics.CollisionAPI.Apply(floor.GetPrim())
         PhysxSchema.PhysxCollisionAPI.Apply(floor.GetPrim()).CreateContactOffsetAttr(contact_offset)
@@ -260,26 +340,7 @@ class TestContext:
         assert abs(duration/self.dt-round(duration/self.dt)) < 1e-7
         self.ensure_initialized()
         if not self.rows:
-            if self.warmup:
-                saved = {name:a.snapshot() for name,a in self.session.instances.items()}
-                start = time.perf_counter()
-                for _ in range(round(1/self.dt)): self.session.step(self.world)
-                self.warmup_seconds = time.perf_counter()-start
-                start = time.perf_counter()
-                self.session.active = False
-                # Restore native fixture targets before rebuilding physics.
-                # Otherwise a warmup kinematic clamp retains its moved pose
-                # while the constrained asset is restored to its initial pose.
-                if self.session.actions:
-                    self.session.actions(0.,self.dt)
-                self.world.reset();self.session.initialize()
-                for name,state in saved.items():
-                    self.session.instances[name].restore(state)
-                self.session.steps = 0;self.session.time = 0.;self.session.refresh()
-                self.session.callback_steps = 0
-                self.preparation_seconds += time.perf_counter()-start
-            # The first sample precedes any experiment step. Warmup actions
-            # must not appear as forces applied at the restored t=0 state.
+            # The first sample precedes any experiment step.
             self.action_values.clear()
             self.sample()
             if self.render and self.camera_config:
@@ -290,6 +351,7 @@ class TestContext:
                 self.images.append(self.camera_instance.capture(self))
         if self.experiment_started is None:
             self.experiment_started = time.perf_counter()
+            if self.utilization: self.utilization.start()
         stride = round(1/(self.dt*(self.camera_config or {'fps':25})['fps']))
         assert abs(1/(self.dt*(self.camera_config or {'fps':25})['fps'])-stride) < 1e-7
         for _ in range(round(duration/self.dt)):
@@ -304,8 +366,11 @@ class TestContext:
 
     def close(self):
         if self.camera_instance: self.camera_instance.close()
+        self.world._disable_app_control_on_stop_handle = True
         self.world.stop()
         for instance in list(self.session.instances.values()): self.session.stage.RemovePrim(instance.path)
         if self.app:
             for _ in range(5): self.app.update()
         self.session.close()
+        from isaaclab.sim import SimulationContext
+        SimulationContext.clear_instance()

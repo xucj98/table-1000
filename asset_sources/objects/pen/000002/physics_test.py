@@ -1,9 +1,10 @@
 """Native detent acceptance through the standard asset test interface.
 
-Four scenes exercise the frozen Claude native-contact mechanism. Fixtures
-are collision-free kinematic hands coupled by native D6 drives; they never
-write dynamic asset poses or supply a hidden pen/cap connection. Springs and
-masses are uncalibrated engineering proxies. Impact tests report outcomes.
+Four scenes exercise the frozen Claude native-contact mechanism. Grips and
+locks hold bodies without geometry; they never write dynamic asset poses or
+supply a hidden pen/cap connection. The pull is displacement-controlled and
+reports the grip force; the close pushes with a force-limited grip. Springs
+and masses are uncalibrated engineering proxies. Impact tests report outcomes.
 """
 from math import cos, sin, pi
 import numpy as np
@@ -11,6 +12,9 @@ from table_1000.physics.simulation import rotation
 
 SEAT, BALL_RADIUS, BALL_X = -.032, .00865, -.0015
 BODY_TIP_X, LOOSE_OPENING = -.071, .003
+# Displacement-controlled pull, as on a tensile tester: 45 mm passes full
+# separation (cap mouth 2 mm beyond the nib) from either initial opening.
+PULL_SPEED, PULL_TRAVEL = .005, .045
 
 
 def quaternion(angle, axis=(0,1,0)):
@@ -25,46 +29,6 @@ def fit(body, cap):
             'axis_cos':b['rotation'][:,0] @ c['rotation'][:,0]}
 
 
-class Hand:
-    """Native compliant grasp, with SI gains and explicit release."""
-    def __init__(self,ctx,body,name):
-        from pxr import Gf, UsdGeom, UsdPhysics, PhysxSchema
-        ctx.ensure_initialized()
-        self.ctx,self.body = ctx,body
-        self.position = body.state['position'].copy()
-        self.quaternion = body.state['quaternion'].copy()
-        self.path = '/World/Fixtures/'+name
-        hand = UsdGeom.Xform.Define(ctx.session.stage,self.path)
-        self.ops = [hand.AddTranslateOp(),hand.AddOrientOp()]
-        UsdPhysics.RigidBodyAPI.Apply(hand.GetPrim()).CreateKinematicEnabledAttr(True)
-        PhysxSchema.PhysxRigidBodyAPI.Apply(hand.GetPrim()).CreateEnableCCDAttr(False)
-        self.joint = UsdPhysics.Joint.Define(ctx.session.stage,self.path+'/grip')
-        self.joint.CreateBody0Rel().SetTargets([self.path]);self.joint.CreateBody1Rel().SetTargets([body.path])
-        for i,axis in enumerate(['transX','transY','transZ','rotX','rotY','rotZ']):
-            drive=UsdPhysics.DriveAPI.Apply(self.joint.GetPrim(),axis)
-            factor=1 if i<3 else pi/180
-            drive.CreateTypeAttr('force');drive.CreateTargetPositionAttr(0)
-            drive.CreateStiffnessAttr((2000 if i<3 else 20)*factor)
-            drive.CreateDampingAttr((40 if i<3 else .4)*factor)
-            drive.CreateMaxForceAttr(30 if i<3 else 1)
-        self.move()
-
-    def move(self,position=None,quaternion=None):
-        from pxr import Gf
-        if position is not None:self.position=np.asarray(position,dtype=float)
-        if quaternion is not None:self.quaternion=np.asarray(quaternion,dtype=float)
-        self.ops[0].Set(Gf.Vec3d(*self.position))
-        self.ops[1].Set(Gf.Quatf(float(self.quaternion[0]),Gf.Vec3f(*map(float,self.quaternion[1:]))))
-
-    def axial(self,stiffness=0,damping=0):
-        from pxr import UsdPhysics
-        drive=UsdPhysics.DriveAPI(self.joint.GetPrim(),'transX')
-        drive.GetStiffnessAttr().Set(stiffness);drive.GetDampingAttr().Set(damping)
-
-    def release(self,released=True):
-        self.joint.GetJointEnabledAttr().Set(not released)
-
-
 def setup(ctx,height=0,ground=False,pose=(1,0,0,0)):
     from pxr import PhysxSchema, UsdPhysics
     ctx.simulation(dt=.004)
@@ -76,39 +40,34 @@ def setup(ctx,height=0,ground=False,pose=(1,0,0,0)):
     ctx.initial(position=(0,0,height),rotation=pose)
     if ground:ctx.ground(static_friction=.5,dynamic_friction=.4,contact_offset=.002)
     ctx.camera(position=(-.025,-.36,.2),target=(-.03,.01,height),focal_length=24)
-    ctx.input_state={'force':{},'phase':0}
-    original=ctx.session.actions
-    def control(t,dt):
-        original(t,dt)
-        for name,(body,force) in ctx.input_state['force'].items():
-            ctx.session.force(body,force)
-            ctx.action_values[name]={'force':force}
-    ctx.session.actions=control
+    ctx.input_state={'phase':0}
     ctx.observe('phase',lambda:ctx.input_state['phase'],unit='1')
     ctx.experiment_details={'mechanism':'native radial prismatic force drives and real ball/ridge contacts; no body/cap retention script or fixture',
         'asset_pose_writes_during_experiment':False,'force_direction':'world -X removes the cap; world +X closes it','ball_mass_note':'1 g per 0.8 mm ball is an inertia proxy, approximately 60x steel sphere mass',
-        'external_substeps_per_step':1,'TGS_internal_position_iterations':32}
+        'external_substeps_per_step':1,'asset_position_iterations':32}
     return ctx.asset.body('body'),ctx.asset.body('cap')
 
 
 def observe(ctx,instances=None):
     from pxr import PhysxSchema
-    from isaacsim.core.prims import RigidPrim
+    import carb
+    from isaacsim.core.simulation_manager import SimulationManager
+    carb.settings.get_settings().set_bool('/physics/disableContactProcessing', False)
     instances=instances or [ctx.asset]
     for instance in instances:
         for name in instance.body_names:
             PhysxSchema.PhysxContactReportAPI.Apply(ctx.session.stage.GetPrimAtPath(instance.paths[name])).CreateThresholdAttr(0)
             ctx.observe_body(instance.body(name))
-    ctx.ensure_initialized()
     paths=[instance.paths[name] for instance in instances for name in instance.body_names]
     filters=paths+[str(p.GetPath()) for p in ctx.session.stage.Traverse() if p.GetName()=='Ground']
-    contacts=RigidPrim(paths,name='contacts',reset_xform_properties=False,track_contact_forces=True,
-                       contact_filter_prim_paths_expr=[filters for _ in paths],max_contact_count=8192)
-    contacts.initialize()
-    cache={'time':None}
+    cache={'time':None, 'view':None}
     def contact_values():
+        if cache['time'] is None:
+            cache['view']=SimulationManager.get_physics_sim_view().create_rigid_contact_view(
+                paths, [filters for _ in paths], max_contact_data_count=8192)
         if cache['time']!=ctx.session.time:
-            forces,points,normals,distances,counts,starts=contacts.get_contact_force_data(dt=ctx.dt)
+            forces,points,normals,distances,counts,starts=(value.detach().cpu().numpy()
+                for value in cache['view'].get_contact_data(dt=ctx.dt))
             active=np.concatenate([np.arange(int(start),int(start+count)) for start,count in zip(starts.ravel(),counts.ravel()) if count]) if np.any(counts) else []
             cache.update(time=ctx.session.time,force=float(np.max(np.abs(forces[active]))) if len(active) else 0,
                          separation=float(np.min(distances[active])) if len(active) else 0)
@@ -127,16 +86,6 @@ def observe(ctx,instances=None):
         ctx.observe(instance.name+'.ball_axis_error_m',lambda t=travel:t()[1],unit='m')
 
 
-def move(ctx,hands,targets,seconds,dwell=.3):
-    starts=[h.position.copy() for h in hands]
-    for k in range(round(seconds/ctx.dt)):
-        u=k*ctx.dt/seconds
-        for hand,a,b in zip(hands,starts,targets):hand.move(a+(np.asarray(b)-a)*u)
-        ctx.step()
-    for hand,target in zip(hands,targets):hand.move(target)
-    ctx.run(dwell)
-
-
 def initial_pen(ctx,instance,position,pose=(1,0,0,0),opening=0):
     from pxr import UsdGeom
     ctx.initial(instance,position=position,rotation=pose)
@@ -148,10 +97,6 @@ def initial_pen(ctx,instance,position,pose=(1,0,0,0),opening=0):
         ctx.initial(instance,position=position,rotation=pose,bodies=bodies)
 
 
-def force_column(ctx,name):
-    ctx.observe(name+'_N',lambda:np.linalg.norm(ctx.action_values.get(name,{}).get('force',np.zeros(3))),unit='N')
-
-
 def pull_comparison(ctx):
     body,cap=setup(ctx,height=.055,ground=True)
     initial_pen(ctx,ctx.asset,(0,.035,.055))
@@ -159,56 +104,64 @@ def pull_comparison(ctx):
     initial_pen(ctx,loose,(0,-.035,.055),opening=LOOSE_OPENING)
     pens=[ctx.asset,loose];caps=[p.body('cap') for p in pens]
     observe(ctx,pens)
-    names=['tight_pull','loose_pull']
-    for name in names:force_column(ctx,name)
-    ctx.plots('tight_pull_N','loose_pull_N','asset.cap.position.x','loose.cap.position.x')
+    grips=[ctx.grip(c,name=f'{n}_grip') for n,c in zip(['tight','loose'],caps)]
+    for grip in grips:
+        ctx.observe(grip.name+'.pull_N',lambda g=grip:-g.values()['force'][0],unit='N')
+    ctx.plots('tight_grip.pull_N','loose_grip.pull_N','asset.cap.position.x','loose.cap.position.x')
     ctx.camera(position=(-.04,-.46,.31),target=(-.04,0,.025),focal_length=26)
-    ctx.video_annotation=lambda:f'Tight: far row +Y | Loose: near row -Y | pull world -X | phase {ctx.input_state["phase"]}: 0 settle, 1 pull, 2 catch, 3 place, 4 released'
-    hands=[Hand(ctx,caps[i],f'cap_guide_{i}') for i in range(2)]
-    for hand in hands:hand.axial()
-    records=[None,None]
+    ctx.video_annotation=lambda:f'Tight: far row +Y | Loose: near row -Y | grips pull caps world -X at 5 mm/s | phase {ctx.input_state["phase"]}: 0 settle, 1 pull, 2 hold, 3 place, 4 released'
+    records=[None,None];peaks=[(0.,0.),(0.,0.)]
     with ctx.fixed(body),ctx.fixed(loose.body('body')):
-        ctx.run(.4);ctx.input_state['phase']=1;start=ctx.session.time
-        while ctx.session.time-start<10 and any(r is None for r in records):
-            force=min(.75*(ctx.session.time-start),5)
-            ctx.input_state['force']={names[i]:(caps[i],np.array([-force,0,0])) for i in range(2) if records[i] is None}
+        ctx.run(.4);ctx.input_state['phase']=1
+        starts=[c.state['position'].copy() for c in caps]
+        motions=[g.follow(lambda t,p=g.position,q=g.quaternion:(p+[-PULL_SPEED*t,0,0],q),duration=PULL_TRAVEL/PULL_SPEED,wait=False)
+                 for g in grips]
+        while ctx.session.time<max(m.end for m in motions)-1e-9:
             ctx.step()
-            for i in range(2):
+            for i,(b,c,g) in enumerate(zip([p.body('body') for p in pens],caps,grips)):
+                pull=ctx.rows[-1][g.name+'.pull_N']
+                if pull>peaks[i][0]:peaks[i]=(pull,float(starts[i][0]-c.state['position'][0]))
                 if records[i] is not None:continue
-                b,c=pens[i].body('body'),caps[i]
                 # The mouth is the cap's most positive-X collision boundary.
                 # Full separation requires it to pass the actual nib tip by 2 mm.
                 gap=float((b.state['position']+b.state['rotation'][:,0]*BODY_TIP_X-c.state['position'])@b.state['rotation'][:,0])
                 if gap>=.002:
-                    records[i]={'fully_separated_time_s':ctx.session.time,'last_pull_N':force,'mouth_to_tip_gap_m':gap,
-                                'opening_m':fit(b,c)['opening']}
-                    ctx.input_state['force'].pop(names[i],None)
-                    hands[i].move(c.state['position']);hands[i].axial(2000,40)
-        ctx.input_state['force']={};assert all(records),'a cap did not fully separate within 5 N'
+                    records[i]={'fully_separated_time_s':ctx.session.time,'mouth_to_tip_gap_m':gap,'opening_m':fit(b,c)['opening']}
+        assert all(records),'a cap did not fully separate'
+        for record,(peak,travel) in zip(records,peaks):
+            record.update(peak_pull_N=peak,travel_at_peak_m=travel)
         ctx.input_state['phase']=2;ctx.run(.6)
-        for hand in hands:hand.move(hand.body.state['position'])
         ctx.input_state['phase']=3
-        targets=[np.array([h.position[0],h.position[1],.0105]) for h in hands]
-        move(ctx,hands,targets,1.5,dwell=.4)
-        for hand in hands:hand.release()
+        ctx.wait(*[g.move_to(position=[c.state['position'][0],c.state['position'][1],.0105],duration=1.5,wait=False)
+                   for g,c in zip(grips,caps)])
+        ctx.run(.4)
+        for grip in grips:grip.release()
         ctx.input_state['phase']=4;ctx.run(.8)
     ctx.experiment_details.update(pulls=dict(zip(['tight','loose'],records)),loose_initial_opening_m=LOOSE_OPENING,
-        cap_guide='native D6 lateral/rotational drives; axial stiffness and damping zero throughout force measurement, 2000 N/m and 40 N s/m only after complete separation',
+        pull={'control':'displacement-controlled grip on each cap, world -X','speed_m_s':PULL_SPEED,'travel_m':PULL_TRAVEL,
+              'force':'grip force along world -X, including cap inertia (negligible at this speed)'},
         separation_geometry={'body_tip_local_x_m':BODY_TIP_X,'cap_mouth_local_x_m':0,'required_axial_gap_m':.002},
         placed_cap_positions_m=[c.state['position'].tolist() for c in caps])
+    ctx.metric('tight_pull',records[0]['peak_pull_N'],unit='N',label='紧帽拔帽力')
+    ctx.metric('loose_pull',records[1]['peak_pull_N'],unit='N',label='松帽拔帽力')
 
 
 def close(ctx):
     body,cap=setup(ctx,height=.04,ground=True)
     initial_pen(ctx,ctx.asset,(0,0,.04),opening=LOOSE_OPENING);observe(ctx)
-    force_column(ctx,'push')
+    grip=ctx.grip(cap,name='cap_grip')
+    ctx.observe('push_N',lambda:grip.values()['force'][0],unit='N')
     ctx.plots('asset.cap.position.x','push_N')
     ctx.camera(position=(-.025,-.34,.23),target=(-.02,0,.04),focal_length=28)
-    ctx.video_annotation=lambda:f'Close world +X | phase {ctx.input_state["phase"]}: 0 settle, 1 light <0.5 N, 2 increasing push, 3 external force removed'
-    guide=Hand(ctx,cap,'closing_guide');guide.axial(0,40)
+    ctx.video_annotation=lambda:f'Close world +X | phase {ctx.input_state["phase"]}: 0 settle, 1 grip push limited to 0.3 N, 2 increasing limit, 3 released'
     with ctx.fixed(body):
         ctx.run(.4);ctx.input_state['phase']=1
-        ctx.input_state['force']={'push':(cap,np.array([.3,0,0]))};ctx.run(1.6)
+        # Push along the pen axis toward the fully seated pose with at most
+        # 0.3 N; the barrel guides the cap sideways, the grip holds its tilt.
+        grip.axes(linear=(1,0,0))
+        grip.limit(force=.3)
+        seated=cap.state['position']+body.state['rotation'][:,0]*fit(body,cap)['opening']
+        grip.move_to(position=seated,duration=.4);ctx.run(1.2)
         weak=fit(body,cap);vx=float(cap.state['velocity'][0])
         tail=[row['asset.cap.position.x'] for row in ctx.rows if row['time']>=ctx.session.time-.4]
         drift=max(tail)-min(tail)
@@ -217,18 +170,28 @@ def close(ctx):
         pose_v=(tail[-1]-tail[0])/.4
         assert .001<weak['opening']<LOOSE_OPENING-.0003 and abs(vx)<.01 and drift<.00015 and abs(pose_v)<.0004,'light push did not stop at the detent'
         ctx.input_state['phase']=2;start=ctx.session.time;seated_force=None
+        limit=lambda t:min(.3+.6*(t-start),5)
+        grip.limit(force=limit)
         while ctx.session.time-start<8:
-            force=min(.3+.6*(ctx.session.time-start),5)
-            ctx.input_state['force']={'push':(cap,np.array([force,0,0]))};ctx.step()
+            ctx.step()
             if fit(body,cap)['opening']<.0002:
-                seated_force=force;break
+                # The cap snaps in once past the detent; the push it needed is
+                # the largest before seating, not the push after the snap.
+                peak=max(row['push_N'] for row in ctx.rows if row['time']>start)
+                seated_force={'limit_N':limit(ctx.session.time),'peak_push_N':peak,'push_at_seating_N':ctx.rows[-1]['push_N']};break
         assert seated_force is not None,'increasing push did not seat the cap'
-        ctx.input_state['force']={};ctx.input_state['phase']=3;guide.release();ctx.run(1.2)
+        ctx.input_state['phase']=3;grip.release();ctx.run(1.2)
         final=fit(body,cap)
-        assert abs(final['opening'])<.001 and np.linalg.norm(cap.state['velocity'][:3])<.01,'cap did not remain seated after force removal'
+        # As above, judge rest from the 0.4 s pose history, not the reported velocity.
+        recent=[row for row in ctx.rows if row['time']>=ctx.session.time-.4]
+        final_pose_v=float(np.linalg.norm([recent[-1][f'asset.cap.position.{a}']-recent[0][f'asset.cap.position.{a}'] for a in 'xyz'])/.4)
+        assert abs(final['opening'])<.001 and final_pose_v<.01,'cap did not remain seated after release'
     ctx.experiment_details.update(light_push_N=.3,light_push_final_fit=weak,light_push_final_vx_m_s=vx,
-        light_push_last_0_4s_x_drift_m=drift,light_push_pose_velocity_m_s=pose_v,seating_push_N=seated_force,final_fit=final,
-        closing_guide='native D6 lateral/rotational guide; zero axial stiffness and 40 N s/m axial damping to limit closing speed; no static axial holding force; fully released after seating')
+        light_push_last_0_4s_x_drift_m=drift,light_push_pose_velocity_m_s=pose_v,seating_push=seated_force,final_fit=final,final_pose_velocity_m_s=final_pose_v,
+        final_reported_velocity_m_s=float(np.linalg.norm(cap.state['velocity'][:3])),
+        closing_grip='grip on the cap along world X only (sideways free, rotation held) toward the seated pose, force limited to 0.3 N, then raised 0.6 N/s up to 5 N; released after seating')
+    ctx.metric('light_push_gap',weak['opening']*1000,unit='mm',label='0.3 N 轻推后离盖紧位')
+    ctx.metric('seating_push',seated_force['peak_push_N'],unit='N',label='合帽力')
 
 
 def collision_min_z(ctx,pose):
@@ -248,6 +211,11 @@ def collision_min_z(ctx,pose):
 def drop_heights(ctx):
     pose=quaternion(35*pi/180,(.3,1,.2))
     setup(ctx,ground=True,pose=pose)
+    # GPU TGS injects energy into the tiny maximal-coordinate ball constraints
+    # on impact. PGS retains the original materials, joints and 4 ms step.
+    ctx.simulation(gpu_solver='PGS')
+    if ctx.physics == 'gpu':
+        ctx.experiment_details['gpu_solver'] = 'PGS'
     low=collision_min_z(ctx,pose);heights=[.2,.5,1.];positions=[-.25,0,.25]
     pens=[ctx.asset,ctx.spawn(ctx.asset_path,name='drop_0_5m'),ctx.spawn(ctx.asset_path,name='drop_1m')]
     for p,h,x in zip(pens,heights,positions):initial_pen(ctx,p,(x,0,h-low),pose)
@@ -263,6 +231,8 @@ def drop_heights(ctx):
         initial_model_collision_min_z_m=low,initial_origin_positions_m=[[x,0,h-low] for x,h in zip(positions,heights)],
         simultaneous_release=True,initial_velocity_m_s=[0,0,0],final_fit=dict(zip([p.name for p in pens],final)),
         interpretation='4 ms impacts are coarse tests; transient penetration and any physical cap release are reported, with no prescribed detachment outcome')
+    for h,f in zip(heights,final):
+        ctx.metric(f'cap_ejection_{h:g}m',f['opening']*1000,unit='mm',label=f'{h:g} m 落地后笔帽松出')
 
 
 def gravity_rotation(ctx):
@@ -273,21 +243,24 @@ def gravity_rotation(ctx):
     initial_pen(ctx,loose,(.11,0,.25),up,LOOSE_OPENING)
     observe(ctx,[ctx.asset,loose])
     ctx.camera(position=(0,-.88,.4),target=(0,0,.18),focal_length=20)
-    hands=[Hand(ctx,body,'tight_body_hand'),Hand(ctx,loose.body('body'),'loose_body_hand')]
+    grips=[ctx.grip(body,name='tight_body_grip'),ctx.grip(loose.body('body'),name='loose_body_grip')]
     ctx.input_state['angle_deg']=0
     ctx.observe('rotation_deg',lambda:ctx.input_state['angle_deg'],unit='deg')
     ctx.plots('asset.opening','loose.opening','rotation_deg')
-    ctx.video_annotation=lambda:f'Left: tight | Right: loose 3 mm outside seat | body-only physical grips | turn {ctx.input_state["angle_deg"]:.1f} deg from tip/cap up'
+    ctx.video_annotation=lambda:f'Left: tight | Right: loose 3 mm outside seat | grips hold bodies only | turn {ctx.input_state["angle_deg"]:.1f} deg from tip/cap up'
     ctx.run(.6)
-    for k in range(round(6/ctx.dt)):
-        angle=pi/2-pi*(k+1)*ctx.dt/6;ctx.input_state['angle_deg']=180*(k+1)*ctx.dt/6
-        for hand in hands:hand.move(quaternion=quaternion(angle))
-        ctx.step()
+    start=ctx.session.time
+    def turn(t):
+        ctx.input_state['angle_deg']=30*min(max(ctx.session.time-start,0),6)
+        return quaternion(pi/2-pi*t/6)
+    ctx.wait(*[g.follow(lambda t,p=g.position:(p,turn(t)),duration=6,wait=False) for g in grips])
     ctx.run(1.4)
     result={'tight':fit(body,cap),'loose':fit(loose.body('body'),loose.body('cap'))}
     assert abs(result['tight']['opening'])<.0015 and result['loose']['opening']>.04,'gravity rotation did not retain tight cap and separate loose cap'
     ctx.experiment_details.update(final_fit=result,rotation_duration_s=6,angular_speed_deg_s=30,
-        loose_initial_opening_m=LOOSE_OPENING,fixtures='only native compliant body grips; no cap fixture or scripted coupling')
+        loose_initial_opening_m=LOOSE_OPENING,fixtures='grips on the bodies only; no cap fixture or scripted coupling')
+    ctx.metric('tight_opening',result['tight']['opening']*1000,unit='mm',label='紧帽倒置后松出')
+    ctx.metric('loose_opening',result['loose']['opening']*1000,unit='mm',label='松帽倒置后松出')
 
 
 TESTS={'pull_comparison':pull_comparison,'close':close,'drop_heights':drop_heights,'gravity_rotation':gravity_rotation}

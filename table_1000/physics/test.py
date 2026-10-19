@@ -1,4 +1,4 @@
-"""Execute native USD asset TESTS and measure simulation and video costs."""
+"""Run asset physics TESTS on one or more backends and summarize each asset."""
 import argparse
 import csv
 import importlib.util
@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import statistics
 import subprocess
+import sys
 import time
 import traceback
 
@@ -58,25 +59,42 @@ def ground_clearance(model, rows, instance_names, ground_z):
             'method':'collision hull vertices and analytic sphere extents transformed by recorded rigid poses; geometric overlap excludes contact margins'}
 
 
-def benchmark(asset,name,test,app):
+def benchmark(asset,name,test,app,physics="cpu",num_envs=1,utilization=None):
     from table_1000.physics.testing import TestContext
+    # Warm a disposable scene: restoring poses alone cannot restore the
+    # contact solver's internal state. Every measured repeat starts fresh.
+    warm = TestContext(asset, name=name, app=app, physics=physics, num_envs=num_envs)
+    start = time.perf_counter()
+    try:
+        test(warm)
+        assert warm.session.time >= 1., 'RTF warmup requires at least one simulated second'
+        warmup = time.perf_counter()-start
+    finally:
+        warm.close()
     rounds=[]
     for _ in range(3):
-        seconds=wall=prepare=warmup=0.
+        seconds=wall=prepare=0.
         finals=[]
         while seconds < 10-1e-8:
             start=time.perf_counter()
-            ctx=TestContext(asset,name=name,app=app,warmup=True)
+            ctx=TestContext(asset,name=name,app=app,physics=physics,num_envs=num_envs)
+            ctx.utilization=utilization
             construction=time.perf_counter()-start
-            test(ctx)
-            seconds+=ctx.session.time;wall+=time.perf_counter()-ctx.experiment_started
-            prepare+=construction+ctx.preparation_seconds;warmup+=ctx.warmup_seconds
-            finals.append(ctx.rows[-1])
-            ctx.close()
+            try:
+                test(ctx)
+                seconds+=ctx.session.time;wall+=time.perf_counter()-ctx.experiment_started
+                if utilization: utilization.stop()
+                prepare+=construction+ctx.preparation_seconds
+                finals.append(ctx.rows[-1])
+            finally:
+                ctx.close()
         rounds.append({'simulated_seconds':seconds,'wall_seconds':wall,'RTF':seconds/wall,
-                       'independent_repeats':len(finals),'preparation_reset_seconds':prepare,'warmup_seconds':warmup,
+                       'independent_repeats':len(finals),'preparation_reset_seconds':prepare,
                        'final_states':finals})
-    return {'rounds':rounds,'median_RTF':statistics.median(r['RTF'] for r in rounds),
+    median=statistics.median(r['RTF'] for r in rounds)
+    return {'warmup':{'wall_seconds':warmup,'method':'one complete experiment in a disposable scene before measured rounds'},
+            'rounds':rounds,'median_RTF':median,'environments':num_envs,'median_environment_seconds_per_second':median*num_envs,
+            'utilization':utilization.summary() if utilization else None,
             'includes':'physical steps, official behavior, test actions, state reading and in-memory sampling; no camera or rendering'}
 
 
@@ -88,6 +106,7 @@ def conditions(ctx):
     from isaacsim.core.simulation_manager import SimulationManager
     from isaacsim.core.version import get_version
     from threadpoolctl import threadpool_info
+    from table_1000.sim.isaaclab.fixtures import LINK_MASS, LINK_INERTIA
     settings=carb.settings.get_settings()
     engine={}
     for instance in ctx.session.instances.values():
@@ -97,9 +116,9 @@ def conditions(ctx):
             # One-body views report only that body's actual collision shapes.
             tensor=SimulationManager.get_physics_sim_view().create_rigid_body_view(instance.paths[name])
             shapes[name]={'count':tensor.max_shapes,
-                'materials_static_dynamic_restitution':np.unique(np.asarray(tensor.get_material_properties()).reshape(-1,3),axis=0).tolist(),
-                'contact_offsets_m':np.unique(np.asarray(tensor.get_contact_offsets())).tolist(),
-                'rest_offsets_m':np.unique(np.asarray(tensor.get_rest_offsets())).tolist()}
+                'materials_static_dynamic_restitution':np.unique(np.asarray(tensor.get_material_properties().cpu()).reshape(-1,3),axis=0).tolist(),
+                'contact_offsets_m':np.unique(np.asarray(tensor.get_contact_offsets().cpu())).tolist(),
+                'rest_offsets_m':np.unique(np.asarray(tensor.get_rest_offsets().cpu())).tolist()}
         engine[instance.name]={'mass_kg':instance.mass.tolist(),'center_of_mass_m':instance.local_com.tolist(),
               'inertia_kg_m2':instance.local_inertia.tolist(),
               'collision_shapes':shapes,
@@ -115,8 +134,15 @@ def conditions(ctx):
                 'dampings':instance.articulation.get_dof_dampings().tolist()}
     cpu=next(line.split(':',1)[1].strip() for line in Path('/proc/cpuinfo').read_text().splitlines() if line.startswith('model name'))
     scene=next(p for p in ctx.session.stage.Traverse() if p.IsA(UsdPhysics.Scene))
-    scene_ccd=PhysxSchema.PhysxSceneAPI(scene).GetEnableCCDAttr().Get()
-    return {'engine':'Isaac Sim / CPU PhysX','isaac_version':get_version(),'dt':ctx.dt,'solver':'TGS','gpu_dynamics':False,'scene_CCD':scene_ccd,
+    scene_api=PhysxSchema.PhysxSceneAPI(scene)
+    scene_ccd=scene_api.GetEnableCCDAttr().Get()
+    return {'engine':'Isaac Lab / Isaac Sim / '+ctx.physics.upper()+' PhysX','isaac_version':get_version(),'dt':ctx.dt,'solver':scene_api.GetSolverTypeAttr().Get(),'gpu_dynamics':scene_api.GetEnableGPUDynamicsAttr().Get(),'device':ctx.world.device,'scene_CCD':scene_ccd,
+            'solver_configuration':ctx.world.cfg.physx.to_dict(),
+            'fixtures':[({'body':f.body.path,'kind':'fixed articulation root','locked':True}
+                         if not hasattr(f, 'stiffness') else {'body':f.body.path,'kind':'six-axis tensor articulation','locked':f.locked,
+                         'virtual_link_mass_kg':LINK_MASS,'virtual_link_inertia_kg_m2':LINK_INERTIA,
+                         'virtual_links':6,'stiffness':f.stiffness.tolist(),'damping':f.damping.tolist()})
+                        for f in ctx.fixtures],
             'instances':len(ctx.session.instances),'gravity':ctx.gravity,'ground':getattr(ctx,'ground_config',None),
             'physics_values_from_engine':engine,'cpu':cpu,
             'load_average':list(os.getloadavg()),'environment_threads':{key:os.getenv(key) for key in ['OMP_NUM_THREADS','OPENBLAS_NUM_THREADS','MKL_NUM_THREADS','NUMEXPR_NUM_THREADS']},
@@ -130,6 +156,7 @@ def conditions(ctx):
                 '/rtx/directLighting/domeLight/denoisingTechnique','/rtx/shadows/sampleCount','/rtx/shadows/denoiser/enable',
                 '/rtx/reflections/sampledLighting/samplesPerPixel','/rtx/reflections/denoiser/enabled','/rtx/post/taa/samples']},
             'camera':ctx.camera_config,
+            'render_passes_per_capture':2 if ctx.camera_instance else 0,
             'lighting':{'dome_intensity':ctx.session.stage.GetPrimAtPath('/World/Light').GetAttribute('inputs:intensity').Get(),
                         'sun_intensity':ctx.session.stage.GetPrimAtPath('/World/Sun').GetAttribute('inputs:intensity').Get(),
                         'sun_rotation_xyz_degrees':list(ctx.session.stage.GetPrimAtPath('/World/Sun').GetAttribute('xformOp:rotateXYZ').Get())}
@@ -137,15 +164,17 @@ def conditions(ctx):
             'standard_dt':ctx.dt==.004}
 
 
-def run_video(asset,name,test,output,app,startup,rtf,gpu):
+def run_video(asset,name,test,output,app,startup,rtf,gpu,physics="cpu",num_envs=1,utilization=None):
     from table_1000.physics.testing import TestContext
     from table_1000.physics.plots import plots
     directory=output/name
     started=time.perf_counter()
-    ctx=TestContext(asset,name=name,render=True,app=app,warmup=True)
+    ctx=TestContext(asset,name=name,render=True,app=app,physics=physics,num_envs=num_envs)
+    ctx.utilization=utilization
     construction=time.perf_counter()-started
     try:
         test(ctx)
+        replica_deviation=max(instance.view.replica_deviation() for instance in ctx.session.instances.values())
         frames=directory/'frames';frames.mkdir()
         for i,image in enumerate(ctx.images):image.save(frames/f'{i:05}.jpg',quality=95)
         columns=list(ctx.rows[0])
@@ -155,20 +184,35 @@ def run_video(asset,name,test,output,app,startup,rtf,gpu):
         subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-y','-framerate',str(fps),'-i',str(frames/'%05d.jpg'),
                         '-c:v','libx264','-pix_fmt','yuv420p','-crf','20',str(output/(name+'.mp4'))],check=True)
         wall=time.perf_counter()-ctx.video_started
+        video_utilization=utilization.summary() if utilization else None
         plots(ctx.rows,ctx.plot_columns,directory,ctx.units)
         # Fresh independent input executions, not subtraction of render costs.
         errors=[max(abs(float(row[key])-float(ctx.rows[-1][key])) for key in row.keys() & ctx.rows[-1].keys() if key!='time')
-                for round in rtf['rounds'] for row in round['final_states']]
-        result={'test':name,'execution_status':'completed','review_status':'pending','asset':str(asset),
-            'conditions':{**conditions(ctx),'gpu':gpu},'columns':ctx.units,'plots':ctx.plot_columns,
+                for round in rtf['rounds'] for row in round['final_states']] if rtf else []
+        if rtf is None:
+            # One pass: physics steps and sampling of this run, camera capture excluded.
+            rtf={'method':'physics steps and sampling within the video run, camera capture excluded; use --benchmark for the standard measurement',
+                 'simulated_seconds':ctx.session.time,'wall_seconds':ctx.integrating_seconds,
+                 'RTF':ctx.session.time/ctx.integrating_seconds,'environments':num_envs,
+                 'environment_seconds_per_second':num_envs*ctx.session.time/ctx.integrating_seconds}
+        result={'test':name,'execution_status':'completed','asset':str(asset),
+            'conditions':{**conditions(ctx),'gpu':gpu},
+            'environments':{'count':num_envs,'recorded_and_rendered':'environment 0; replicas receive identical inputs and are hidden',
+                'spacing_m':float(ctx.session.offsets[1][1]) if num_envs>1 else None,
+                'final_replica_max_position_deviation_m':replica_deviation},'columns':ctx.units,'plots':ctx.plot_columns,
             'steps':ctx.session.steps,'frames':len(ctx.images),'sampling':'state after integration at t; action columns are the force applied over [t-dt,t); initial t=0 has zero actions',
-            'physics_callbacks':'actions/state priority -100; official BehaviorScript priority 0 when present; batched force flush priority 100; one external physical step; TGS position iterations internally subdivide solver work',
-            'performance':{'no_render':rtf,'video_end_to_end':{'simulated_seconds':ctx.session.time,'wall_seconds':wall,'RTF':ctx.session.time/wall},
-                 'preparation':{'process_startup_seconds':startup,'construction_seconds':construction,'initialization_render_warmup_reset_seconds':ctx.preparation_seconds,'physical_warmup_seconds':ctx.warmup_seconds},
-                 'independent_no_render_vs_video_final_max_scalar_error':max(errors)},
-            'reaction_forces':'not sampled; recorded test forces are not contact or fixture reaction forces'}
+            'physics_callbacks':'actions/state priority -100; official BehaviorScript priority 0 when present; batched force flush priority 100; one external physical step; actual solver and iterations in conditions',
+            'performance':{'no_render':rtf,'video_end_to_end':{'simulated_seconds':ctx.session.time,'wall_seconds':wall,'RTF':ctx.session.time/wall,
+                     'environments':num_envs,'environment_seconds_per_second':num_envs*ctx.session.time/wall,
+                     'utilization':video_utilization},
+                 'preparation':{'process_startup_seconds':startup,'construction_seconds':construction,'initialization_render_warmup_reset_seconds':ctx.preparation_seconds},
+                 'independent_no_render_vs_video_final_max_scalar_error':max(errors) if errors else None},
+            'reaction_forces':'contact reaction forces not sampled; grip columns record the force each grip applies'}
+        result['metrics'] = ctx.metrics
         if getattr(ctx, 'experiment_details', None):
             result['experiment'] = ctx.experiment_details
+        if ctx.grips:
+            result['grips'] = ctx.grip_details()
         if getattr(ctx,'ground_config',None):
             result['ground_contact']=ground_clearance(json.loads((asset.parent/'model.json').read_text()),
                 ctx.rows,ctx.session.instances,ctx.ground_config['z'])
@@ -179,62 +223,225 @@ def run_video(asset,name,test,output,app,startup,rtf,gpu):
         ctx.close()
 
 
-def run_case(asset,name,test,output,app,startup,gpu):
-    directory=output/name
-    if directory.exists():shutil.rmtree(directory)
+def clear(output,name):
+    """Remove one test's previous results, so a rerun never reports them."""
+    if (output/name).exists():shutil.rmtree(output/name)
     (output/(name+'.mp4')).unlink(missing_ok=True)
+
+
+def run_case(asset,name,test,output,app,startup,gpu,physics="cpu",num_envs=1,utilization=None,standard=False):
+    directory=output/name
+    clear(output,name)
     directory.mkdir(parents=True)
     try:
-        rtf=benchmark(asset,name,test,app)
-        return run_video(asset,name,test,output,app,startup,rtf,gpu)
+        rtf=benchmark(asset,name,test,app,physics=physics,num_envs=num_envs,utilization=utilization) if standard else None
+        return run_video(asset,name,test,output,app,startup,rtf,gpu,physics=physics,num_envs=num_envs,utilization=utilization)
     except Exception:
         (directory/'result.json').write_text(json.dumps({'test':name,'execution_status':'failed',
-            'review_status':'pending','error':traceback.format_exc()},indent=2)+'\n')
+            'error':traceback.format_exc()},indent=2)+'\n')
         raise
 
 
-def main(argv=None):
-    parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('asset',type=Path,help='asset directory or USD entry')
-    parser.add_argument('--script',type=Path)
-    parser.add_argument('--output',type=Path)
-    parser.add_argument('--tests',nargs='+')
-    parser.add_argument('--gpu',type=int,default=0)
-    parser.add_argument('--plots-only',action='store_true')
-    args=parser.parse_args(argv)
-    asset=args.asset.resolve()
-    if asset.is_dir():asset=asset/('object.usda' if (asset/'object.usda').exists() else 'object.usdz')
-    tests=load_tests(args.script or asset.parent/'physics_test.py')
-    if args.tests:tests={name:tests[name] for name in args.tests}
-    output=(args.output or asset.parent/'physics_test').resolve();output.mkdir(parents=True,exist_ok=True)
-    if args.plots_only:
-        from table_1000.physics.plots import plot_trace
-        for name in tests:
-            result=json.loads((output/name/'result.json').read_text())
-            plot_trace(output/name/'trace.csv',result['plots'],result['columns'])
-        return
+# Backend name -> PhysX device. Each backend writes physics_test/<name>/.
+BACKENDS={'isaac-cpu':'cpu','isaac-gpu':'gpu'}
+ENTRY=Path(__file__).resolve().parents[2]/'scripts/assets/physics_test.py'
+
+
+def significant(value,digits=4):
+    return float(f'{value:.{digits}g}')
+
+
+def summary(directory,names,error=None):
+    """Collect each backend's result.json into one human-facing digest."""
+    asset=str(directory.relative_to(directory.parents[1]))
+    if error:
+        return {'asset':asset,'error':error,'backends':{},'tests':{}}
+    backends,tests={},{}
+    for backend in BACKENDS:
+        output=directory/'physics_test'/backend
+        for name in names:
+            path=output/name/'result.json'
+            if not path.exists():continue
+            result=json.loads(path.read_text())
+            test=tests.setdefault(name,{'status':{},'metrics':{},'rtf':{}})
+            status=test['status'][backend]=result['execution_status']
+            entry=backends.setdefault(backend,{'completed':0,'failed':[]})
+            if status!='completed':
+                entry['failed'].append(name)
+                test.setdefault('error',{})[backend]=result['error'].strip().splitlines()[-1]
+                continue
+            entry['completed']+=1
+            entry.setdefault('engine',f"Isaac Sim {result['conditions']['isaac_version'][0]} {BACKENDS[backend].upper()} PhysX")
+            entry.setdefault('environments',result['environments']['count'])
+            for key,metric in result.get('metrics',{}).items():
+                test['metrics'].setdefault(key,{'label':metric['label'],'unit':metric['unit']})[backend]=significant(metric['value'])
+            performance=result['performance']
+            physics=performance['no_render']
+            test['rtf'][backend]={'physics':significant(physics.get('median_RTF',physics.get('RTF')),3),
+                                  'video':significant(performance['video_end_to_end']['RTF'],3)}
+    ordered={name:tests[name] for name in names if name in tests}
+    return {'asset':asset,'backends':backends,'tests':ordered}
+
+
+def write_summary(directory,names,error=None):
+    path=directory/'physics_test'/'summary.json'
+    path.parent.mkdir(parents=True,exist_ok=True)
+    path.write_text(json.dumps(summary(directory,names,error),indent=2,ensure_ascii=False)+'\n',encoding='utf-8')
+    return path
+
+
+def entry(directory):
+    return directory/('object.usda' if (directory/'object.usda').exists() else 'object.usdz')
+
+
+def run_backend(asset,backend,*,gpu,script,tests=None,num_envs=None,benchmark=False):
+    """Run one asset on one backend in this process; Kit's close ends the process."""
+    physics=BACKENDS[backend]
+    num_envs=num_envs or (4 if physics=='gpu' else 1)
+    output=asset.parent/'physics_test'/backend
+    output.mkdir(parents=True,exist_ok=True)
     started=time.perf_counter()
-    gpu={'physical_index':args.gpu,'before_process_start':subprocess.run(
+    gpu_info={'physical_index':gpu,'before_process_start':subprocess.run(
         ['nvidia-smi','--query-gpu=index,name,driver_version,memory.used,utilization.gpu','--format=csv'],
         check=True,capture_output=True,text=True).stdout.strip()}
-    from isaacsim import SimulationApp
-    app=SimulationApp({'headless':True,'create_new_stage':False,'active_gpu':args.gpu,'physics_gpu':0 if os.getenv('CUDA_VISIBLE_DEVICES') == str(args.gpu) else args.gpu,'multi_gpu':False,
-         'disable_viewport_updates':True,'limit_cpu_threads':4,'renderer':'RaytracedLighting','width':960,'height':480,
-         'extra_args':['--/persistent/physics/numThreads=4','--/rtx/post/motionblur/enabled=False',
-                       '--/persistent/rtx/modes/rt2/enabled=true']})
+    from table_1000.sim.isaaclab.app import start_app
+    from table_1000.sim.isaaclab.render import RT2_ARGS
+    app=start_app(gpu=gpu, device='cpu' if physics=='cpu' else 'cuda:0',
+                  extra_args=(*RT2_ARGS,'--/rtx/post/motionblur/enabled=False'))
     startup=time.perf_counter()-started
+    failed=False
     try:
+        selected=load_tests(script)
+        if tests:selected={name:selected[name] for name in tests}
         import carb
         from threadpoolctl import threadpool_limits
         from table_1000.physics.simulation import enable_scripting
         enable_scripting()
+        # Complete extension startup before replacing the launcher stage.
+        for _ in range(5):
+            app.update()
         carb.settings.get_settings().set('/persistent/physics/numThreads',4)
         carb.settings.get_settings().set('/rtx/post/motionblur/enabled',False)
-        with threadpool_limits(limits=1):
-            for name,test in tests.items():
-                run_case(asset,name,test,output,app,startup,gpu)
-    except Exception:
+        # OpenMP is set before startup; changing it after Kit starts can stall RTX.
+        from table_1000.physics.utilization import Utilization
+        utilization=Utilization(gpu)
+        try:
+            with threadpool_limits(limits=1, user_api='blas'):
+                for name,test in selected.items():
+                    try:
+                        run_case(asset,name,test,output,app,startup,gpu_info,physics=physics,num_envs=num_envs,
+                                 utilization=utilization,standard=benchmark)
+                    except Exception:
+                        # run_case recorded the failure; the remaining tests still run.
+                        failed=True
+                        traceback.print_exc()
+        finally:
+            utilization.close()
+    except BaseException:
+        failed=True
         traceback.print_exc()
         raise
     finally:
-        app.close()
+        app.close(exit_code=int(failed))
+
+
+def run_jobs(jobs,gpus):
+    """Run (command, log) jobs, one at a time per listed GPU; returns failed jobs."""
+    from concurrent.futures import ThreadPoolExecutor
+    import queue
+    free=queue.Queue()
+    for gpu in gpus:free.put(gpu)
+    def run(job):
+        command,log,label=job
+        gpu=free.get()
+        try:
+            print('START',label,'GPU',gpu,flush=True)
+            log.parent.mkdir(parents=True,exist_ok=True)
+            with log.open('w') as stream:
+                code=subprocess.run([*command,'--gpu',str(gpu)],stdout=stream,stderr=subprocess.STDOUT).returncode
+            print('DONE' if code==0 else 'FAILED',label,log,flush=True)
+            return code
+        finally:
+            free.put(gpu)
+    with ThreadPoolExecutor(len(gpus)) as pool:
+        codes=list(pool.map(run,jobs))
+    return [job[2] for job,code in zip(jobs,codes) if code]
+
+
+def main(argv=None):
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--source',type=Path,default=Path('assets/objects'),help='built assets root')
+    parser.add_argument('--assets',nargs='+',help='asset directories relative to --source; default all with physics_test.py')
+    parser.add_argument('--physics',nargs='+',choices=tuple(BACKENDS),required=True,help='physics backends to run')
+    parser.add_argument('--gpus',type=int,nargs='+',default=[0],help='physical GPUs; one asset-backend run at a time on each')
+    parser.add_argument('--tests',nargs='+',help='only these tests')
+    parser.add_argument('--scripts',type=Path,help='read physics_test.py from this root (e.g. asset_sources/objects) instead of the build snapshot')
+    parser.add_argument('--num-envs',type=int,help='parallel copies of each experiment; default 1 on CPU, 4 on GPU')
+    parser.add_argument('--benchmark',action='store_true',help='standard RTF measurement: warmup and three timed rounds before the video run')
+    parser.add_argument('--plots-only',action='store_true')
+    parser.add_argument('--worker',type=Path,help=argparse.SUPPRESS)
+    parser.add_argument('--gpu',type=int,help=argparse.SUPPRESS)
+    parser.add_argument('--script',type=Path,help=argparse.SUPPRESS)
+    args=parser.parse_args(argv)
+    if args.num_envs is not None and args.num_envs<1:parser.error('--num-envs must be positive')
+    source=args.source.resolve()
+    if args.worker:
+        run_backend(entry(args.worker),args.physics[0],gpu=args.gpu,script=args.script,tests=args.tests,
+                    num_envs=args.num_envs,benchmark=args.benchmark)
+        return
+    references=([Path(reference) for reference in args.assets] if args.assets is not None
+                else sorted(path.parent.relative_to(source) for path in source.rglob('physics_test.py')))
+    scripts={reference:(args.scripts.resolve()/reference if args.scripts else source/reference)/'physics_test.py'
+             for reference in references}
+    names,broken={},{}
+    for reference,script in scripts.items():
+        try:
+            names[reference]=list(load_tests(script))
+        except Exception:
+            # A broken definition fails only its own asset.
+            traceback.print_exc()
+            broken[reference]=traceback.format_exc().strip().splitlines()[-1]
+            continue
+        unknown=set(args.tests or ())-set(names[reference])
+        if unknown:parser.error(f'{reference}: unknown tests {sorted(unknown)}')
+    if args.plots_only:
+        from table_1000.physics.plots import plot_trace
+        for reference in names:
+            for backend in args.physics:
+                output=source/reference/'physics_test'/backend
+                for name in args.tests or names[reference]:
+                    result=json.loads((output/name/'result.json').read_text())
+                    plot_trace(output/name/'trace.csv',result['plots'],result['columns'])
+        if broken:
+            raise SystemExit('failed: '+', '.join(f'{reference} (physics_test.py)' for reference in broken))
+        return
+    jobs,selected=[],{}
+    for reference in names:
+        for backend in args.physics:
+            output=source/reference/'physics_test'/backend
+            selected[reference,backend]=args.tests or names[reference]
+            for name in selected[reference,backend]:clear(output,name)
+            command=[sys.executable,str(ENTRY),'--worker',str(source/reference),'--physics',backend,
+                     '--script',str(scripts[reference])]
+            if args.tests:command+=['--tests',*args.tests]
+            if args.num_envs:command+=['--num-envs',str(args.num_envs)]
+            if args.benchmark:command.append('--benchmark')
+            jobs.append((command,source/reference/'physics_test'/backend/'run.log',f'{reference} {backend}'))
+    failed=run_jobs(jobs,args.gpus)
+    for (reference,backend),tests in selected.items():
+        output=source/reference/'physics_test'/backend
+        for name in tests:
+            # The worker exited before reaching this test, e.g. at startup.
+            if not (output/name/'result.json').exists():
+                (output/name).mkdir(parents=True,exist_ok=True)
+                (output/name/'result.json').write_text(json.dumps({'test':name,'execution_status':'failed',
+                    'error':f'not run: the {backend} process exited before this test; see {output/"run.log"}'},indent=2)+'\n')
+    for reference in references:
+        print('SUMMARY',write_summary(source/reference,names.get(reference,[]),broken.get(reference)),flush=True)
+    failed+=[f'{reference} (physics_test.py)' for reference in broken]
+    if failed:
+        raise SystemExit('failed: '+', '.join(failed))
+
+
+if __name__ == '__main__':
+    main()

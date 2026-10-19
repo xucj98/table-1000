@@ -27,6 +27,15 @@ physics.py ──配置──> physics.usda
                   └──仿真测试──> MP4 / trace.csv / plots.jpg / result.json
 ```
 
+**机器人** 以厂商 URDF 包为原始输入：`prepare.py` 写明所选配置与碰撞划分，转换工具生成仓库中的 URDF 与网格；Isaac Sim URDF 导入器生成 USD，`physics.py` 在其上叠加驱动、求解器与接触材料层 `robot.usda`。详见[机器人资产规范](robots.md)。
+
+```text
+raw/ 厂商 URDF 包 + prepare.py ──转换与检查──> robot.urdf + meshes/ + check.json
+robot.urdf + meshes/ ──导入──> import/robot.usd
+physics.py ──配置──> robot.usda
+robot.urdf ──Blender 渲染──> three_quarter.jpg
+```
+
 模型保存刚体划分、几何和关节定义；物理配置补充质量、材料与驱动。带行为资产使用生成的 `object.usda` 作为加载入口，见[行为分发](behaviors.md#分发)。几何预览配置与物理测试脚本均作为资产源码保存。已提供带盖笔与三抽屉盒的构建和测试示例。
 
 ## 文件分工
@@ -54,12 +63,15 @@ physics.py ──配置──> physics.usda
 
 ## 资产布局
 
-对象路径为 `objects/<category>/<六位编号>`，场景路径为 `scenes/scene-<六位编号>`；编号从 `000000` 开始。
+对象路径为 `objects/<category>/<六位编号>`，场景路径为 `scenes/scene-<六位编号>`，机器人路径为 `robots/<名称>`；编号从 `000000` 开始。
 
 | 位置 | 内容 | Git |
 | --- | --- | --- |
 | `asset_sources/objects/<category>/<id>/` | object.py、preview.json、metadata.json、README.md、three_quarter.jpg；第二阶段增加 physics.py、physics_test.py、可选 behavior.py | 提交 |
-| `assets/objects/<category>/<id>/` | object.blend、geometry.usdc、physics.usda、object.usdz、源码及配置快照、README.md、已有 three_quarter.jpg、可选 object.usda 与行为依赖、preview/、physics_test/ | 忽略 |
+| `assets/objects/<category>/<id>/` | object.blend、geometry.usdc、physics.usda、object.usdz、源码及配置快照、README.md、已有 three_quarter.jpg、可选 object.usda 与行为依赖、preview/、physics_test/（summary.json 与各后端目录） | 忽略 |
+| `asset_sources/robots/<name>/` | robot.urdf 及其按相对路径引用的 meshes/、prepare.py、physics.py、robot.py（机器人描述）、robot_test.py（验收设置）、README.md、three_quarter.jpg | 提交 |
+| `assets/robots/<name>/raw/` | 厂商原始 URDF 包 | 忽略；存档于 Hugging Face 数据集，版本见 `assets.lock.json` |
+| `assets/robots/<name>/` 其余 | URDF 导入结果 import/、加载入口 robot.usda、源码快照、prepare.json、check.json | 忽略 |
 | `outputs/` | 临时实验结果与日志 | 忽略 |
 
 源码快照重建依赖同版本的 `table_1000` 包，共用模块不复制到资产目录。外部资源引用须注明版本、来源和许可，不使用私有绝对路径。
@@ -79,6 +91,10 @@ cabinet
 ```
 
 资产树展示所有刚体及其部件，省略部件下的视觉与碰撞网格；使用空格缩进表示实际父子层级，森林保留多个根节点。
+
+带 `physics_test.py` 的资产另列[物理实测](physics-tests.md#人工验收)表，记录各测试测得的关键物理量，如拔出力、合紧力、起滑角：每行写明物理量、CPU 与 GPU 实测值、来源测试及测量方式。数值取自 `physics_test/summary.json`，注明软件版本，并标明为未标定的仿真值；修改几何、`physics.py` 或测试后重新运行并更新。已知后端差异在表下说明或链接 issue。
+
+同一节另列典型条件下的性能：CPU 后端 1 个环境、GPU 后端 4 个并行环境，分别给出无渲染和含视频的 RTF 范围，以及测量期间的本进程 CPU 占用和 GPU 利用率。数值取自 `--benchmark` 运行的 `result.json` 中的 `performance`，注明机器负载等条件，测量方法见 [RTF 基准](physics-tests.md#rtf-基准)。
 
 第一阶段的[连续变形几何](modeling.md#第一阶段连续变形几何)另以 `[deformable]` 标注归属节点，README 单列其数量、控制量和仅几何预览的限制；不得计入刚体数或宣称物理导出已支持。仍使用上述五种第一阶段源文件，几何回调放在 `object.py` 中，随源码快照分发。
 

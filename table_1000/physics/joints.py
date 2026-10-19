@@ -41,6 +41,8 @@ def set_initial(instance, targets):
         indices = np.array([0], dtype=np.int32)
         instance.articulation.set_dof_positions(positions, indices)
         instance.articulation.set_dof_velocities(np.zeros_like(positions), indices)
+        from isaacsim.core.simulation_manager import SimulationManager
+        SimulationManager.get_physics_sim_view().update_articulations_kinematic()
         instance.session.refresh()
         return
     for name, target in targets.items():

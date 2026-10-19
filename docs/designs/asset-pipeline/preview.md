@@ -92,6 +92,17 @@ JPG/MP4 为 960 × 480，左视觉、右碰撞；碰撞按刚体着色，无描�
 | `complexity` | visual_triangles、colliders、primitive_colliders、convex_colliders、convex_vertices、convex_faces；仅报告总量 |
 | `preview.status` | 完整渲染结束：`completed` |
 
+同目录的 `summary.json` 是给人看的摘要：
+
+| 字段 | 含义 |
+| --- | --- |
+| `status` | 同 `acceptance.json` |
+| `rigid_bodies` | 刚体数 |
+| `joints` | 关节数 |
+| `complexity` | 同 `acceptance.json` |
+| `poses_checked` | 检查的姿态数 |
+| `penetrations`、`penetrating_poses` | 最深的 20 处穿透（图片或视频帧、刚体、深度 mm）与有穿透的姿态数；通过时为空和 0 |
+
 连续变形资产另有 `deformables`（各归属的视觉/碰撞数量）、`geometry_controls`（控制量声明）、`deformation_scope`（能力边界），每个样本记录完整 `controls`；`bodies` 仍只统计真实刚体。动态碰撞在每个姿态重新校验并参与跨归属粗测。同一归属内部的袋面自碰撞、袋口封闭性、装物路径和装物后的闭合须由资产专项夹具验证；公共报告通过不能替代这些检查。
 
 交付要求自动检查通过、完整渲染完成，并人工查看图片与视频、核对[资产树与部件命名](modeling.md#部件命名与资产树)。
