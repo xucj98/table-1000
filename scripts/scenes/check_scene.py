@@ -8,7 +8,8 @@ penetration and settling checks, retried with sub-seeds; see
 Writes ``initial.json`` (every attempt with its problems and settling report,
 attempts per seed, seeds without a valid state) and ``initial_states.jpg`` (one
 picture per seed, captioned with the seed and the accepted attempt) into the
-scene's preview directory ``assets/scenes/<scene>/preview/`` (or ``--output``). The exit status is 1
+scene's preview directory ``assets/scenes/<scene>/preview/`` (or ``--output``), and
+updates the ``initial`` section of ``assets/scenes/<scene>/summary.json``. The exit status is 1
 when a seed has no valid initial state or the run fails.
 """
 
@@ -77,6 +78,9 @@ def main(argv=None):
                       acceptance_rate=len(accepted) / sum(len(r['attempts']) for r in report['seeds'].values()),
                       total_s=time.perf_counter() - started)
         (output / 'initial.json').write_text(json.dumps(report, indent=1, default=float))
+        if args.output is None:
+            from table_1000.scenes import summary as scene_summary
+            scene_summary.update(assets, args.scene, 'initial', scene_summary.initial_section(report))
         width, height = scene.VIEWS[view]['resolution']
         tile_height = round(height * TILE_WIDTH / width)
         rows = -(-len(tiles) // COLUMNS)

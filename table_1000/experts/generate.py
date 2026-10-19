@@ -51,9 +51,11 @@ def contact_summary(intervals, spec):
 
 
 class Generator:
-    """Runs scene ``scene_name`` (import after ``start_app``)."""
+    """Runs scene ``scene_name`` (import after ``start_app``) on ``physics`` (``'isaac-cpu'``)."""
 
-    def __init__(self, scene_name, output, assets, root):
+    DEVICES = {'isaac-cpu': 'cpu'}
+
+    def __init__(self, scene_name, output, assets, root, physics='isaac-cpu'):
         from table_1000.robots import load_spec
         from table_1000.robots.kinematics import RobotModel
         from table_1000.sim.isaaclab import recording
@@ -63,11 +65,11 @@ class Generator:
         self.name, self.output, self.assets = scene_name, Path(output), Path(assets)
         self.scene, self.expert = load(scene_name, 'scene', root), load(scene_name, 'expert', root)
         self.spec = load_spec(Path(self.scene.ROBOT['asset']).name, root)
-        self.env = RobotEnv(self.scene, self.spec, self.assets, root=root,
+        self.env = RobotEnv(self.scene, self.spec, self.assets, root=root, device=self.DEVICES[physics],
                             recorders=recording.recorder_cfg(self.output))
         self.model = RobotModel(self.spec, self.output / 'planning', root)
         (self.output / 'episodes').mkdir(parents=True, exist_ok=True)
-        self.env_args = {'scene': scene_name, 'robot': self.spec.name, 'instruction': INSTRUCTION,
+        self.env_args = {'scene': scene_name, 'robot': self.spec.name, 'physics': physics, 'instruction': INSTRUCTION,
                          'control_hz': CONTROL_HZ, 'physics_dt': PHYSICS_DT, 'joints': self.env.joints,
                          'action_layout': self.env.action_layout}
         self.load_s = time.perf_counter() - started

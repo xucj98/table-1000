@@ -1,8 +1,11 @@
 """Render recorded trajectories from their states: videos, robot camera frames and review sheets.
 
-``uv run python scripts/scenes/render.py outputs/scenes/000000/gen/trajectories.hdf5 --gpu 1 [--demos demo_3 demo_7 | --count 5] [--views wide] [--cameras face_view left_wrist_view right_wrist_view] [--sheets] [--output DIR]``
+``uv run python scripts/scenes/render.py outputs/scenes/000000/isaac-cpu/part*/trajectories.hdf5 --gpus 0 1 [--demos demo_3 demo_7 | --count 5] [--views wide] [--cameras face_view left_wrist_view right_wrist_view] [--sheets] [--output DIR]``
 
-Per episode ``<output>/<demo>/``, by default in the scene's preview directory
+The chosen episodes of all the given files (one scene) are split over the GPUs,
+one process at a time on each (logs in ``outputs/scenes/<scene>/render/``); at
+the end the ``preview`` section of ``assets/scenes/<scene>/summary.json`` lists
+what is rendered. Per episode ``<output>/<demo>/``, by default in the scene's preview directory
 ``assets/scenes/<scene>/preview/``:
 
 - ``<view>.mp4`` for each fixed view of the scene (``VIEWS``, or ``--views``), captioned with the
@@ -21,6 +24,7 @@ robot cameras), enough to review every episode of a batch; it replaces only
 """
 
 import argparse
+import json
 from pathlib import Path
 import shutil
 import sys
@@ -50,7 +54,7 @@ def sheet(frames, captions, path):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('trajectories', type=Path)
+    parser.add_argument('trajectories', type=Path, nargs='+', help='trajectory files of one scene')
     parser.add_argument('--output', type=Path, help='default: assets/scenes/<scene>/preview')
     parser.add_argument('--demos', nargs='*')
     parser.add_argument('--count', type=int)
@@ -58,10 +62,55 @@ def main(argv=None):
     parser.add_argument('--cameras', nargs='*', default=None, help='robot cameras (default: every rgb camera)')
     parser.add_argument('--views', nargs='*', default=None, help='fixed views of the scene (default: all)')
     parser.add_argument('--sheets', action='store_true', help='only the review sheets')
-    parser.add_argument('--gpu', type=int, default=0)
+    parser.add_argument('--gpus', type=int, nargs='+', default=[0], help='physical GPUs; one process at a time on each')
     parser.add_argument('--root', type=Path, default=ROOT)
     parser.add_argument('--assets', type=Path, default=ROOT / 'assets')
+    parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument('--gpu', type=int, default=0, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
+    if args.worker:
+        worker(args)
+        return
+    import h5py
+    import numpy as np
+    from table_1000.physics.test import run_jobs
+    from table_1000.scenes import summary as scene_summary
+    available, scenes = [], set()
+    for path in args.trajectories:
+        with h5py.File(path, 'r') as file:
+            scenes.add(json.loads(file['data'].attrs['env_args'])['scene'])
+            available += [(path.resolve(), name) for name in file['data'] if args.demos is None or name in args.demos]
+    if len(scenes) != 1:
+        parser.error(f'the files hold scenes {sorted(scenes)}; give the files of one scene')
+    scene = scenes.pop()
+    available.sort(key=lambda item: int(item[1].split('_')[1]))
+    if args.count:
+        picked = np.random.default_rng(args.seed).choice(len(available), min(args.count, len(available)), replace=False)
+        available = [available[i] for i in sorted(picked)]
+    if not available:
+        parser.error('no episodes to render')
+    output = (args.output or args.assets / 'scenes' / scene / 'preview').resolve()
+    logs = args.root.resolve() / 'outputs' / 'scenes' / scene / 'render'
+    jobs = []
+    for index in range(min(len(args.gpus), len(available))):
+        chosen = available[index::len(args.gpus)]
+        for path in dict.fromkeys(path for path, _ in chosen):
+            names = [name for p, name in chosen if p == path]
+            command = [sys.executable, str(Path(__file__).resolve()), str(path), '--worker', '--demos', *names,
+                       '--output', str(output), '--root', str(args.root.resolve()), '--assets', str(args.assets.resolve())]
+            command += ['--sheets'] if args.sheets else []
+            command += ['--views', *args.views] if args.views is not None else []
+            command += ['--cameras', *args.cameras] if args.cameras is not None else []
+            jobs.append((command, logs / f'run{len(jobs)}.log', f'{path.parent.name} {len(names)} episodes'))
+    failed = run_jobs(jobs, args.gpus)
+    print('SUMMARY', scene_summary.update(args.assets.resolve(), scene, 'preview',
+                                          scene_summary.preview_section(args.assets.resolve() / 'scenes' / scene / 'preview')))
+    if failed:
+        raise SystemExit('failed: ' + ', '.join(failed))
+
+
+def worker(args):
+    """Render ``args.demos`` of one trajectory file in this process."""
     from table_1000.sim.isaaclab.app import start_app
     from table_1000.sim.isaaclab.render import RT2_ARGS
     app = start_app(gpu=args.gpu, workers=4, extra_args=RT2_ARGS)
@@ -75,15 +124,12 @@ def main(argv=None):
         from table_1000.sim.isaaclab.env import RobotEnv
         from table_1000.sim.isaaclab.video import Video
         render.configure()
-        file, episodes = replay.episodes(args.trajectories)
+        file, episodes = replay.episodes(args.trajectories[0])
         meta = replay.env_args(file)
         scene = load(meta['scene'], 'scene', args.root)
         spec = load_spec(meta['robot'], args.root)
         output = (args.output or args.assets / 'scenes' / meta['scene'] / 'preview').resolve()
         names = args.demos or list(episodes)
-        if args.count:
-            names = sorted(np.random.default_rng(args.seed).choice(names, min(args.count, len(names)), replace=False),
-                           key=list(episodes).index)
         cameras = {name: camera for name, camera in spec.cameras.items() if not args.sheets and (
             (args.cameras is None and camera.sensor.kind == 'rgb') or name in (args.cameras or ()))}
         views = {name: scene.VIEWS[name] for name in (args.views if args.views is not None else scene.VIEWS)}
