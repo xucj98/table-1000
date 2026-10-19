@@ -48,7 +48,8 @@ asset_sources/robots/x1pro/
   physics.py          驱动、求解器与接触材料
   robot.py            机器人描述：关节、末端、相机
   robot_test.py       验收设置
-  README.md、three_quarter.jpg
+  README.md
+  three_quarter.jpg   1920 × 960 缩略图
 assets/robots/x1pro/
   raw/                厂商原始 URDF 包，存档于 Hugging Face 数据集，版本见 assets.lock.json
   import/             Isaac Sim URDF 导入结果
@@ -110,7 +111,7 @@ cabinet
 
 第一阶段的[连续变形几何](modeling.md#第一阶段连续变形几何)另以 `[deformable]` 标注归属节点，README 单列其数量、控制量和仅几何预览的限制；不得计入刚体数或宣称物理导出已支持。仍使用上述五种第一阶段源文件，几何回调放在 `object.py` 中，随源码快照分发。
 
-`three_quarter.jpg` 是四分之三视角的 480 × 240 的缩略图，约 5 - 10 KB，左视觉、右碰撞。
+缩略图都是四分之三视角，左视觉、右碰撞（机器人的碰撞凸块按刚体着色）：对象 `three_quarter.jpg` 为 480 × 240，约 5–10 KB；机器人 `three_quarter.jpg` 为 1920 × 960（左右各 960 × 960），约 40 KB，数量少、结构复杂，用较大尺寸。场景缩略图 `thumbnail.jpg` 是 seed 0 初态的机器人头部相机图像，480 × 270，约 10–20 KB。
 
 ## metadata.json
 
