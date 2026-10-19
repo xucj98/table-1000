@@ -73,7 +73,7 @@ robot.urdf ──Blender 渲染──> three_quarter.jpg
 | `assets/robots/<name>/raw/` | 厂商原始 URDF 包 | 忽略；存档于 Hugging Face 数据集，版本见 `assets.lock.json` |
 | `assets/robots/<name>/` 其余 | URDF 导入结果 import/、加载入口 robot.usda、源码快照、prepare.json、check.json | 忽略 |
 | `asset_sources/scenes/<scene>/` | scene.py（场景与随机初始化）、expert.py（专家程序）、initial_states.jpg | 提交 |
-| `assets/scenes/<scene>/` | summary.json（验收入口）；preview/：初态检查 initial.json 与拼图 initial_states.jpg，渲染轨迹的视频、评审图、机器人相机图像及来源记录 render.json（`demo_<seed>/`）；见[场景规范](../scenes.md) | 忽略 |
+| `assets/scenes/<scene>/` | summary.json（验收入口）；preview/：初态检查 initial.json 与拼图 initial_states.jpg，渲染轨迹的视频、评审图、机器人相机图像及来源记录 render.json（`demo_<seed>/`）；见[场景规范](scenes.md) | 忽略 |
 | `outputs/` | 临时实验结果与日志 | 忽略 |
 
 源码快照重建依赖同版本的 `table_1000` 包，共用模块不复制到资产目录。外部资源引用须注明版本、来源和许可，不使用私有绝对路径。
