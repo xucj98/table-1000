@@ -9,6 +9,9 @@ from table_1000.modeling.asset_builders import (
     joint, material, mesh,
 )
 
+BOARD_TOP = .420
+CUBBY_RAISE = .040
+
 
 def panel(name, dimensions, position, surface, owner, bevel=0):
     return box(name, dimensions, Vector(position) - owner.location, surface, owner, bevel=bevel)
@@ -34,7 +37,7 @@ def pegboard(surface, owner):
     q = r * (math.sqrt(2) - 1)
     visuals = []
     strip_bottoms = [.070] + [z+r for z in zs]
-    strip_tops = [z-r for z in zs] + [.380]
+    strip_tops = [z-r for z in zs] + [BOARD_TOP]
     for i, (lo, hi) in enumerate(zip(strip_bottoms, strip_tops), 1):
         visuals.append(panel(f"board_strip{i}", (.2225,.008,hi-lo),
                              (-.04875,.101,(lo+hi)/2), surface, owner))
@@ -56,7 +59,8 @@ def pegboard(surface, owner):
                 else:
                     visual = prism(name, [(a,z0),(b,z0),(d,z1),(c,z1)], surface, owner)
                 visuals.append(visual)
-    visuals.append(panel("board_back",(.0975,.008,.310),(.11125,.101,.225),surface,owner))
+    visuals.append(panel("board_back",(.0975,.008,BOARD_TOP-.070),
+                         (.11125,.101,(BOARD_TOP+.070)/2),surface,owner))
     return visuals
 
 
@@ -71,12 +75,13 @@ def rod(name, a, b, radius, surface, owner):
 
 
 def mounting_pegs(owner, xs, hole_z, surface):
-    # Inferred straight peg mounting: seated on the aperture bottom, removable
-    # along -Y. Pads contact the board front; no permanent weld/constraint.
+    # Straight 3 x 9.6 mm pegs closely fit the 10 mm bore height to limit
+    # pitching under gravity. Bottom remains seated; removal is straight -Y.
+    # Pads contact the board front; no permanent weld/constraint.
     visuals = []
     for i,x in enumerate(xs, 1):
         visuals.append(panel(f"{owner.name}_pad{i}",(.009,.0055,.010),(x,.09425,hole_z-.0035),surface,owner))
-        visuals.append(panel(f"{owner.name}_peg{i}",(.003,.020,.003),(x,.101,hole_z-.0035),surface,owner))
+        visuals.append(panel(f"{owner.name}_peg{i}",(.003,.020,.0096),(x,.101,hole_z-.0002),surface,owner))
     return visuals
 
 
@@ -116,15 +121,19 @@ def build():
     component(housing,'pegboard',pegboard(ivory,housing))
     # Reuse the current delivered three 25-degree cubbies, not the outdated
     # vertical pen partitions in the earlier scene Blender source.
+    # Raise the complete cubby assembly by 40 mm, preserving all three cells.
+    # The taller rear board carries it; book opening above the platform is 69 mm.
     for name,dim,pos in [
         # The old holder_back was entirely inside board_back, same material.
-        ('cubby_left_wall',(.003,.100,.262),(.0655,.051,.224)),
-        ('cubby_right_wall',(.003,.100,.262),(.1525,.051,.224)),
+        ('cubby_left_wall',(.003,.100,.253),(.0655,.051,.2285)),
+        ('cubby_right_wall',(.003,.100,.253),(.1525,.051,.2285)),
         ('cubby_top',(.090,.100,.003),(.109,.051,.354)),
-        ('cubby_base_trim',(.087,.003,.048),(.109,.002,.117)),
-    ]: component(housing,name,[panel(name,dim,pos,ivory,housing)])
+        ('cubby_base_trim',(.087,.003,.047),(.109,.002,.1255)),
+    ]:
+        pos = (pos[0], pos[1], pos[2] + CUBBY_RAISE)
+        component(housing,name,[panel(name,dim,pos,ivory,housing)])
     for i in range(3):
-        front=.141+i*.080
+        front=(.149, .221, .301)[i] + CUBBY_RAISE
         vertices=[(x,y,front-(y-.002)*math.tan(math.radians(25))+dz)
                   for x in (.0655,.1525) for y in (.002,.097) for dz in (-.0015,.0015)]
         floor=mesh(f'holder_sloped_floor_{i}',vertices,BOX_FACES,housing,ivory)

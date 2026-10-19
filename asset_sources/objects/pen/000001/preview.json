@@ -1,65 +1,222 @@
 {
   "front.jpg": {
-    "camera": [0, -1, 0, 0, 0, 1]
+    "camera": [
+      0,
+      -1,
+      0,
+      0,
+      0,
+      1
+    ]
   },
   "back.jpg": {
-    "camera": [0, 1, 0, 0, 0, 1]
+    "camera": [
+      0,
+      1,
+      0,
+      0,
+      0,
+      1
+    ]
   },
   "left.jpg": {
-    "camera": [-1, 0, 0, 0, 0, 1]
+    "camera": [
+      -1,
+      0,
+      0,
+      0,
+      0,
+      1
+    ]
   },
   "right.jpg": {
-    "camera": [1, 0, 0, 0, 0, 1]
+    "camera": [
+      1,
+      0,
+      0,
+      0,
+      0,
+      1
+    ]
   },
   "top.jpg": {
-    "camera": [0, 0, 1, 0, 1, 0]
+    "camera": [
+      0,
+      0,
+      1,
+      0,
+      1,
+      0
+    ]
   },
   "bottom.jpg": {
-    "camera": [0, 0, -1, 0, -1, 0]
+    "camera": [
+      0,
+      0,
+      -1,
+      0,
+      -1,
+      0
+    ]
   },
   "three_quarter.jpg": {
-    "camera": [0.82, -0.82, 0.72, 0, 0, 1]
+    "camera": [
+      0.82,
+      -0.82,
+      0.72,
+      0,
+      0,
+      1
+    ]
   },
   "press_and_extend.mp4": {
     "fps": 24,
     "frames": [
       {
         "frame": 0,
-        "camera": [0.3, -1, 0.7, 0, 0, 1],
+        "camera": [
+          0.82,
+          -0.82,
+          0.72,
+          0,
+          0,
+          1
+        ],
         "joints": {
-          "button_press": 0
+          "button_press": 0,
+          "refill_slide": 0
         }
       },
       {
         "frame": 12,
+        "camera": [
+          0.82,
+          -0.82,
+          0.72,
+          0,
+          0,
+          1
+        ],
         "joints": {
-          "button_press": -0.003
+          "button_press": -0.003,
+          "refill_slide": 0
         }
       },
       {
         "frame": 24,
+        "camera": [
+          0.82,
+          -0.82,
+          0.72,
+          0,
+          0,
+          1
+        ],
         "joints": {
-          "button_press": 0
+          "button_press": 0,
+          "refill_slide": -0.003
         }
       },
       {
         "frame": 36,
+        "camera": [
+          0.82,
+          -0.82,
+          0.72,
+          0,
+          0,
+          1
+        ],
         "joints": {
-          "button_press": -0.003
+          "button_press": -0.003,
+          "refill_slide": -0.003
         }
       },
       {
         "frame": 48,
+        "camera": [
+          0.82,
+          -0.82,
+          0.72,
+          0,
+          0,
+          1
+        ],
         "joints": {
-          "button_press": 0
+          "button_press": 0,
+          "refill_slide": 0
         }
       }
     ]
   },
   "pressed_three_quarter.jpg": {
-    "camera": [0.82, -0.82, 0.72, 0, 0, 1],
+    "camera": [
+      0.82,
+      -0.82,
+      0.72,
+      0,
+      0,
+      1
+    ],
     "joints": {
-      "button_press": -0.003
+      "button_press": -0.003,
+      "refill_slide": 0
+    }
+  },
+  "retracted.jpg": {
+    "camera": [
+      0.82,
+      -0.82,
+      0.72,
+      0,
+      0,
+      1
+    ],
+    "joints": {
+      "button_press": 0,
+      "refill_slide": 0
+    }
+  },
+  "pressed.jpg": {
+    "camera": [
+      0.82,
+      -0.82,
+      0.72,
+      0,
+      0,
+      1
+    ],
+    "joints": {
+      "button_press": -0.003,
+      "refill_slide": 0
+    }
+  },
+  "extended_three_quarter.jpg": {
+    "camera": [
+      0.82,
+      -0.82,
+      0.72,
+      0,
+      0,
+      1
+    ],
+    "joints": {
+      "button_press": 0,
+      "refill_slide": -0.003
+    }
+  },
+  "pressed_extended.jpg": {
+    "camera": [
+      0.82,
+      -0.82,
+      0.72,
+      0,
+      0,
+      1
+    ],
+    "joints": {
+      "button_press": -0.003,
+      "refill_slide": -0.003
     }
   }
 }
