@@ -117,6 +117,7 @@ uv run python scripts/scenes/render.py 000000 --physics isaac-cpu --gpus 0 1 2 3
 ```
 
 - 轨迹默认是这一批全部成功的轨迹，可以缩小：`--count N` 按 seed 从小到大取前 N 条成功轨迹；`--seeds` 指定 seed，写法同第 1 步，如 `--seeds 20 64` 或 `--seeds 50:100`。两者可以同时用，如 `--seeds 50:100 --count 5`。指定的 seed 不在成功轨迹中时报错，并列出这一批的 seed 区间和失败的 seed。
+- `--failed` 另外渲染这一批全部失败的轨迹，画面上标注失败的子任务和原因，用来查看失败的过程：`--count 5 --failed`。
 - `--input DIR` 指定轨迹的根目录（默认 `data/scenes`），读取并写回 `DIR/<编号>/<后端>/`。
 - 每次运行替换这一批已有的录像。
 - 录像每个控制步一帧，本例每条约 700 帧、约 2 分钟；5 条在 4 张卡上约 4 分钟。

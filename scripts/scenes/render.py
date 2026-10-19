@@ -1,6 +1,6 @@
 """Videos of a batch of trajectories, rendered from their recorded states.
 
-``uv run python scripts/scenes/render.py 000000 --physics isaac-cpu --gpus 0 1 2 3 [--count N] [--seeds ...] [--input DIR]``
+``uv run python scripts/scenes/render.py 000000 --physics isaac-cpu --gpus 0 1 2 3 [--count N] [--seeds ...] [--failed] [--input DIR]``
 
 Reads the batch ``<input>/<scene>/<backend>/`` (``<input>`` = ``data/scenes``,
 written by ``run_expert.py``) and writes ``demo_<seed>.mp4`` into it: the
@@ -8,7 +8,8 @@ scene's fixed views side by side, one frame per control step (25 fps, 1x),
 captioned with the time and subtask.
 
 The episodes are the batch's succeeded ones, by default all; ``--seeds`` (as in
-``build_scene.py``) and ``--count N`` (the first N by seed) narrow them. A run
+``build_scene.py``) and ``--count N`` (the first N by seed) narrow them;
+``--failed`` adds every failed episode, captioned with its failure. A run
 replaces the batch's earlier videos. Every frame restores the recorded state of
 that step; nothing is simulated. The episodes are split into
 ``len(gpus) × jobs-per-gpu`` parts, one process each (logs in
@@ -58,6 +59,8 @@ def worker(args):
         directory, work = args.batch.resolve(), args.work.resolve()
         file, episodes = replay.episodes(directory / 'trajectories.hdf5')
         meta = replay.env_args(file)
+        if (directory / 'trajectories_failed.hdf5').is_file():
+            episodes.update(replay.episodes(directory / 'trajectories_failed.hdf5')[1])
         scene = load(meta['scene'], 'scene', args.root)
         spec = load_spec(meta['robot'], args.root)
         views = dict(scene.VIEWS)
@@ -69,12 +72,15 @@ def worker(args):
             frames = work / name
             shutil.rmtree(frames, ignore_errors=True)
             video = Video(env, list(views), frames, CONTROL_HZ)
+            failure = episode.attrs.get('failure')
+            note = f'  FAILED {failure["subtask"]}: {failure["reason"]}' if failure else ''
             for t in range(episode.length + 1):
                 replay.set_state(env, episode.state(t))
                 # RT2 denoises over time, so the first render after a state change still blends in
                 # the previous one; the second is kept.
                 env.render([])
-                video.capture(f'{name}  t={t / CONTROL_HZ:6.2f}s  {episode.subtask(t) or ""}', env.render(list(views)))
+                video.capture(f'{name}  t={t / CONTROL_HZ:6.2f}s  {episode.subtask(t) or ""}{note}',
+                              env.render(list(views)))
             shutil.move(video.encode_side_by_side(work / f'{name}.mp4'), video_path(directory, seed))
             shutil.rmtree(frames)
             print(name, episode.length, f'{time.perf_counter() - started:.0f} s', flush=True)
@@ -91,6 +97,7 @@ def main(argv=None):
     parser.add_argument('--physics', required=True, help='the backend the batch was generated on')
     parser.add_argument('--count', type=int, help='the first N succeeded episodes by seed')
     parser.add_argument('--seeds', nargs='+', help='a:b (a to b - 1) and single seeds of succeeded episodes')
+    parser.add_argument('--failed', action='store_true', help='also every failed episode')
     parser.add_argument('--gpus', type=int, nargs='+', default=[0], help='physical GPUs')
     parser.add_argument('--jobs-per-gpu', type=int, default=1, help='processes at a time on each GPU')
     parser.add_argument('--input', type=Path, default=ROOT / 'data' / 'scenes',
@@ -125,8 +132,11 @@ def main(argv=None):
         failed = sorted(seed for seeds in summary['failures'].values() for seed in seeds)
         parser.error(f'seeds {seed_range(error.args[0])} have no succeeded episode; the batch covers '
                      f'{summary["seeds"]["range"]}, failed: {seed_range(failed) or "none"}')
+    if args.failed and (directory / 'trajectories_failed.hdf5').is_file():
+        with h5py.File(directory / 'trajectories_failed.hdf5', 'r') as file:
+            seeds = sorted(seeds + [int(name.split('_')[1]) for name in file['data']])
     if not seeds:
-        parser.error('no succeeded episodes to render')
+        parser.error('no episodes to render')
     root = args.root.resolve()
     staging = root / 'outputs' / 'scenes' / args.scene / args.physics / 'render'
     shutil.rmtree(staging, ignore_errors=True)

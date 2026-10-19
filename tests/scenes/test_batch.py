@@ -108,6 +108,11 @@ def test_render_replaces_earlier_videos(batch, tmp_path, monkeypatch):
                  '--jobs-per-gpu', '2', '--input', str(tmp_path / 'data'), '--root', str(tmp_path)])
     assert chosen == [0, 1] and videos(batch) == [0, 1]
     assert json.loads((batch / 'summary.json').read_text())['videos'] == '0:2'
+    chosen.clear()
+    trajectory_file(batch / 'trajectories_failed.hdf5', [3, 2])
+    render.main(['000000', '--physics', 'isaac-cpu', '--count', '1', '--failed', '--gpus', '0', '1',
+                 '--jobs-per-gpu', '2', '--input', str(tmp_path / 'data'), '--root', str(tmp_path)])
+    assert chosen == [0, 2, 3] and videos(batch) == [0, 2, 3]
 
 
 def test_run_expert_merges_parts(tmp_path, monkeypatch):
