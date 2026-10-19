@@ -12,7 +12,7 @@ from table_1000.experts.generate import PROCESS_EXITED, summarize
 from table_1000.physics import test as physics_test
 from table_1000.scenes.batch import parse_seeds, seed_range, split
 from table_1000.scenes.initial import read_states, write_states
-from table_1000.scenes.recordings import merge, rendered, sheet_path, video_path
+from table_1000.scenes.recordings import merge, video_path, videos
 
 STATE = {'articulation': {'robot': {'joint_position': np.zeros((1, 3), np.float32)}},
          'rigid_object': {'pen': {'root_pose': np.ones((1, 7), np.float32)}}, 'deformable_object': {}}
@@ -79,21 +79,19 @@ def batch(tmp_path):
     directory = tmp_path / 'data' / '000000' / 'isaac-cpu'
     directory.mkdir(parents=True)
     trajectory_file(directory / 'trajectories.hdf5', [0, 1, 4])
-    (directory / 'summary.json').write_text(json.dumps({'seeds': {'range': '0:5', 'count': 5}, 'rendered': {},
+    (directory / 'summary.json').write_text(json.dumps({'seeds': {'range': '0:5', 'count': 5}, 'videos': '',
                                                         'failures': {'close the drawer: x': [2, 3]}}))
     return directory
 
 
 def test_render_rejects_seeds_without_episode(batch, tmp_path, capsys):
     with pytest.raises(SystemExit):
-        render.main(['000000', '--physics', 'isaac-cpu', '--sheets', '--seeds', '1:4', '--input', str(tmp_path / 'data')])
+        render.main(['000000', '--physics', 'isaac-cpu', '--seeds', '1:4', '--input', str(tmp_path / 'data')])
     assert 'seeds 2:4 have no succeeded episode; the batch covers 0:5, failed: 2:4' in capsys.readouterr().err
 
 
-def test_render_replaces_only_its_kind(batch, tmp_path, monkeypatch):
-    sheet_path(batch, 0).parent.mkdir()
-    sheet_path(batch, 0).write_bytes(b'old')
-    video_path(batch, 1).write_bytes(b'video')
+def test_render_replaces_earlier_videos(batch, tmp_path, monkeypatch):
+    video_path(batch, 4).write_bytes(b'old')
     chosen = []
 
     def jobs(commands, gpus):
@@ -102,16 +100,14 @@ def test_render_replaces_only_its_kind(batch, tmp_path, monkeypatch):
             seeds = parse_seeds(command[command.index('--seeds') + 1:command.index('--batch')])
             chosen.extend(seeds)
             for seed in seeds:
-                sheet_path(batch, seed).parent.mkdir(exist_ok=True)
-                sheet_path(batch, seed).write_bytes(b'new')
+                video_path(batch, seed).write_bytes(b'new')
         return []
 
     monkeypatch.setattr(physics_test, 'run_jobs', jobs)
-    render.main(['000000', '--physics', 'isaac-cpu', '--sheets', '--count', '2', '--gpus', '0', '1',
+    render.main(['000000', '--physics', 'isaac-cpu', '--count', '2', '--gpus', '0', '1',
                  '--jobs-per-gpu', '2', '--input', str(tmp_path / 'data'), '--root', str(tmp_path)])
-    assert chosen == [0, 1]
-    assert rendered(batch) == {'sheets': [0, 1], 'videos': [1]}
-    assert json.loads((batch / 'summary.json').read_text())['rendered'] == {'sheets': '0:2', 'videos': '1'}
+    assert chosen == [0, 1] and videos(batch) == [0, 1]
+    assert json.loads((batch / 'summary.json').read_text())['videos'] == '0:2'
 
 
 def test_run_expert_merges_parts(tmp_path, monkeypatch):

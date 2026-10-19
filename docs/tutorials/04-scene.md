@@ -1,6 +1,6 @@
 # 04 场景与专家轨迹
 
-用第 2 章的物体和第 3 章的机器人搭一个场景，编写专家程序，然后分三步得到专家轨迹：构建场景（采样并检查初态）、生成轨迹、渲染评审。以[场景 000000](../../asset_sources/scenes/000000/) 为例：X1Pro 站在桌前，桌上一个三抽屉柜和一支笔；机器人打开最下层抽屉，把笔放进去，再关上。各文件的要求见[场景与专家轨迹规范](../designs/asset-pipeline/scenes.md)。
+用第 2 章的物体和第 3 章的机器人搭一个场景，编写专家程序，然后分三步得到专家轨迹：构建场景（采样并检查初态）、生成轨迹、渲染录像。以[场景 000000](../../asset_sources/scenes/000000/) 为例：X1Pro 站在桌前，桌上一个三抽屉柜和一支笔；机器人打开最下层抽屉，把笔放进去，再关上。各文件的要求见[场景与专家轨迹规范](../designs/asset-pipeline/scenes.md)。
 
 ![场景 000000 的初态，机器人头部相机](../../asset_sources/scenes/000000/thumbnail.jpg)
 
@@ -19,7 +19,7 @@
 | 位置 | 来自 | 内容 |
 | --- | --- | --- |
 | `assets/scenes/<编号>/` | 第 1 步 | 场景的初态：每个 seed 静置后的状态、检查报告、初态图片 |
-| `data/scenes/<编号>/<后端>/` | 第 2、3 步 | 一批专家轨迹及其报告、评审图、录像 |
+| `data/scenes/<编号>/<后端>/` | 第 2、3 步 | 一批专家轨迹及其报告、录像 |
 
 **本例场景**：抽屉柜放在桌子右侧，位置 ±5 cm、偏航 ±15°；笔在机器人右手前方，位置 ±5 cm、朝向任意。专家分四个子任务：`open the bottom drawer of the cabinet`、`pick up the pen`、`put the pen into the drawer`、`close the drawer`。笔朝向任意，所以抓笔和放笔各有几种物理上等价的做法，按顺序尝试，见 [expert.py](../../asset_sources/scenes/000000/expert.py)。
 
@@ -73,14 +73,14 @@ uv run python scripts/scenes/run_expert.py 000000 --physics isaac-cpu --gpus 0 1
 - `--physics` 必填，与第 2 章的命名一致；场景生成目前只验证了 `isaac-cpu`。
 - 对 `initial_states.hdf5` 中的全部 seed 生成轨迹，seed 由第 1 步确定，这一步不再选择。初态记录的机器人与 `scene.py` 不一致时报错，先重跑第 1 步。
 - `--input DIR` 指定初态的根目录（默认 `assets/scenes`，读取 `DIR/<编号>/initial_states.hdf5`），`--output DIR` 指定轨迹的根目录（默认 `data/scenes`，写到 `DIR/<编号>/<后端>/`）。
-- 每次运行整体替换输出目录，包括上一批的评审图和录像。
+- 每次运行整体替换输出目录，包括上一批的录像。
 - 本例 100 个 seed、8 个进程约 16 分钟。
 
 **产出** `data/scenes/<编号>/<后端>/`：
 
 | 文件 | 内容 |
 | --- | --- |
-| `summary.json` | 验收入口：所用提交、这一批的 seed 区间与个数、成功率、失败的 seed、耗时；第 3 步补上已渲染的轨迹 |
+| `summary.json` | 验收入口：所用提交、这一批的 seed 区间与个数、成功率、失败的 seed、耗时；第 3 步补上有录像的 seed |
 | `trajectories.hdf5` | 成功的轨迹，每条 `data/demo_<seed>`（Isaac Lab 录制器格式，可在物理中重放，也可逐步恢复状态） |
 | `trajectories_failed.hdf5` | 失败的轨迹 |
 | `episodes/<seed>.json` | 单条轨迹的报告：子任务起止、每次规划、手指碰过的部件、换用的候选、物体终态 |
@@ -108,34 +108,28 @@ uv run python scripts/scenes/run_expert.py 000000 --physics isaac-cpu --gpus 0 1
 
 表中数值来自 b4c35d4 的批次，新批次以实际生成的摘要为准。
 
-## 3. 渲染
+## 3. 渲染录像
 
-按录制的状态逐步恢复场景再渲染，不重新仿真。日常验收用两条命令：所有成功轨迹的评审图，以及前 5 条成功轨迹的录像。
+按录制的状态逐步恢复场景再渲染，不重新仿真。验收时取前 5 条成功轨迹：
 
 ```bash
-uv run python scripts/scenes/render.py 000000 --physics isaac-cpu --gpus 0 1 2 3 --sheets
-uv run python scripts/scenes/render.py 000000 --physics isaac-cpu --gpus 0 1 2 3 --videos --count 5
+uv run python scripts/scenes/render.py 000000 --physics isaac-cpu --gpus 0 1 2 3 --count 5
 ```
 
-- 产物只在给出参数时渲染，至少给一个：`--sheets` 出评审图，`--videos` 出录像，两个都给时一起渲染。
 - 轨迹默认是这一批全部成功的轨迹，可以缩小：`--count N` 按 seed 从小到大取前 N 条成功轨迹；`--seeds` 指定 seed，写法同第 1 步，如 `--seeds 20 64` 或 `--seeds 50:100`。两者可以同时用，如 `--seeds 50:100 --count 5`。指定的 seed 不在成功轨迹中时报错，并列出这一批的 seed 区间和失败的 seed。
 - `--input DIR` 指定轨迹的根目录（默认 `data/scenes`），读取并写回 `DIR/<编号>/<后端>/`。
-- 每次运行只覆盖本次渲染的那类产物：只出评审图时不动已有的录像，反之亦然。
-- 评审图每条固定 12 帧，约 1 s；录像每个控制步一帧，本例每条约 700 帧、约 2 分钟。本例 97 条评审图在 4 张卡上约 2 分钟，5 条录像约 10 分钟。
+- 每次运行替换这一批已有的录像。
+- 录像每个控制步一帧，本例每条约 700 帧、约 2 分钟；5 条在 4 张卡上约 4 分钟。
 
 **产出**（与轨迹同一目录 `data/scenes/<编号>/<后端>/`）：
 
 | 文件 | 内容 |
 | --- | --- |
-| `sheets/demo_<seed>.jpg` | 评审图：第一个固定视角在轨迹上均匀取 12 帧，4 列 3 行，标注时间和子任务 |
 | `demo_<seed>.mp4` | 录像：场景各固定视角（本例 `wide`、`close`）左右并排，每个控制步一帧（25 fps，1 倍速），标注时间和子任务 |
 
-`summary.json` 同时记下已渲染评审图和录像的 seed。
+`summary.json` 的 `videos` 记下有录像的 seed。
 
-**验收**：
-
-1. 每条成功轨迹的评审图由大模型逐条查看：流程完整，物体到位（笔在抽屉里），抽屉最后关好、手已撤开。
-2. 5 条录像人工查看：手、臂与物体无可见穿模，夹持稳定，物体无异常滑移或跳动。
+**验收**：人工看这 5 条录像：流程完整，物体到位（笔在抽屉里），抽屉最后关好、手已撤开；手、臂与物体无可见穿模，夹持稳定，物体无异常滑移或跳动。
 
 ## 不通过时
 

@@ -12,7 +12,7 @@ README 说明每个文件放在哪里、由哪份规范约定。各文件的字�
 | --- | --- | --- |
 | `asset_sources/` | 资产源码：建模、物理、场景、专家程序，以及很小的缩略图 | 提交 |
 | `assets/` | 由源码构建或下载的资产，以及验收要看的预览、测试结果和场景初态 | 忽略 |
-| `data/` | 生成的数据：专家轨迹（HDF5）及其评审图和录像 | 忽略 |
+| `data/` | 生成的数据：专家轨迹（HDF5）及其录像 | 忽略 |
 | `outputs/` | 日志和临时实验 | 忽略 |
 
 同一资产在 `asset_sources/` 与 `assets/` 下使用相同的相对路径：对象 `objects/<category>/<六位编号>`、机器人 `robots/<名称>`、场景 `scenes/<六位编号>`；编号从 `000000` 开始。下面按资产类型列出每个文件，括号内为规范文档。
@@ -69,11 +69,10 @@ assets/scenes/000000/            build_scene.py 的产出，与后端无关
   initial.json        初态检查：汇总与每次尝试的结果
   initial_states.jpg  可选，前 N × M 个有效初态的拼图
   initial/<seed>.jpg  可选，每个有效初态的相机原图
-data/scenes/000000/<后端>/        一批专家轨迹：run_expert.py 生成，render.py 补上图片和录像
-  summary.json        验收入口：提交、seed、成功率、失败的 seed、耗时、已渲染的 seed
+data/scenes/000000/<后端>/        一批专家轨迹：run_expert.py 生成，render.py 补上录像
+  summary.json        验收入口：提交、seed、成功率、失败的 seed、耗时、有录像的 seed
   trajectories.hdf5、trajectories_failed.hdf5    成功与失败的轨迹，每条 data/demo_<seed>
   episodes/<seed>.json                           每条轨迹的报告
-  sheets/demo_<seed>.jpg                         评审图
   demo_<seed>.mp4                                录像，固定视角左右并排
 ```
 

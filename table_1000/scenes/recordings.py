@@ -2,10 +2,9 @@
 
 ``trajectories.hdf5`` and ``trajectories_failed.hdf5`` hold one ``data/demo_<seed>``
 group per episode; the processes of a batch write their own files, merged at the
-end (:func:`merge`). Renders sit next to them: review sheets
-``sheets/demo_<seed>.jpg`` and videos ``demo_<seed>.mp4``, each written to a
-temporary name and renamed when complete, so an interrupted render leaves
-nothing half-written.
+end (:func:`merge`). Videos ``demo_<seed>.mp4`` sit next to them, each encoded
+elsewhere and moved in when complete, so an interrupted render leaves nothing
+half-written.
 """
 
 import json
@@ -40,22 +39,13 @@ def demo_name(seed):
     return f'demo_{seed}'
 
 
-def sheet_path(directory, seed):
-    return Path(directory) / 'sheets' / f'{demo_name(seed)}.jpg'
-
-
 def video_path(directory, seed):
     return Path(directory) / f'{demo_name(seed)}.mp4'
 
 
-def rendered(directory):
-    """Seeds with a review sheet and with a video in a batch directory."""
-    directory = Path(directory)
-
-    def seeds(paths):
-        return sorted(int(path.stem.split('_')[1]) for path in paths)
-
-    return {'sheets': seeds((directory / 'sheets').glob('demo_*.jpg')), 'videos': seeds(directory.glob('demo_*.mp4'))}
+def videos(directory):
+    """Seeds with a video in a batch directory."""
+    return sorted(int(path.stem.split('_')[1]) for path in Path(directory).glob('demo_*.mp4'))
 
 
 def subtask(attrs, t, length):

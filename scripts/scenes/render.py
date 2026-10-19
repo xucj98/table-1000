@@ -1,22 +1,19 @@
-"""Render a batch of trajectories from their recorded states: review sheets and videos.
+"""Videos of a batch of trajectories, rendered from their recorded states.
 
-``uv run python scripts/scenes/render.py 000000 --physics isaac-cpu --gpus 0 1 2 3 (--sheets | --videos) [--count N] [--seeds ...] [--input DIR]``
+``uv run python scripts/scenes/render.py 000000 --physics isaac-cpu --gpus 0 1 2 3 [--count N] [--seeds ...] [--input DIR]``
 
 Reads the batch ``<input>/<scene>/<backend>/`` (``<input>`` = ``data/scenes``,
-written by ``run_expert.py``) and writes into it:
-
-- ``sheets/demo_<seed>.jpg`` with ``--sheets``: twelve frames of the scene's first fixed view
-  spread over the episode, 4 columns by 3 rows, captioned with the time and subtask;
-- ``demo_<seed>.mp4`` with ``--videos``: the scene's fixed views side by side, one frame
-  per control step (25 fps, 1x), captioned with the time and subtask.
+written by ``run_expert.py``) and writes ``demo_<seed>.mp4`` into it: the
+scene's fixed views side by side, one frame per control step (25 fps, 1x),
+captioned with the time and subtask.
 
 The episodes are the batch's succeeded ones, by default all; ``--seeds`` (as in
 ``build_scene.py``) and ``--count N`` (the first N by seed) narrow them. A run
-replaces the kind of product it renders and keeps the other. Every frame
-restores the recorded state of that step; nothing is simulated. The episodes
-are split into ``len(gpus) × jobs-per-gpu`` parts, one process each (logs in
+replaces the batch's earlier videos. Every frame restores the recorded state of
+that step; nothing is simulated. The episodes are split into
+``len(gpus) × jobs-per-gpu`` parts, one process each (logs in
 ``outputs/scenes/<scene>/<backend>/render/``); ``summary.json`` lists the
-rendered seeds.
+seeds with a video.
 """
 
 import argparse
@@ -29,25 +26,6 @@ import traceback
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-
-SHEET = (4, 3)          # columns, rows
-SHEET_WIDTH = 480       # px per frame
-CAPTION = 18
-
-
-def sheet(frames, captions, path):
-    from PIL import Image, ImageDraw
-    columns, rows = SHEET
-    images = [Image.open(frame) for frame in frames]
-    height = round(images[0].height * SHEET_WIDTH / images[0].width)
-    canvas = Image.new('RGB', (columns * SHEET_WIDTH, rows * (height + CAPTION)), 'white')
-    draw = ImageDraw.Draw(canvas)
-    for i, (image, caption) in enumerate(zip(images, captions)):
-        x, y = (i % columns) * SHEET_WIDTH, (i // columns) * (height + CAPTION)
-        canvas.paste(image.resize((SHEET_WIDTH, height)), (x, y + CAPTION))
-        draw.text((x + 4, y + 3), caption, fill='black')
-    canvas.save(path, quality=90)
-
 
 def choose(succeeded, seeds=None, count=None):
     """The succeeded seeds to render: those of ``seeds`` (all by default), the first ``count``.
@@ -68,11 +46,10 @@ def worker(args):
     app = start_app(gpu=args.gpu, workers=4, extra_args=RT2_ARGS)
     failed = False
     try:
-        import numpy as np
         from table_1000.robots import load_spec
         from table_1000.scenes import load
         from table_1000.scenes.batch import parse_seeds
-        from table_1000.scenes.recordings import demo_name, sheet_path, video_path
+        from table_1000.scenes.recordings import demo_name, video_path
         from table_1000.sim import CONTROL_HZ
         from table_1000.sim.isaaclab import render, replay
         from table_1000.sim.isaaclab.env import RobotEnv
@@ -92,24 +69,13 @@ def worker(args):
             frames = work / name
             shutil.rmtree(frames, ignore_errors=True)
             video = Video(env, list(views), frames, CONTROL_HZ)
-            picks = np.linspace(0, episode.length, SHEET[0] * SHEET[1]).round().astype(int)
-            steps = range(episode.length + 1) if args.videos else picks
-            for t in steps:
+            for t in range(episode.length + 1):
                 replay.set_state(env, episode.state(t))
                 # RT2 denoises over time, so the first render after a state change still blends in
                 # the previous one; the second is kept.
                 env.render([])
                 video.capture(f'{name}  t={t / CONTROL_HZ:6.2f}s  {episode.subtask(t) or ""}', env.render(list(views)))
-            if args.videos:
-                encoded = video.encode_side_by_side(work / f'{name}.mp4')
-                shutil.move(encoded, video_path(directory, seed))
-            if args.sheets:
-                first = frames / next(iter(views))
-                shots = [first / f'{(t if args.videos else i):05d}.jpg' for i, t in enumerate(picks)]
-                sheet(shots, [f't={t / CONTROL_HZ:.1f}s {episode.subtask(t) or ""}' for t in picks],
-                      work / f'{name}.jpg')
-                sheet_path(directory, seed).parent.mkdir(exist_ok=True)
-                shutil.move(work / f'{name}.jpg', sheet_path(directory, seed))
+            shutil.move(video.encode_side_by_side(work / f'{name}.mp4'), video_path(directory, seed))
             shutil.rmtree(frames)
             print(name, episode.length, f'{time.perf_counter() - started:.0f} s', flush=True)
         env.close()
@@ -123,8 +89,6 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('scene')
     parser.add_argument('--physics', required=True, help='the backend the batch was generated on')
-    parser.add_argument('--sheets', action='store_true', help='review sheets')
-    parser.add_argument('--videos', action='store_true', help='videos')
     parser.add_argument('--count', type=int, help='the first N succeeded episodes by seed')
     parser.add_argument('--seeds', nargs='+', help='a:b (a to b - 1) and single seeds of succeeded episodes')
     parser.add_argument('--gpus', type=int, nargs='+', default=[0], help='physical GPUs')
@@ -143,9 +107,7 @@ def main(argv=None):
         return
     import h5py
     from table_1000.scenes.batch import parse_seeds, run_parts, seed_range, split
-    from table_1000.scenes.recordings import rendered
-    if not (args.sheets or args.videos):
-        parser.error('give --sheets, --videos or both')
+    from table_1000.scenes.recordings import videos
     if args.count is not None and args.count < 1:
         parser.error('--count must be positive')
     if args.jobs_per_gpu < 1:
@@ -168,24 +130,18 @@ def main(argv=None):
     root = args.root.resolve()
     staging = root / 'outputs' / 'scenes' / args.scene / args.physics / 'render'
     shutil.rmtree(staging, ignore_errors=True)
-    if args.sheets:
-        shutil.rmtree(directory / 'sheets', ignore_errors=True)
-    if args.videos:
-        for video in directory.glob('demo_*.mp4'):
-            video.unlink()
+    for video in directory.glob('demo_*.mp4'):
+        video.unlink()
     jobs = []
     for index, part in enumerate(split(seeds, len(args.gpus) * args.jobs_per_gpu)):
         command = [sys.executable, str(Path(__file__).resolve()), args.scene, '--worker', '--physics', args.physics,
                    '--seeds', *seed_range(part).split(), '--batch', str(directory), '--work', str(staging / f'part{index}'),
                    '--root', str(root), '--assets', str(args.assets.resolve())]
-        command += ['--sheets'] if args.sheets else []
-        command += ['--videos'] if args.videos else []
         jobs.append((command, staging / f'part{index}.log', f'{args.scene} render part{index} seeds {seed_range(part)}'))
     failed = run_parts(jobs, args.gpus, args.jobs_per_gpu)
-    done = rendered(directory)
-    summary['rendered'] = {kind: seed_range(values) for kind, values in done.items()}
+    summary['videos'] = seed_range(videos(directory))
     (directory / 'summary.json').write_text(json.dumps(summary, indent=1, ensure_ascii=False, default=float) + '\n')
-    print('RENDERED', json.dumps(summary['rendered']), flush=True)
+    print('VIDEOS', summary['videos'], flush=True)
     if failed:
         raise SystemExit('failed: ' + ', '.join(failed))
 

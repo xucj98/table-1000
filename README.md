@@ -28,13 +28,10 @@ uv run python -c "import table_1000; print(table_1000.__file__)"
 | `sim` | 仿真与资产物理测试 | Isaac Sim 5.1.0、Isaac Lab 2.3.2.post1、PyTorch 2.7.0（CUDA 12.8） |
 | `robots` | 机器人运动学与规划 | MPlib、toppra、trimesh、rtree |
 | `dev` | 资产与机器人开发 | Open3D、CoACD、huggingface_hub、pytest |
-| `data` | 导出 LeRobot 数据集 | LeRobot 0.4.4 |
 
 ```bash
 uv sync --locked --all-extras        # 或 --extra sim 等只装需要的组
 ```
-
-LeRobot 与 Isaac Sim 装在同一环境，版本冲突的处理见 `pyproject.toml`。
 
 `sim` 组约 19 GB，安装后通过 `uv run python` 使用项目环境中的 Isaac Sim，无需另外指定仿真解释器。Blender 使用其自带的 Python；策略使用各自的环境。
 

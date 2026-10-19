@@ -130,7 +130,7 @@ def main(argv=None):
         reports.append(json.loads(path.read_text()))
         shutil.move(path, directory / 'episodes' / path.name)
     summary = {'scene': args.scene, 'robot': robot, 'physics': args.physics, 'commit': commit(root),
-               **summarize(reports, seeds), 'total_s': time.perf_counter() - started, 'rendered': {}}
+               **summarize(reports, seeds), 'total_s': time.perf_counter() - started, 'videos': ''}
     (directory / 'summary.json').write_text(json.dumps(summary, indent=1, ensure_ascii=False, default=float) + '\n')
     print('SUMMARY', directory / 'summary.json',
           json.dumps({key: summary[key] for key in ('succeeded', 'success_rate', 'failures')}, default=float), flush=True)
