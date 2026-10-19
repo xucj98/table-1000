@@ -36,12 +36,8 @@ def test_preview_section_lists_rendered_episodes(tmp_path):
         (demo_dir(tmp_path, name) / 'sheet.jpg').touch()
     video_path(tmp_path, 'demo_10').touch()
     (demo_dir(tmp_path, 'demo_10') / 'frames' / 'face').mkdir(parents=True)
-    write_render(demo_dir(tmp_path, 'demo_10'), {'trajectory': 'ten', 'sheet': True,
-                                                 'views': ['wide'], 'cameras': ['face']})
-    write_render(demo_dir(tmp_path, 'demo_2'), {'trajectory': 'two', 'sheet': True})
-    section = summary.preview_section(tmp_path, {'demo_10': 'ten', 'demo_2': 'two'})
+    write_render(demo_dir(tmp_path, 'demo_10'), {'sheet': True, 'views': ['wide'], 'cameras': ['face']})
+    write_render(demo_dir(tmp_path, 'demo_2'), {'sheet': True})
+    section = summary.preview_section(tmp_path, {'demo_10', 'demo_2'})
     assert section['sheets'] == 2 and section['videos'] == ['demo_10'] and section['camera_frames'] == ['demo_10']
     assert section['output'] == str(tmp_path)
-    section = summary.preview_section(tmp_path, {'demo_10': 'new', 'demo_2': 'two'})
-    assert section['sheets'] == 1 and not section['videos'] and not section['camera_frames']
-    assert section['stale'] == ['demo_10']

@@ -3,7 +3,8 @@
 ``uv run python scripts/scenes/generate.py 000000 --seeds 0:100 --physics isaac-cpu --gpus 0 1 2 3``
 
 For each scene and backend the seeds are split into one contiguous part per GPU;
-each part runs in its own process (``<output>/<scene>/<backend>/part<k>/``, log
+each part runs in its own process (``<output>/<scene>/<backend>/part<k>/``, by default
+``<output>`` = ``data/scenes``; log
 ``run.log``), so a failing part does not stop the others. Each part writes
 ``trajectories.hdf5`` (succeeded episodes, Isaac Lab's format, ``demo_<seed>``),
 ``trajectories_failed.hdf5`` and ``episodes/<seed>.json``. At the end
@@ -107,7 +108,7 @@ def main(argv=None):
     parser.add_argument('--seeds', nargs='+', default=['0:10'])
     parser.add_argument('--physics', nargs='+', choices=tuple(BACKENDS), required=True, help='simulation backends')
     parser.add_argument('--gpus', type=int, nargs='+', default=[0], help='physical GPUs; one part at a time on each')
-    parser.add_argument('--output', type=Path, default=ROOT / 'outputs' / 'scenes',
+    parser.add_argument('--output', type=Path, default=ROOT / 'data' / 'scenes',
                         help='runs go to <output>/<scene>/<backend>/ (replaced)')
     parser.add_argument('--root', type=Path, default=ROOT, help='repository root holding the scene and robot sources')
     parser.add_argument('--assets', type=Path, default=ROOT / 'assets')

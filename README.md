@@ -34,7 +34,7 @@ uv run python -c "import table_1000; print(table_1000.__file__)"
 uv sync --locked --all-extras        # 或 --extra sim 等只装需要的组
 ```
 
-LeRobot 与 Isaac Sim 原本有两处版本冲突，`pyproject.toml` 用 `override-dependencies` 统一：Isaac Sim 锁定 `packaging==23.0`、LeRobot 要求 `>=24.2`，统一用 24.2；LeRobot 依赖的 `rerun-sdk`（只用于可视化，要求 NumPy 2）不安装。另把 `pyarrow` 固定在 21（最后支持 NumPy 1.x 的版本），`torchcodec` 固定在 0.5（对应 PyTorch 2.7）。
+LeRobot 与 Isaac Sim 装在同一环境，版本冲突的处理见 `pyproject.toml`。
 
 `sim` 组约 19 GB，安装后通过 `uv run python` 使用项目环境中的 Isaac Sim，无需另外指定仿真解释器。Blender 使用其自带的 Python；策略使用各自的环境。
 
@@ -49,10 +49,11 @@ docs/                         # 计划、研究方案与设计文档
 configs/                      # pipeline、场景与测试配置
 asset_sources/                # 资产生成源码、配置与资源引用
 assets/                       # 本地生成或下载的资产，不提交
+data/                         # 生成的轨迹与数据集，不提交
 table_1000/                   # 可复用代码
 scripts/                      # 薄入口与教程示例
 tests/                        # 以单元测试为主，目录对应 table_1000/
-outputs/                      # 本地生成结果，不提交
+outputs/                      # 日志与临时实验，不提交
 pyproject.toml                 # 包定义与依赖
 uv.lock                       # 核心环境锁文件
 ```

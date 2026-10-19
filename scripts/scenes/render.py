@@ -1,6 +1,6 @@
 """Render recorded trajectories from their states: videos, robot camera frames and review sheets.
 
-``uv run python scripts/scenes/render.py outputs/scenes/000000/isaac-cpu/part*/trajectories.hdf5 --gpus 0 1 [--demos demo_3 demo_7 | --count 5] [--views wide] [--cameras face_view left_wrist_view right_wrist_view] [--sheets] [--output DIR]``
+``uv run python scripts/scenes/render.py data/scenes/000000/isaac-cpu/part*/trajectories.hdf5 --gpus 0 1 [--demos demo_3 demo_7 | --count 5] [--views wide] [--cameras face_view left_wrist_view right_wrist_view] [--sheets] [--output DIR]``
 
 The chosen episodes of all the given files (one scene) are split over the GPUs,
 one process at a time on each (logs in ``outputs/scenes/<scene>/render/``); at
@@ -19,8 +19,7 @@ Every frame restores the recorded state of that step; nothing is simulated.
 ``--count`` picks that many episodes at random (``--seed``); the default is all.
 ``--sheets`` renders only the twelve frames of each review sheet (no videos, no
 robot cameras), enough to review every episode of a batch; it replaces only
-``sheet.jpg`` and keeps the video and frames from the same trajectory. Products
-from a different trajectory (or without provenance) are regenerated.
+``sheet.jpg`` and keeps the episode's video and frames.
 """
 
 import argparse
@@ -75,15 +74,14 @@ def main(argv=None):
     import numpy as np
     from table_1000.physics.test import run_jobs
     from table_1000.scenes import summary as scene_summary
-    from table_1000.scenes.recordings import fingerprint
-    available, scenes, identities = [], set(), {}
+    available, scenes, names = [], set(), set()
     for path in args.trajectories:
         with h5py.File(path, 'r') as file:
             scenes.add(json.loads(file['data'].attrs['env_args'])['scene'])
             for name, group in file['data'].items():
-                if name in identities:
+                if name in names:
                     parser.error(f'duplicate episode {name}; give one recording per seed')
-                identities[name] = fingerprint(group)
+                names.add(name)
                 if args.demos is None or name in args.demos:
                     available.append((path.resolve(), name))
     if len(scenes) != 1:
@@ -110,7 +108,7 @@ def main(argv=None):
             jobs.append((command, logs / f'run{len(jobs)}.log', f'{path.parent.name} {len(names)} episodes'))
     failed = run_jobs(jobs, args.gpus)
     print('SUMMARY', scene_summary.update(args.assets.resolve(), scene, 'preview',
-                                          scene_summary.preview_section(output, identities)))
+                                          scene_summary.preview_section(output, names)))
     if failed:
         raise SystemExit('failed: ' + ', '.join(failed))
 
@@ -125,7 +123,7 @@ def worker(args):
         import numpy as np
         from table_1000.robots import load_spec
         from table_1000.scenes import load
-        from table_1000.scenes.recordings import begin_render, demo_dir, fingerprint, video_path, write_render
+        from table_1000.scenes.recordings import begin_render, demo_dir, video_path, write_render
         from table_1000.sim import CONTROL_HZ
         from table_1000.sim.isaaclab import render, replay
         from table_1000.sim.isaaclab.env import RobotEnv
@@ -145,7 +143,7 @@ def worker(args):
             started = time.perf_counter()
             episode = episodes[name]
             directory = demo_dir(output, name)
-            record = begin_render(output, name, fingerprint(episode.group), sheets=args.sheets)
+            record = begin_render(output, name, sheets=args.sheets)
             videos = Video(env, list(views), directory / 'views', CONTROL_HZ)
             frames = Video(env, list(cameras), directory / 'frames', CONTROL_HZ)
             picks = np.linspace(0, episode.length, SHEET[0] * SHEET[1]).round().astype(int)

@@ -2,7 +2,7 @@
 
 本目录规定 Table-1000 对象资产的文件结构与接口，覆盖从 Blender 建模到物理仿真资产的生产和验收。
 
-README 说明整体流程、文件分工和存储位置。各文件的字段、单位、默认值与约束见对应规范；具体执行命令见[操作手册](../../tutorials/README.md)。
+README 说明整体流程，以及每个文件放在哪里、由哪份规范约定。各文件的字段、单位、默认值与约束见对应规范；具体执行命令见[操作手册](../../tutorials/README.md)。
 
 ## 生产流程
 
@@ -38,18 +38,79 @@ robot.urdf ──Blender 渲染──> three_quarter.jpg
 
 模型保存刚体划分、几何和关节定义；物理配置补充质量、材料与驱动。带行为资产使用生成的 `object.usda` 作为加载入口，见[行为分发](behaviors.md#分发)。几何预览配置与物理测试脚本均作为资产源码保存。已提供带盖笔与三抽屉盒的构建和测试示例。
 
-## 文件分工
+## 资产布局
 
-| 文件 | 内容 | 规范 |
+仓库顶层按“由谁产生、是否进 Git”分成四个目录。三个忽略目录体积大，多个检出可以用软链接指向同一份。
+
+| 目录 | 放什么 | Git |
 | --- | --- | --- |
-| `object.py`、`object.blend` | 建模入口、坐标系、刚体子树、视觉与碰撞、关节 | [建模](modeling.md) |
-| `preview.json` | 几何姿态、相机、关键帧与预览输出 | [几何预览](preview.md) |
-| `physics.py`、`physics.usda`、`object.usdz` | 质量、接触材料、驱动与仿真导出 | [物理属性](physics.md) |
-| `behavior.py` | 随资产加载的附加力或状态转换 | [行为插件](behaviors.md) |
-| `physics_test.py` | 实验初态、测试动作、视频与结果记录 | [物理测试](physics-tests.md) |
-| `metadata.json` | 现有 UUID 字段；身份与版本规则待定 | 见下文 |
+| `asset_sources/` | 资产源码：建模、物理、场景、专家程序，以及很小的缩略图 | 提交 |
+| `assets/` | 由源码构建或下载的资产，以及验收要看的预览和测试结果 | 忽略 |
+| `data/` | 生成的数据：专家轨迹（HDF5）、LeRobot 数据集 | 忽略 |
+| `outputs/` | 日志和临时实验 | 忽略 |
 
-统一单位：m、kg、s、rad、N、N·m；四元数顺序为 `[w, qx, qy, qz]`。各文件另行注明坐标系。USD 原生属性遵循各 Schema 的单位，详见[物理属性](physics.md)。
+同一资产在 `asset_sources/` 与 `assets/` 下使用相同的相对路径：对象 `objects/<category>/<六位编号>`、机器人 `robots/<名称>`、场景 `scenes/<六位编号>`；编号从 `000000` 开始。下面按资产类型列出每个文件，括号内为规范文档。
+
+**对象**
+
+```text
+asset_sources/objects/cabinet/000000/
+  object.py           建模入口：坐标系、刚体子树、视觉与碰撞、关节（建模）
+  preview.json        几何姿态、相机、关键帧与预览输出（几何预览）
+  physics.py          质量、接触材料、驱动（物理属性）
+  physics_test.py     物理实验的初态、动作与记录（物理测试）
+  behavior.py         可选，随资产加载的附加力或状态转换（行为插件）
+  metadata.json       UUID，见下文
+  README.md           外观、尺寸、资产树、物理实测，见下文
+  three_quarter.jpg   480 × 240 缩略图
+assets/objects/cabinet/000000/
+  object.blend        object.py 构建的模型
+  geometry.usdc       导出的 USD 几何层
+  physics.usda        physics.py 生成的物理层
+  object.usdz         加载入口；带行为时另有 object.usda 与行为依赖
+  *.py、*.json、README.md、three_quarter.jpg    源码快照
+  preview/            第一阶段验收：几何检查 acceptance.json、图片与视频
+  physics_test/       第二阶段验收：summary.json，isaac-cpu/、isaac-gpu/ 各后端结果
+```
+
+**机器人**
+
+```text
+asset_sources/robots/x1pro/
+  robot.urdf、meshes/ 转换后的 URDF 与视觉、碰撞网格（机器人）
+  prepare.py          从厂商 URDF 包选取配置、划分碰撞
+  physics.py          驱动、求解器与接触材料
+  robot.py            机器人描述：关节、末端、相机
+  robot_test.py       验收设置
+  README.md、three_quarter.jpg
+assets/robots/x1pro/
+  raw/                厂商原始 URDF 包，存档于 Hugging Face 数据集，版本见 assets.lock.json
+  import/             Isaac Sim URDF 导入结果
+  robot.usda          加载入口
+  prepare.json、check.json、源码快照
+```
+
+**场景**
+
+```text
+asset_sources/scenes/000000/
+  scene.py            桌子、机器人、物体、录像视角、随机初始化（场景）
+  expert.py           专家程序
+  thumbnail.jpg       seed 0 初态的头部相机图像，480 × 270
+assets/scenes/000000/            验收时看这一层
+  summary.json        验收入口：初态检查、生成统计、已渲染的轨迹
+  initial.json、initial_states.jpg    seed 0–24 的初态检查与 5 × 5 拼图
+  demo_<seed>.mp4     抽查的录像，固定视角左右并排
+  demos/demo_<seed>/  每条渲染过的轨迹：评审图 sheet.jpg、机器人相机图像 frames/、完成记录 render.json
+data/scenes/000000/
+  <后端>/part<k>/     轨迹 trajectories.hdf5（成功）、trajectories_failed.hdf5，每个 seed 的报告 episodes/、日志 run.log
+  <后端>/summary.json、summary.csv    该后端的生成汇总
+  lerobot/            LeRobot 数据集
+```
+
+规范：[建模](modeling.md)、[几何预览](preview.md)、[物理属性](physics.md)、[行为插件](behaviors.md)、[物理测试](physics-tests.md)、[机器人](robots.md)、[场景与专家轨迹](scenes.md)。
+
+统一单位：m、kg、s、rad、N、N·m；四元数顺序为 `[w, qx, qy, qz]`。各文件另行注明坐标系。USD 原生属性遵循各 Schema 的单位，详见[物理属性](physics.md)。源码快照重建依赖同版本的 `table_1000` 包，共用模块不复制到资产目录。外部资源引用须注明版本、来源和许可，不使用私有绝对路径。
 
 ## 名称压缩表示
 
@@ -61,24 +122,7 @@ robot.urdf ──Blender 渲染──> three_quarter.jpg
 
 压缩只影响文字展示或配置书写，模型中的对象仍各自使用完整名称，实际层级不变。需要范围展开的脚本共用公共解析工具，不处理动作名、文件名等普通字符串。USDA 使用原生 USD 语法和实际 prim 路径，不直接支持此缩写。
 
-## 资产布局
-
-对象路径为 `objects/<category>/<六位编号>`，场景路径为 `scenes/<六位编号>`，机器人路径为 `robots/<名称>`；编号从 `000000` 开始。
-
-| 位置 | 内容 | Git |
-| --- | --- | --- |
-| `asset_sources/objects/<category>/<id>/` | object.py、preview.json、metadata.json、README.md、three_quarter.jpg；第二阶段增加 physics.py、physics_test.py、可选 behavior.py | 提交 |
-| `assets/objects/<category>/<id>/` | object.blend、geometry.usdc、physics.usda、object.usdz、源码及配置快照、README.md、已有 three_quarter.jpg、可选 object.usda 与行为依赖、preview/、physics_test/（summary.json 与各后端目录） | 忽略 |
-| `asset_sources/robots/<name>/` | robot.urdf 及其按相对路径引用的 meshes/、prepare.py、physics.py、robot.py（机器人描述）、robot_test.py（验收设置）、README.md、three_quarter.jpg | 提交 |
-| `assets/robots/<name>/raw/` | 厂商原始 URDF 包 | 忽略；存档于 Hugging Face 数据集，版本见 `assets.lock.json` |
-| `assets/robots/<name>/` 其余 | URDF 导入结果 import/、加载入口 robot.usda、源码快照、prepare.json、check.json | 忽略 |
-| `asset_sources/scenes/<scene>/` | scene.py（场景与随机初始化）、expert.py（专家程序）、thumbnail.jpg | 提交 |
-| `assets/scenes/<scene>/` | 验收时查看的文件：summary.json（验收入口）、初态检查 initial.json 与拼图 initial_states.jpg、录像 `demo_<seed>.mp4`；demos/：每条渲染轨迹的评审图、机器人相机图像及来源记录 render.json（`demo_<seed>/`）；见[场景规范](scenes.md) | 忽略 |
-| `outputs/` | 临时实验结果与日志 | 忽略 |
-
-源码快照重建依赖同版本的 `table_1000` 包，共用模块不复制到资产目录。外部资源引用须注明版本、来源和许可，不使用私有绝对路径。
-
-### README 与缩略图
+## README 与缩略图
 
 `README.md` 包含 `![preview](three_quarter.jpg)`、简短外观与尺寸说明、资产树及刚体数；有关节时说明类型、限位和方向。部件名称遵循[建模规范](modeling.md#部件命名与资产树)。
 
@@ -102,7 +146,7 @@ cabinet
 
 `three_quarter.jpg` 是四分之三视角的 480 × 240 的缩略图，约 5 - 10 KB，左视觉、右碰撞。
 
-### metadata.json
+## metadata.json
 
 现有格式：
 

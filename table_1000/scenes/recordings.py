@@ -1,43 +1,16 @@
-"""Link completed renders to Isaac Lab episodes without changing its HDF5 format.
-
-Fingerprints cover metadata, labels, states and actions and survive file copies.
-Only completed products are published in render.json.
+"""Where a scene's renders go and which of them are complete, without changing Isaac Lab's HDF5 format.
 
 A render output (by default the scene's directory ``assets/scenes/<scene>/``) holds
 each episode's video ``<demo>.mp4`` at the top, where a person looks first, and
 its other products in ``demos/<demo>/``: ``sheet.jpg``, ``frames/<camera>/``,
-``render.json``.
+``render.json``. ``render.json`` lists only completed products, so an interrupted
+render is not exported. Renders belong to the batch they were made from;
+generating a new batch removes them (:func:`clear_renders`).
 """
 
-import hashlib
 import json
 from pathlib import Path
 import shutil
-
-
-def fingerprint(group):
-    """SHA-256 of an HDF5 episode, streamed in rows to bound memory use."""
-    digest = hashlib.sha256()
-
-    def metadata(value):
-        digest.update(json.dumps(value, sort_keys=True, default=lambda x: x.tolist()).encode())
-        digest.update(b'\0')
-
-    metadata(json.loads(group.parent.attrs['env_args']))
-    metadata(dict(group.attrs))
-
-    def visit(name, dataset):
-        if not hasattr(dataset, 'shape'):
-            return
-        metadata([name, dataset.dtype.str, dataset.shape])
-        if dataset.ndim == 0:
-            digest.update(dataset[()].tobytes())
-        else:
-            for start in range(0, len(dataset), 256):
-                digest.update(dataset[start:start + 256].tobytes())
-
-    group.visititems(visit)
-    return digest.hexdigest()
 
 
 def demo_dir(output, name):
@@ -67,16 +40,15 @@ def write_render(directory, record):
     temporary.replace(file)
 
 
-def begin_render(output, name, identity, *, sheets):
-    """Invalidate the episode's products in ``output`` before rendering; keep the video and camera
-    frames of a full render only for the same episode. Returns the record."""
+def begin_render(output, name, *, sheets):
+    """Invalidate the episode's products about to be rendered: all of them, or only the review sheet
+    (``sheets``). Returns the record."""
     directory = demo_dir(output, name)
-    record = read_render(directory)
-    if not sheets or record.get('trajectory') != identity:
+    record = read_render(directory) if sheets else {}
+    if not sheets:
         shutil.rmtree(directory, ignore_errors=True)
         video_path(output, name).unlink(missing_ok=True)
-        record = {'trajectory': identity, 'cameras': [], 'views': []}
-    record['sheet'] = False
+    record = {'sheet': False, 'cameras': record.get('cameras', []), 'views': record.get('views', [])}
     directory.mkdir(parents=True, exist_ok=True)
     (directory / 'sheet.jpg').unlink(missing_ok=True)
     shutil.rmtree(directory / 'views', ignore_errors=True)

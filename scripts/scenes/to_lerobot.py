@@ -1,6 +1,6 @@
 """Convert rendered trajectories to a LeRobot v3.0 dataset (needs the ``data`` extra).
 
-``uv run python scripts/scenes/to_lerobot.py outputs/scenes/000000/gen/part*/trajectories.hdf5 --output outputs/scenes/000000/lerobot [--frames DIR] [--task subtask|instruction]``
+``uv run python scripts/scenes/to_lerobot.py data/scenes/000000/isaac-cpu/part*/trajectories.hdf5 --output data/scenes/000000/lerobot [--frames DIR] [--task subtask|instruction]``
 
 Every episode rendered by ``scripts/scenes/render.py`` (``<frames>/demos/<demo>/frames/<camera>/``;
 ``--frames`` is render.py's ``--output``, by default the scene's directory ``assets/scenes/<scene>/``)
@@ -28,11 +28,11 @@ import h5py
 import numpy as np
 from PIL import Image
 
-from table_1000.scenes.recordings import demo_dir, fingerprint, read_render, subtask
+from table_1000.scenes.recordings import demo_dir, read_render, subtask
 
 
 def rendered_episodes(files, frames):
-    """Select completed renders, refusing stale or incomplete camera observations."""
+    """Episodes with rendered camera frames, refusing incomplete ones."""
     found, names, cameras = [], set(), None
     for file in files:
         for name, group in file['data'].items():
@@ -43,8 +43,8 @@ def rendered_episodes(files, frames):
             if not (directory / 'frames').is_dir():
                 continue
             record = read_render(directory)
-            if record.get('trajectory') != fingerprint(group) or not record.get('cameras'):
-                raise ValueError(f'{directory}: stale or incomplete camera render; rerun render.py without --sheets')
+            if not record.get('cameras'):
+                raise ValueError(f'{directory}: incomplete camera render; rerun render.py without --sheets')
             current = sorted(record['cameras'])
             if cameras is not None and current != cameras:
                 raise ValueError(f'{directory}: camera set differs; rerender with the same --cameras')

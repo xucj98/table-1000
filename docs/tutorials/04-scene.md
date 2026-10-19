@@ -12,16 +12,9 @@
 | --- | --- |
 | `scene.py` | 场景：桌子、机器人及起始姿态、物体、录像视角，以及每个 seed 怎样随机摆放（`initialize`） |
 | `expert.py` | 专家程序 `solve(ctx)`：按英文子任务组织的阻塞式代码，用运动原语、几何查询和抓取几何完成任务 |
-| `thumbnail.jpg` | seed 0 初态的头部相机图像（宽 480），作为场景的缩略图，由 `check_scene.py` 生成 |
+| `thumbnail.jpg` | seed 0 初态的头部相机图像，作为场景的缩略图，由 `check_scene.py` 生成 |
 
-生成的结果不进 Git：
-
-| 位置 | 内容 |
-| --- | --- |
-| `assets/scenes/<编号>/` | 验收时看的文件都在这一层：`summary.json`（验收入口：初态检查、各后端的生成统计、已渲染的轨迹）、初态检查 `initial.json` 与 5 × 5 拼图 `initial_states.jpg`、5 条录像 `demo_<seed>.mp4` |
-| `assets/scenes/<编号>/demos/` | 每条渲染过的轨迹一个 `demo_<seed>/`：评审图 `sheet.jpg`、机器人相机图像、来源记录 |
-| `outputs/scenes/<编号>/<后端>/` | 轨迹：每段 `part<k>/` 有 `trajectories.hdf5`（成功）、`trajectories_failed.hdf5`（失败）、每个 seed 的报告 `episodes/<seed>.json` 和日志 `run.log`；汇总 `summary.json`、`summary.csv` |
-| LeRobot 目录（`--output`） | LeRobot v3.0 数据集 |
+生成的结果不进 Git：验收时看 `assets/scenes/<编号>/` 这一层（`summary.json`、5 × 5 初态拼图、5 条录像），轨迹和 LeRobot 数据集在 `data/scenes/<编号>/`。每个文件见[资产布局](../designs/asset-pipeline/README.md#资产布局)。
 
 轨迹文件是 Isaac Lab 录制器的格式，可在物理中重放，也可逐步恢复状态；带图片的数据只来自渲染后的 LeRobot 数据集。
 
@@ -43,34 +36,34 @@ uv run python scripts/scenes/generate.py 000000 --seeds 0:100 --physics isaac-cp
 
 - `--physics` 必填，列出物理后端，与第 2 章的命名一致；场景生成目前只验证了 `isaac-cpu`。
 - seed 按 `--gpus` 分成连续的几段，每段一个进程，每张卡同时跑一段；某一段失败不影响其他段。本例 100 个 seed 在 4 张卡上约 30 分钟。
-- 可以同时给多个场景。每次运行会替换 `outputs/scenes/<编号>/<后端>/` 中原有的结果，并删除 `assets/scenes/<编号>/` 中旧批次的录像和 `demos/`；`--output` 可以换轨迹的根目录。
+- 可以同时给多个场景。每次运行会替换 `data/scenes/<编号>/<后端>/` 中原有的结果，并删除 `assets/scenes/<编号>/` 中旧批次的录像和 `demos/`；`--output` 可以换轨迹的根目录。
 - 批量运行用固定提交的独立检出，运行期间不改代码、场景和资产；`summary.json` 记下所用的提交。
 
 **渲染**：按录制的状态逐步恢复场景再渲染，不重新仿真。先为所有成功轨迹渲染评审图，再随机选 5 条渲染录像和机器人相机图像。录像是 `assets/scenes/<编号>/demo_<seed>.mp4`，`wide` 与 `close` 视角左右并排：
 
 ```bash
-uv run python scripts/scenes/render.py outputs/scenes/000000/isaac-cpu/part*/trajectories.hdf5 --sheets --gpus 0 1 2 3
-uv run python scripts/scenes/render.py outputs/scenes/000000/isaac-cpu/part*/trajectories.hdf5 --count 5 --gpus 0 1 2 3
+uv run python scripts/scenes/render.py data/scenes/000000/isaac-cpu/part*/trajectories.hdf5 --sheets --gpus 0 1 2 3
+uv run python scripts/scenes/render.py data/scenes/000000/isaac-cpu/part*/trajectories.hdf5 --count 5 --gpus 0 1 2 3
 ```
 
 - 选中的轨迹分到 `--gpus` 列出的卡上，每张卡同时一个进程。评审图每条约 1 s，视频和相机图像每条约 2.5 分钟，每个进程另有约 1 分钟启动。
 - `--count` 随机选择，`--seed` 固定选法；`--demos demo_27 demo_51` 指定轨迹；`--views`、`--cameras` 选择视角和相机。
-- `--sheets` 只替换同一轨迹的 `sheet.jpg`，通过 `render.json` 指纹匹配的录像和图像保留；没有来源记录或来源不匹配时，清理该 demo 的旧产品。
-- `--output DIR` 代替场景目录，布局相同，摘要记录实际路径；导出时对应使用 `--frames DIR`。重新生成轨迹后摘要标为 `needs_render`，重新渲染后只统计与输入轨迹匹配的产品。
+- `--sheets` 只替换 `sheet.jpg`，保留该轨迹已有的录像和相机图像。重新生成轨迹时旧批次的渲染会被删除。
+- `--output DIR` 代替场景目录，布局相同，摘要记录实际路径；导出时对应使用 `--frames DIR`。重新生成轨迹后摘要标为 `needs_render`，重新渲染后统计输入轨迹中已完成的产品。
 
 **导出 LeRobot**：把 `demos/` 中渲染过机器人相机图像的轨迹写成数据集，本例 5 条约 7.5 分钟：
 
 ```bash
-uv run python scripts/scenes/to_lerobot.py outputs/scenes/000000/isaac-cpu/part*/trajectories.hdf5 --output outputs/scenes/000000/lerobot
+uv run python scripts/scenes/to_lerobot.py data/scenes/000000/isaac-cpu/part*/trajectories.hdf5 --output data/scenes/000000/lerobot
 ```
 
-导出前会校验轨迹指纹、相机集合和完整帧编号。旧预览缺少 `render.json`、与轨迹不匹配或缺帧时会报错，请先不带 `--sheets` 重新渲染相应轨迹，再导出。
+导出前会检查相机集合和帧编号是否完整，渲染中断或缺帧时会报错，请先不带 `--sheets` 重新渲染相应轨迹，再导出。
 
 `task` 默认是每步所属子任务的英文指令，`--task instruction` 改用高层指令 `tidy up the table`。读取时用 `video_backend='pyav'`：LeRobot 默认的 torchcodec 需要系统里有 FFmpeg 4–7 的共享库。
 
 ```python
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-dataset = LeRobotDataset('table-1000/000000', root='outputs/scenes/000000/lerobot', video_backend='pyav')
+dataset = LeRobotDataset('table-1000/000000', root='data/scenes/000000/lerobot', video_backend='pyav')
 ```
 
 ## 验收
@@ -91,7 +84,7 @@ dataset = LeRobotDataset('table-1000/000000', root='outputs/scenes/000000/lerobo
 | `generation.<后端>.mean_duration_s`、`mean_wall_s` | 27.7 s、64 s | 轨迹时长与每条墙钟耗时 |
 | `preview` | 98 条评审图，5 条视频 | 评审图覆盖所有成功轨迹 |
 
-表中数值是修复前 bbc5e0e 对应批次的历史结果，不能代替修改后逐刚体静置检查和来源校验的验收；新批次以实际生成的摘要为准。静置阈值现在应用到每个刚体，包括笔帽和钢珠。
+表中数值是修复前 bbc5e0e 对应批次的历史结果，不能代替修改后逐刚体静置检查的验收；新批次以实际生成的摘要为准。静置阈值现在应用到每个刚体，包括笔帽和钢珠。
 
 单条轨迹的细节在 `episodes/<seed>.json`：每次尝试的初态、子任务起止、每次规划、手指碰过的部件、换用的候选、物体终态。
 

@@ -68,25 +68,19 @@ def initial_section(report):
             'view': report['view'], 'files': ['initial.json', 'initial_states.jpg']}
 
 
-def preview_section(output, identities):
-    """Only completed products in render output ``output`` matching the supplied episodes count
-    toward acceptance."""
+def preview_section(output, names):
+    """Completed products of episodes ``names`` in render output ``output``."""
     from table_1000.scenes.recordings import demo_dir, read_render, video_path
     output = Path(output).resolve()
-    sheets, videos, cameras, stale = [], [], [], []
-    for name in sorted(identities, key=lambda name: int(name.split('_')[1])):
+    sheets, videos, cameras = [], [], []
+    for name in sorted(names, key=lambda name: int(name.split('_')[1])):
         directory = demo_dir(output, name)
         record = read_render(directory)
-        if record.get('trajectory') != identities[name]:
-            if directory.exists():
-                stale.append(name)
-            continue
         if record.get('sheet') and (directory / 'sheet.jpg').is_file():
             sheets.append(name)
         if record.get('views') and video_path(output, name).is_file():
             videos.append(name)
         if record.get('cameras') and all((directory / 'frames' / camera).is_dir() for camera in record['cameras']):
             cameras.append(name)
-    return {'output': str(output), 'sheets': len(sheets), 'videos': videos,
-            'camera_frames': cameras, 'stale': stale,
+    return {'output': str(output), 'sheets': len(sheets), 'videos': videos, 'camera_frames': cameras,
             'files': 'demo_<seed>.mp4, demos/demo_<seed>/: sheet.jpg, frames/<camera>/, render.json'}

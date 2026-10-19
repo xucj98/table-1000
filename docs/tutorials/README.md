@@ -2,7 +2,7 @@
 
 手册面向使用者：每章说明交付物、要运行的命令和验收方法。资产文件的详细规范在 [docs/designs/asset-pipeline](../designs/asset-pipeline/README.md)，供编写资产的 AI 阅读。
 
-命令都在仓库根目录执行。源码在 `asset_sources/`，构建结果、预览和测试结果写到不进 Git 的 `assets/`，临时实验放在 `outputs/`。
+命令都在仓库根目录执行。源码在 `asset_sources/`，构建结果、预览和测试结果写到不进 Git 的 `assets/`，专家轨迹和数据集写到 `data/`，日志和临时实验放在 `outputs/`。
 
 | 章节 | 内容 |
 | --- | --- |
