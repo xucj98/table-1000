@@ -1,0 +1,139 @@
+"""What a scene's ``solve(ctx)`` gets: the environment, motion solvers, geometry queries and subtasks.
+
+The expert is plain blocking code: every motion steps the environment until it
+is done. ``ctx`` offers
+
+- **motion** -- :meth:`Context.solver` per arm (:class:`~table_1000.experts.solver.MotionSolver`),
+  :meth:`Context.step`, :meth:`Context.hold`;
+- **state and geometry queries** -- live poses of object bodies, object joint
+  values and centres of mass, each object's
+  :class:`~table_1000.scenes.geometry.AssetGeometry`, the TCP;
+- **subtasks** -- ``with ctx.subtask('open the bottom drawer of the cabinet'):``
+  marks the steps of one English instruction;
+- ``ctx.rng`` -- the episode's random generator (from the seed), for choices that
+  vary the trajectory.
+
+Failures raise :class:`ExpertFailed` with the subtask and a reason; nothing is
+retried unless the expert does it.
+"""
+
+from contextlib import contextmanager
+from pathlib import Path
+
+import numpy as np
+from scipy.spatial.transform import Rotation
+
+from table_1000.scenes.geometry import AssetGeometry
+from table_1000.sim import CONTROL_HZ
+
+DT = 1 / CONTROL_HZ
+
+
+class ExpertFailed(RuntimeError):
+    def __init__(self, subtask, reason, **details):
+        super().__init__(f'{subtask}: {reason}')
+        self.subtask, self.reason, self.details = subtask, reason, details
+
+
+def steps(seconds):
+    return max(1, round(seconds / DT))
+
+
+class Context:
+    def __init__(self, env, model, scene, assets, rng):
+        self.env, self.model, self.scene, self.assets, self.rng = env, model, scene, Path(assets), rng
+        self.spec = env.spec
+        self.geometry = {name: AssetGeometry.of(assets, spec['asset']) for name, spec in scene.OBJECTS.items()}
+        self.subtasks, self.current = [], None
+        self.solvers = {}
+        self.events = []        # (step, note) along the way, for the episode report
+        self.origin = env.steps  # the episode starts here, after settling
+        self.sync_model()
+
+    # -- stepping ------------------------------------------------------------------
+    @property
+    def steps(self):
+        """Control steps since the episode started."""
+        return self.env.steps - self.origin
+
+    def base_transform(self):
+        x, y, yaw = self.env.obs['agent']['base_pose'][0]
+        transform = np.eye(4)
+        transform[:3, :3] = Rotation.from_euler('z', yaw).as_matrix()
+        transform[:2, 3] = x, y
+        if not self.spec.base:
+            transform[2, 3] = self.scene.ROBOT['position'][2]
+        return transform
+
+    def sync_model(self):
+        """The planning model follows the measured joints, as on the real robot."""
+        self.model.set_state(dict(zip(self.env.joints, self.env.obs['agent']['qpos'][0])), self.base_transform())
+
+    def step(self, action=None):
+        obs = self.env.step(action or {})
+        self.sync_model()
+        return obs
+
+    def hold(self, seconds):
+        for _ in range(steps(seconds)):
+            self.step()
+
+    def solver(self, arm=None):
+        from table_1000.experts.solver import MotionSolver
+        arm = arm or self.spec.primary_arm
+        if arm not in self.solvers:
+            self.solvers[arm] = MotionSolver(self, arm)
+        return self.solvers[arm]
+
+    # -- subtasks ------------------------------------------------------------------
+    @contextmanager
+    def subtask(self, instruction):
+        """Steps taken inside belong to ``instruction``; contacts are labelled with it."""
+        entry = {'instruction': instruction, 'start': self.steps, 'end': None}
+        self.subtasks.append(entry)
+        self.current = instruction
+        self.env.contacts.phase = instruction
+        try:
+            yield entry
+        finally:
+            entry['end'] = self.steps
+            self.current = None
+            self.env.contacts.phase = None
+
+    def note(self, text, **values):
+        self.events.append({'step': self.steps, 'subtask': self.current, 'note': text, **values})
+
+    def fail(self, reason, **details):
+        raise ExpertFailed(self.current, reason, **details)
+
+    # -- state and geometry queries --------------------------------------------------
+    def poses(self):
+        """``{'<object>:<body>': world 4x4}`` of every object body (environment 0)."""
+        return {key: value[0] for key, value in self.env.privileged()['poses'].items()}
+
+    def pose(self, name, body=None):
+        """World pose of object ``name``'s frame, or of its body ``body``."""
+        if body is None:
+            return self.env.object_pose(name)[0]
+        return self.poses()[f'{name}:{body}']
+
+    def joint(self, name, joint):
+        return float(self.env.privileged()['joints'][name][joint][0])
+
+    def center_of_mass(self, name, body):
+        return self.env.center_of_mass(f'{name}:{body}')[0]
+
+    def model_path(self, name):
+        """The built ``model.json`` of object ``name`` (its collision geometry)."""
+        return self.assets / self.scene.OBJECTS[name]['asset'] / 'model.json'
+
+    def part_box(self, name, part, body):
+        """``(T_world_box, size)`` of ``part``'s collision box, axis-aligned in ``body``'s frame, at
+        the body's live pose."""
+        low, high = self.geometry[name].bounds(part, body)
+        box = np.eye(4)
+        box[:3, 3] = (low + high) / 2
+        return self.pose(name, body) @ box, high - low
+
+    def tcp(self, arm=None):
+        return self.env.obs['agent']['tcp'][arm or self.spec.primary_arm][0]

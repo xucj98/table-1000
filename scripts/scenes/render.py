@@ -1,0 +1,222 @@
+"""Videos of a batch of trajectories, rendered from their recorded states.
+
+``uv run python scripts/scenes/render.py 000000 --physics isaac-cpu --gpus 0 1 2 3 --cameras NAME ... [--merge] [--captions] [--count N] [--seeds ...] [--failed] [--input DIR]``
+
+Reads the batch ``<input>/<scene>/<backend>/`` (``<input>`` = ``data/scenes``,
+written by ``run_expert.py``) and writes, per episode, one video per camera
+``videos/<seed>/<camera>.mp4`` (``fails/`` for failed episodes), or with
+``--merge`` the cameras in one grid ``videos/<seed>/merge.mp4``. ``--cameras``
+names robot cameras (RGB) and fixed views of the scene. A video of an episode
+of T steps has T frames at 25 fps: frame t is the state before step t, the
+observation that ``actions[t]`` answers. ``--captions`` adds a band above the
+frames: the subtask (and, for a failed episode, the failure) on the left, the
+time on the right.
+
+The episodes are the batch's succeeded ones, or with ``--failed`` its failed
+ones; ``--seeds`` (as in ``build_scene.py``) picks episodes, succeeded or failed
+(only failed ones with ``--failed``), and ``--count N`` keeps the first N by
+seed. A run writes the videos of its episodes and keeps the others. Every frame
+restores the recorded state of that step; nothing is simulated. The episodes
+are split into ``len(gpus) × jobs-per-gpu`` parts, one process each (logs in
+``outputs/scenes/<scene>/<backend>/render/``); ``summary.json`` lists the seeds
+with videos.
+"""
+
+import argparse
+import json
+from pathlib import Path
+import shutil
+import sys
+import time
+import traceback
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+
+# Renders of the first frame, which follows another episode's last state: RT2 denoises over
+# time and blends in what it rendered before. Later frames follow a state 40 ms earlier,
+# close enough for one render (outputs/scenes/000000/experiments/render-once-vs-twice).
+FIRST_FRAME_RENDERS = 4
+
+
+def choose(succeeded, failed, seeds=None, count=None, failures=False):
+    """The episodes to render: the succeeded ones (the failed ones with ``failures``), or those of
+    ``seeds`` among them (among all episodes without ``failures``); the first ``count``.
+    Raises ``ValueError`` naming the requested seeds without such an episode."""
+    pool = set(failed) if failures else set(succeeded) | set(failed)
+    if seeds is None:
+        chosen = sorted(failed if failures else succeeded)
+    else:
+        missing = sorted(set(seeds) - pool)
+        if missing:
+            raise ValueError(missing)
+        chosen = sorted(seeds)
+    return chosen[:count] if count is not None else chosen
+
+
+def camera_sets(scene, spec, names):
+    """``(robot cameras, fixed views)`` of ``names``; raises ``ValueError`` for an unknown or depth camera."""
+    cameras, views = {}, {}
+    for name in names:
+        if name in scene.VIEWS:
+            views[name] = scene.VIEWS[name]
+        elif name in spec.cameras and spec.cameras[name].sensor.kind == 'rgb':
+            cameras[name] = spec.cameras[name]
+        else:
+            rgb = [n for n, camera in spec.cameras.items() if camera.sensor.kind == 'rgb']
+            raise ValueError(f'{name} is not an RGB camera of the robot ({", ".join(rgb)}) '
+                             f'or a view of the scene ({", ".join(scene.VIEWS)})')
+    return cameras, views
+
+
+def check_cameras(scene, robot, root, names):
+    """Raise ``ValueError`` unless ``names`` are RGB cameras of ``robot`` or views of ``scene``."""
+    from table_1000.robots import load_spec
+    from table_1000.scenes import load
+    camera_sets(load(scene, 'scene', root), load_spec(robot, root), names)
+
+
+def worker(args):
+    """Render ``args.seeds`` of the batch in this process."""
+    from table_1000.sim.isaaclab.app import start_app
+    from table_1000.sim.isaaclab.render import RT2_ARGS
+    app = start_app(gpu=args.gpu, workers=4, extra_args=RT2_ARGS)
+    failed = False
+    try:
+        from PIL import Image
+        from table_1000.robots import load_spec
+        from table_1000.scenes import load
+        from table_1000.scenes.batch import parse_seeds
+        from table_1000.scenes.recordings import MERGED, demo_name, video_path
+        from table_1000.sim import CONTROL_HZ
+        from table_1000.sim.isaaclab import render, replay
+        from table_1000.sim.isaaclab.env import RobotEnv
+        from table_1000.sim.isaaclab.video import caption, encode, save_frame, tile
+        render.configure()
+        directory, work = args.batch.resolve(), args.work.resolve()
+        file, episodes = replay.episodes(directory / 'trajectories.hdf5')
+        meta = replay.env_args(file)
+        if (directory / 'trajectories_failed.hdf5').is_file():
+            episodes.update(replay.episodes(directory / 'trajectories_failed.hdf5')[1])
+        scene = load(meta['scene'], 'scene', args.root)
+        spec = load_spec(meta['robot'], args.root)
+        cameras, views = camera_sets(scene, spec, args.cameras)
+        env = RobotEnv(scene, spec, args.assets.resolve(), cameras=cameras, views=views, root=args.root)
+        outputs = [MERGED] if args.merge else list(args.cameras)
+        cell_height = None
+        for seed in parse_seeds(args.seeds):
+            started = time.perf_counter()
+            name = demo_name(seed)
+            episode = episodes[name]
+            failure = episode.attrs.get('failure')
+            note = f'    FAILED {failure["subtask"]}: {failure["reason"]}' if failure else ''
+            frames = work / name
+            shutil.rmtree(frames, ignore_errors=True)
+            for output in outputs:
+                (frames / output).mkdir(parents=True)
+            for t in range(episode.length):
+                replay.set_state(env, episode.state(t))
+                for _ in range(FIRST_FRAME_RENDERS - 1 if t == 0 else 0):
+                    env.render([])
+                rendered = env.render(args.cameras)
+                images = {camera: Image.fromarray(rendered[camera]['rgb'][0]) for camera in args.cameras}
+                cell_height = cell_height or min(image.height for image in images.values())
+                left, right = f'{episode.subtask(t) or ""}{note}', f'{t / CONTROL_HZ:.2f} s'
+                for output in outputs:
+                    image = tile([images[c] for c in args.cameras], cell_height) if output == MERGED else images[output]
+                    save_frame(caption(image, left, right) if args.captions else image, frames / output / f'{t:05d}.jpg')
+            for output in outputs:
+                target = video_path(directory, seed, None if output == MERGED else output, failed=bool(failure))
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(encode(frames / output, CONTROL_HZ, frames / f'{output}.mp4'), target)
+            shutil.rmtree(frames)
+            print(name, episode.length, f'{time.perf_counter() - started:.0f} s', flush=True)
+        env.close()
+    except Exception:
+        traceback.print_exc()
+        failed = True
+    app.close(exit_code=int(failed))
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('scene')
+    parser.add_argument('--physics', required=True, help='the backend the batch was generated on')
+    parser.add_argument('--cameras', nargs='+', required=True, help='robot cameras (RGB) and views of the scene')
+    parser.add_argument('--merge', action='store_true', help='one video with the cameras in a grid')
+    parser.add_argument('--captions', action='store_true', help='subtask, failure and time above the frames')
+    parser.add_argument('--failed', action='store_true', help='the failed episodes instead of the succeeded ones')
+    parser.add_argument('--seeds', nargs='+', help='a:b (a to b - 1) and single seeds')
+    parser.add_argument('--count', type=int, help='the first N of the chosen episodes by seed')
+    parser.add_argument('--gpus', type=int, nargs='+', default=[0], help='physical GPUs')
+    parser.add_argument('--jobs-per-gpu', type=int, default=1, help='processes at a time on each GPU')
+    parser.add_argument('--input', type=Path, default=ROOT / 'data' / 'scenes',
+                        help='the batch in <input>/<scene>/<backend>/, videos written next to it')
+    parser.add_argument('--root', type=Path, default=ROOT)
+    parser.add_argument('--assets', type=Path, default=ROOT / 'assets')
+    parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument('--batch', type=Path, help=argparse.SUPPRESS)
+    parser.add_argument('--work', type=Path, help=argparse.SUPPRESS)
+    parser.add_argument('--gpu', type=int, default=0, help=argparse.SUPPRESS)
+    args = parser.parse_args(argv)
+    if args.worker:
+        worker(args)
+        return
+    import h5py
+    from table_1000.scenes.batch import parse_seeds, run_parts, seed_range, split
+    from table_1000.scenes.recordings import videos
+    if args.count is not None and args.count < 1:
+        parser.error('--count must be positive')
+    if args.jobs_per_gpu < 1:
+        parser.error('--jobs-per-gpu must be positive')
+    if len(set(args.cameras)) != len(args.cameras):
+        parser.error('--cameras lists a camera twice')
+    directory = (args.input / args.scene / args.physics).resolve()
+    trajectories = directory / 'trajectories.hdf5'
+    if not trajectories.is_file():
+        parser.error(f'no trajectories {trajectories}; run run_expert.py first')
+    root = args.root.resolve()
+    with h5py.File(trajectories, 'r') as file:
+        robot = json.loads(file['data'].attrs['env_args'])['robot']
+    try:
+        check_cameras(args.scene, robot, root, args.cameras)
+    except ValueError as error:
+        parser.error(str(error))
+    summary = json.loads((directory / 'summary.json').read_text())
+
+    def episodes(path):
+        if not path.is_file():
+            return []
+        with h5py.File(path, 'r') as file:
+            return [int(name.split('_')[1]) for name in file['data']]
+
+    succeeded, failed = episodes(trajectories), episodes(directory / 'trajectories_failed.hdf5')
+    try:
+        seeds = choose(succeeded, failed, parse_seeds(args.seeds) if args.seeds else None, args.count, args.failed)
+    except ValueError as error:
+        kind = 'failed episode' if args.failed else 'episode'
+        parser.error(f'seeds {seed_range(error.args[0])} have no {kind}; the batch covers '
+                     f'{summary["seeds"]["range"]}, failed: {seed_range(failed) or "none"}')
+    if not seeds:
+        parser.error('no episodes to render')
+    staging = root / 'outputs' / 'scenes' / args.scene / args.physics / 'render'
+    shutil.rmtree(staging, ignore_errors=True)
+    jobs = []
+    for index, part in enumerate(split(seeds, len(args.gpus) * args.jobs_per_gpu)):
+        command = [sys.executable, str(Path(__file__).resolve()), args.scene, '--worker', '--physics', args.physics,
+                   '--cameras', *args.cameras, '--seeds', *seed_range(part).split(), '--batch', str(directory),
+                   '--work', str(staging / f'part{index}'), '--root', str(root), '--assets', str(args.assets.resolve())]
+        command += ['--merge'] if args.merge else []
+        command += ['--captions'] if args.captions else []
+        jobs.append((command, staging / f'part{index}.log', f'{args.scene} render part{index} seeds {seed_range(part)}'))
+    failures = run_parts(jobs, args.gpus, args.jobs_per_gpu)
+    for key, kinds in videos(directory).items():
+        summary[key] = {kind: seed_range(values) for kind, values in kinds.items()}
+    (directory / 'summary.json').write_text(json.dumps(summary, indent=1, ensure_ascii=False, default=float) + '\n')
+    print('VIDEOS', json.dumps({key: summary[key] for key in ('videos', 'fails')}), flush=True)
+    if failures:
+        raise SystemExit('failed: ' + ', '.join(failures))
+
+
+if __name__ == '__main__':
+    main()

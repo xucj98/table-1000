@@ -4,7 +4,7 @@
 
 **适用范围**：带平行两指夹爪手臂的机器人，从固定底座的单臂（如装在台座上的 Franka）到带升降、头部和移动底盘的双臂机器人（如 X1Pro）。升降、头部、移动底盘都是可选部件。腿式机器人（如机械狗）不在范围内：转换、构建、环境与后端接口可以复用，机器人描述、控制器和验收用例需另行设计。
 
-## 流程与存储
+## 流程
 
 ```text
 厂商 URDF 包（assets/robots/<name>/raw/，存档于 Hugging Face 数据集）
@@ -15,14 +15,7 @@ robot.urdf ──Blender──> three_quarter.jpg
 robot.py (SPEC) ──> 运动学与规划模型、控制器 ──robot_test.py 的检查场景──> report.json
 ```
 
-| 位置 | 内容 | Git |
-| --- | --- | --- |
-| `asset_sources/robots/<name>/` | `robot.urdf`、`meshes/visual/`、`meshes/collision/`、`prepare.py`（转换选择）、`physics.py`（物理层）、`robot.py`（机器人描述 `SPEC`）、`robot_test.py`（验收设置）、`README.md`、`three_quarter.jpg` | 是 |
-| `table_1000/robots/` | 与具体机器人无关的工具：描述类型（`spec.py`）、转换、构建、预览、运动学与规划（`kinematics.py`、`planning_model.py`）、相机安装与投影（`cameras.py`）、验收用例库（`checks.py`）、遥控（`teleop.py`）。仿真环境在 `table_1000/sim/isaaclab/` | 是 |
-| `scripts/robots/` | `prepare_robot.py`、`build_robot.py`、`check_robot.py`、`check_parallel.py`、`teleop.py` | 是 |
-| `tests/robots/` | 通用代码的单元测试（测试内生成的固定底座单臂）；`test_robot_sources.py` 对每台机器人检查描述、关键姿态、IK 与验收设置 | 是 |
-| `assets/robots/<name>/raw/` | 厂商原始包，原样保存 | 否；存档于数据集，版本记录在 `assets.lock.json` |
-| `assets/robots/<name>/` 其余 | `import/`、`robot.usda`、源码快照、`build.json`、`prepare.json`、`check.json` | 否；可由源码重建 |
+各文件的位置见[资产布局](README.md#资产布局)。
 
 使用机器人只需 Git 中的源码：构建、源码检查（`--check`）、验收和遥控都不读取原始包，场景、任务和其他资产的开发者不需要数据集权限。只有重新生成源码（改 `prepare.py` 的选择或转换工具、厂商数据更新）才需要原始包。
 
@@ -82,7 +75,7 @@ robot.py (SPEC) ──> 运动学与规划模型、控制器 ──robot_test.py
 | `<arm>` | 6 个关节位置，或 TCP 位姿增量（机器人根坐标系，有移动底盘时即世界系；Isaac Lab 差分 IK） | `pos`、`delta`、`ee_delta` |
 | `<arm>_gripper` | 两指间距 | 绝对 |
 
-**环境**（`table_1000/sim/isaaclab/`）：由场景源码和 `SPEC` 生成 Isaac Lab 配置——场景（地面、灯光、桌子、机器人、简单形状、相机）、动作项、观测与复位事件，`RobotEnv` 包装成字典动作与 NumPy 观测，所有数组带环境维 N。`reset(layout)` 通过复位事件写入物体摆放与机器人关节，`step(action)` 执行一个控制周期。观测按 ManiSkill 的结构，只含真机能测到的量：`agent`（关节位置与速度、底盘位姿、各手臂 TCP 位姿）、`sensor_param`（相机内参与光学坐标系位姿）；图像按需渲染（`images`）；物体位姿、接触等特权信息另由 `privileged()` 等方法提供。全部实体在仿真开始前声明，运行中只通过 Isaac Lab 的状态与目标写入改变它们（验收用的标记球和隐藏机器人只改显示，不涉及物理），所以同一配置可在 CPU 与 GPU PhysX 上运行（`device`）；目前只验收了 CPU（N = 1），GPU 与多环境见 [issue #11](https://github.com/xucj98/table-1000/issues/11)。接触穿透深度由 PhysX 接触报告统计（Isaac Lab 的接触传感器只给力）。
+**环境**（`table_1000/sim/isaaclab/`）：由场景源码和 `SPEC` 生成 Isaac Lab 配置——场景（地面、灯光、桌子、机器人、资产物体、简单形状、相机；资产物体的接入见[场景规范](scenes.md#场景源码-scenepy)）、动作项、观测与复位事件，`RobotEnv` 包装成字典动作与 NumPy 观测，所有数组带环境维 N。`reset(layout)` 通过复位事件写入物体摆放与机器人关节，`step(action)` 执行一个控制周期。观测按 ManiSkill 的结构，只含真机能测到的量：`agent`（关节位置与速度、底盘位姿、各手臂 TCP 位姿）、`sensor_param`（相机内参与光学坐标系位姿）；图像按需渲染（`images`）；物体位姿、接触等特权信息另由 `privileged()` 等方法提供。全部实体在仿真开始前声明，运行中只通过 Isaac Lab 的状态与目标写入改变它们（验收用的标记球和隐藏机器人只改显示，不涉及物理），所以同一配置可在 CPU 与 GPU PhysX 上运行（`device`）；目前只验收了 CPU（N = 1），GPU 与多环境见 [issue #11](https://github.com/xucj98/table-1000/issues/11)。接触穿透深度由 PhysX 接触报告统计（Isaac Lab 的接触传感器只给力）。
 
 ## 验收
 
