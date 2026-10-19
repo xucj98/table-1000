@@ -84,20 +84,29 @@ def batch(tmp_path):
     directory = tmp_path / 'data' / '000000' / 'isaac-cpu'
     directory.mkdir(parents=True)
     trajectory_file(directory / 'trajectories.hdf5', [0, 1, 4])
-    (directory / 'summary.json').write_text(json.dumps({'seeds': {'range': '0:5', 'count': 5}, 'videos': '',
+    (directory / 'summary.json').write_text(json.dumps({'seeds': {'range': '0:5', 'count': 5}, 'videos': {}, 'fails': {},
                                                         'failures': {'close the drawer: x': [2, 3]}}))
     return directory
 
 
 def test_render_rejects_seeds_without_episode(batch, tmp_path, capsys):
     with pytest.raises(SystemExit):
-        render.main(['000000', '--physics', 'isaac-cpu', '--seeds', '1:4', '--input', str(tmp_path / 'data')])
+        render.main(['000000', '--physics', 'isaac-cpu', '--cameras', 'wide', '--seeds', '1:4',
+                     '--input', str(tmp_path / 'data')])
     assert 'seeds 2:4 have no episode; the batch covers 0:5, failed: none' in capsys.readouterr().err
+
+
+def test_render_rejects_unknown_cameras(batch, tmp_path, capsys):
+    with pytest.raises(SystemExit):
+        render.main(['000000', '--physics', 'isaac-cpu', '--cameras', 'wide', 'face_depth',
+                     '--input', str(tmp_path / 'data')])
+    assert 'face_depth is not an RGB camera of the robot' in capsys.readouterr().err
 
 
 def test_render_keeps_other_videos(batch, tmp_path, monkeypatch):
     trajectory_file(batch / 'trajectories_failed.hdf5', [3, 2])
-    video_path(batch, 4).write_bytes(b'old')
+    video_path(batch, 4, 'wide').parent.mkdir(parents=True)
+    video_path(batch, 4, 'wide').write_bytes(b'old')
     chosen = []
 
     def jobs(commands, gpus):
@@ -105,18 +114,24 @@ def test_render_keeps_other_videos(batch, tmp_path, monkeypatch):
         for command, _, _ in commands:
             seeds = parse_seeds(command[command.index('--seeds') + 1:command.index('--batch')])
             chosen.append(seeds)
+            merge = '--merge' in command
             for seed in seeds:
-                video_path(batch, seed).write_bytes(b'new')
+                target = video_path(batch, seed, None if merge else 'wide', failed=seed in (2, 3))
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(b'new')
         return []
 
     monkeypatch.setattr(physics_test, 'run_jobs', jobs)
+    monkeypatch.setattr(render, 'check_cameras', lambda *args: None)
     common = ['000000', '--physics', 'isaac-cpu', '--gpus', '0', '1', '--jobs-per-gpu', '2',
               '--input', str(tmp_path / 'data'), '--root', str(tmp_path)]
-    render.main([*common, '--count', '2'])
-    render.main([*common, '--failed'])
+    render.main([*common, '--cameras', 'wide', '--count', '2'])
+    render.main([*common, '--cameras', 'wide', 'face_view', '--merge', '--failed'])
     assert chosen == [[0], [1], [2], [3]]
-    assert videos(batch) == [0, 1, 2, 3, 4] and video_path(batch, 4).read_bytes() == b'old'
-    assert json.loads((batch / 'summary.json').read_text())['videos'] == '0:5'
+    assert videos(batch) == {'videos': {'wide': [0, 1, 4]}, 'fails': {'merged': [2, 3]}}
+    assert video_path(batch, 4, 'wide').read_bytes() == b'old'
+    summary = json.loads((batch / 'summary.json').read_text())
+    assert summary['videos'] == {'wide': '0:2 4'} and summary['fails'] == {'merged': '2:4'}
 
 
 def test_run_expert_merges_parts(tmp_path, monkeypatch):

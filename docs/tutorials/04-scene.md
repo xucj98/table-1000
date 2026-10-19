@@ -112,27 +112,33 @@ uv run python scripts/scenes/run_expert.py 000000 --physics isaac-cpu --gpus 0 1
 
 ## 3. 渲染录像
 
-按录制的状态逐步恢复场景再渲染，不重新仿真。验收时看前 5 条成功轨迹和全部失败轨迹：
+按录制的状态逐步恢复场景再渲染，不重新仿真。验收时看前 5 条成功轨迹和全部失败轨迹，机器人的三个相机和 `wide` 视角合成一条，带标注：
 
 ```bash
-uv run python scripts/scenes/render.py 000000 --physics isaac-cpu --gpus 0 1 2 3 --count 5
-uv run python scripts/scenes/render.py 000000 --physics isaac-cpu --gpus 0 1 2 3 --failed
+uv run python scripts/scenes/render.py 000000 --physics isaac-cpu --gpus 0 1 2 3 \
+    --cameras face_view left_wrist_view right_wrist_view wide --merge --captions --count 5
+uv run python scripts/scenes/render.py 000000 --physics isaac-cpu --gpus 0 1 2 3 \
+    --cameras face_view left_wrist_view right_wrist_view wide --merge --captions --failed
 ```
 
-- 默认从这一批成功的轨迹中选，`--failed` 改为从失败的轨迹中选；失败的录像标注失败的子任务和原因。
+- `--cameras` 必填，可以是机器人的 RGB 相机（X1Pro：`face_view`、`left_wrist_view`、`right_wrist_view`），也可以是场景的固定视角（本例 `wide`、`close`）。默认每个相机一条录像；`--merge` 把所选相机按顺序拼成网格（4 个为 2 × 2），合成一条，各画面缩放到最小相机的高度。
+- `--captions` 在画面上方加一条标注：左边是子任务（失败的轨迹接着写失败的子任务和原因），右边是时间。不加时是相机的原始画面。
+- 默认从这一批成功的轨迹中选，`--failed` 改为从失败的轨迹中选。
 - `--count N` 取所选轨迹中按 seed 从小到大的前 N 条，如 `--count 5`、`--failed --count 2`；不给就是全部。
 - `--seeds` 指定 seed，写法同第 1 步，如 `--seeds 20 64` 或 `--seeds 50:100`，成功或失败的都可以（带 `--failed` 时只能是失败的）。指定的 seed 没有对应轨迹时报错，并列出这一批的 seed 区间和失败的 seed。
 - `--input DIR` 指定轨迹的根目录（默认 `data/scenes`），读取并写回 `DIR/<编号>/<后端>/`。
 - 只写本次渲染的录像，已有的其他录像保留；同一 seed 再渲染时覆盖。
-- 本例每条录像约 700 帧、长约 28 s。渲染时每帧要恢复状态、渲染两次（RT2 在时间上降噪，第一次会混入上一个状态），每条约 1 分钟；5 条在 4 张卡上约 3 分钟，含进程启动。
+- 帧与轨迹对齐：T 步的轨迹，录像正好 T 帧（25 fps，1 倍速），第 t 帧是第 t 步动作之前的状态，与 HDF5 的 `obs[t]`、`actions[t]` 对应。不带标注的单相机录像可以直接用来制作数据集。
+- 每帧恢复状态后渲染一次；每条的第 0 帧多渲染几次，因为它接在上一条轨迹的结尾之后（RT2 在时间上降噪，会混入之前的画面）。
 
-**产出**（与轨迹同一目录 `data/scenes/<编号>/<后端>/`）：
+**产出**（与轨迹同一目录 `data/scenes/<编号>/<后端>/`，失败的轨迹在 `fails/` 下，结构相同）：
 
 | 文件 | 内容 |
 | --- | --- |
-| `demo_<seed>.mp4` | 录像：场景各固定视角（本例 `wide`、`close`）左右并排，每个控制步一帧（25 fps，1 倍速），标注时间和子任务 |
+| `videos/<相机>/demo_<seed>.mp4` | 一个相机的录像 |
+| `videos/demo_<seed>.mp4` | `--merge` 的合成录像 |
 
-`summary.json` 的 `videos` 记下有录像的 seed。
+`summary.json` 的 `videos`、`fails` 按相机记下有录像的 seed，合成录像记在 `merged` 下。
 
 **验收**：人工看 5 条成功轨迹的录像：流程完整，物体到位（笔在抽屉里），抽屉最后关好、手已撤开；手、臂与物体无可见穿模，夹持稳定，物体无异常滑移或跳动。失败轨迹的录像用来判断失败原因是否值得修改专家。
 

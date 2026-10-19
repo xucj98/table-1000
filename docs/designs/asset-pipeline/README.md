@@ -73,7 +73,8 @@ data/scenes/000000/<后端>/        一批专家轨迹：run_expert.py 生成，
   summary.json        验收入口：提交、seed、成功率、失败的 seed、耗时、有录像的 seed
   trajectories.hdf5、trajectories_failed.hdf5    成功与失败的轨迹，每条 data/demo_<seed>
   episodes/<seed>.json                           每条轨迹的报告
-  demo_<seed>.mp4                                录像，固定视角左右并排
+  videos/<相机>/demo_<seed>.mp4                  成功轨迹的录像，每个相机一条；--merge 时为 videos/demo_<seed>.mp4
+  fails/                                         失败轨迹的录像，结构同 videos/
 ```
 
 规范：[建模](modeling.md)、[几何预览](preview.md)、[物理属性](physics.md)、[行为插件](behaviors.md)、[物理测试](physics-tests.md)、[机器人](robots.md)、[场景与专家轨迹](scenes.md)。
