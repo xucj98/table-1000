@@ -17,7 +17,7 @@
 | `table_1000/experts/` | 专家上下文（`context.py`）、运动求解器（`solver.py`）、抓取几何（`grasps.py`）、批量生成（`generate.py`） | 是 |
 | `table_1000/sim/isaaclab/` | 环境（物体接入）、录制（`recording.py`）、按状态重放（`replay.py`） | 是 |
 | `scripts/scenes/` | `check_scene`、`generate`、`render`、`to_lerobot` | 是 |
-| `assets/scenes/<scene>/summary.json` | 验收入口：`initial`（初态检查）、`generation.<后端>`（轨迹位置、提交、成功率、失败分布、意外接触、耗时）、`preview`（已渲染的轨迹）；各脚本只改写自己的部分 | 否 |
+| `assets/scenes/<scene>/summary.json` | 验收入口：`initial`（初态检查）、`generation.<后端>`（轨迹位置、提交、成功率、失败分布、意外接触、耗时）、`preview`（已渲染的轨迹）；各脚本更新对应部分，重新生成同时失效旧 preview 统计 | 否 |
 | `assets/scenes/<scene>/preview/` | 供验收查看的预览：初态检查 `initial.json` 与拼图 `initial_states.jpg`，渲染轨迹的视频、评审图、机器人相机图像（`demo_<seed>/`） | 否 |
 | `outputs/scenes/<scene>/<后端>/` | 轨迹文件（分段 `part<k>/`）、每个 seed 的报告、汇总；LeRobot 数据集也放在 `outputs/` | 否 |
 
@@ -47,7 +47,7 @@
 框架在最后统一检查（`table_1000/scenes/initial.py`）：
 
 1. **无穿透**：已放物体之间、物体与桌面之间按碰撞几何检查，接触允许，穿透不超过 1 mm。
-2. **静置稳定**：复位后机器人保持不动、静置 1 s。每件物体相对其支撑（桌子即世界）平移不超过 3 mm、转动不超过 2°，物体关节变化不超过 3 mm（或 rad），机器人不碰任何东西。比较位置而不是速度：笔帽钢珠有微米级抖动，笔永远不休眠，但不会移动。
+2. **静置稳定**：复位后机器人保持不动、静置 1 s。每件物体的每个刚体相对其支撑（桌子即世界）平移不超过 3 mm、转动不超过 2°，包括非 articulation 的笔帽和钢珠；物体关节变化不超过 3 mm（或 rad），机器人不碰任何东西。比较位置而不是速度：笔帽钢珠有微米级抖动，笔永远不休眠，但不会移动。
 
 不通过就换下一个子 seed（`default_rng([seed, attempt])`）重新运行 `initialize`，最多 20 次，并记录每次的原因。轨迹从静置后的实际状态开始。
 
@@ -89,6 +89,24 @@
 `env.reset_to(initial_state)` 后依次执行动作可在物理中重放；`scene.reset_to(states[t])` 精确恢复第 t 步，用于渲染。生成时每条轨迹开始前用 seed 设置 MPlib 的随机数（`mplib.pymp.set_global_seed`），同一 seed 单独重跑时动作逐位相同；RRTConnect 有规划时限，负载不同时仍可能不同。
 
 **带图片**：`render.py` 按状态逐步恢复并渲染机器人相机。每一步：`scene.reset_to(states[t])`；调用 PhysX 的 `update_transformations` 把位姿写进 USD（不推进物理时渲染器读不到新位姿）；渲染两次保留第二次（RT2 在时间上降噪，第一次会混入上一个状态）。机器人相机图像是每一步之前的观测，与该步动作对应。`to_lerobot.py` 写成 LeRobot v3.0 数据集：`observation.state`（关节位置）、`action`、`observation.images.<相机>`（视频）、`task`（子任务指令，或 `--task instruction` 用高层指令），25 fps。LeRobot 在 `data` 依赖组，与 Isaac Lab 装在同一环境。
+
+### 预览来源与导出一致性
+
+`table_1000/scenes/recordings.py` 统一计算每条 HDF5 轨迹的 SHA-256 内容指纹，覆盖 `env_args`、轨迹属性、初态、逐步状态、观测与动作；按行读取以限制内存。文件搬迁不改变指纹，相同 seed 重新规划后若内容变化则指纹不同。不另造轨迹格式，也不修改 Isaac Lab 的 HDF5。
+
+每个 `preview/demo_<seed>/render.json` 保存指纹和已完成的评审图、视频、相机列表。渲染开始前失效本次要重建的产品，完成后原子更新记录；失败后留下的半成品不能导出。`--sheets` 仅在指纹匹配时保留视频和相机帧；不匹配或没有来源记录时，清理该 demo 的旧产品再生成评审图。完整渲染重新生成该 demo 的所有产品。
+
+生成新批次时，验收摘要的 `preview` 置为 `needs_render`。渲染后摘要只统计本次输入 HDF5 中指纹匹配、已完成的产品，`stale` 列出来源不匹配的目录；`output` 和 `files` 指向实际输出，包括自定义 `--output`。未选中的旧目录可留在磁盘上，但不能算作新批次已完成的预览。
+
+LeRobot 导出在创建或替换数据集之前，检查每条有相机目录的轨迹的指纹、完成记录、相机集合和帧编号。缺失来源、内容不匹配、渲染中断或缺帧会报错，要求不带 `--sheets` 重新渲染；只有评审图、没有相机目录的轨迹跳过。多份输入包含相同 demo 名称时拒绝处理，避免输出路径冲突。旧预览没有 `render.json`，需要重新渲染，不能仅凭 seed 补写来源记录。
+
+### 复用边界
+
+环境与状态恢复继续使用 Isaac Lab 的 `InteractiveScene.get_state/reset_to`，静置检查复用 `RobotEnv.privileged()` 已从 Isaac Lab 刚体和关节数据取得的全量位姿。录制继续使用官方 `RecorderManager`、动作和状态 recorder、`HDF5DatasetFileHandler`；项目只补 agent 观测组与任务属性。预览来源校验是本项目的派生产物约束，集中在一个模块，渲染与导出共享子任务解析。
+
+重放保留按 HDF5 行读取的薄适配：官方 `HDF5DatasetFileHandler.load_episode` 会一次加载整条轨迹，本项目渲染只需要当前状态，避免为长轨迹增加常驻内存。物理场景查询可用 Isaac Sim/PhysX，但初始化的候选位置检查发生在写入仿真之前，并需与 MPlib 的规划碰撞几何一致，继续复用已有 FCL 与资产几何适配；稳定放置复用 trimesh。无需再引入另一套场景、状态或运动规划框架。
+
+抽屉滑动除有限次重抓外，另设每次调用的总动作次数上限，覆盖剩余行程小于滑脱容差的停滞；到达目标的最后一次动作仍可正常返回，超限用 `ctx.fail` 结束该轨迹，继续后续 seed。
 
 ## 验收
 

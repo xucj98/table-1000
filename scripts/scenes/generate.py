@@ -99,6 +99,7 @@ def summarize_run(directory, scene, backend, seed_list, failed_parts, root, asse
 
 def main(argv=None):
     from table_1000.physics.test import run_jobs
+    from table_1000.scenes import summary as scene_summary
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('scenes', nargs='+')
     parser.add_argument('--seeds', nargs='+', default=['0:10'])
@@ -117,6 +118,7 @@ def main(argv=None):
     seed_list = seeds(args.seeds)
     jobs, runs = [], []
     for scene in args.scenes:
+        scene_summary.update(args.assets.resolve(), scene, 'preview', {'status': 'needs_render'})
         for backend in args.physics:
             directory = args.output.resolve() / scene / backend
             shutil.rmtree(directory, ignore_errors=True)

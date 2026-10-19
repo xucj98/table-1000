@@ -20,7 +20,8 @@ Every frame restores the recorded state of that step; nothing is simulated.
 ``--count`` picks that many episodes at random (``--seed``); the default is all.
 ``--sheets`` renders only the twelve frames of each review sheet (no videos, no
 robot cameras), enough to review every episode of a batch; it replaces only
-``sheet.jpg`` and keeps an episode's videos and frames.
+``sheet.jpg`` and keeps videos and frames from the same trajectory. Products
+from a different trajectory (or without provenance) are regenerated.
 """
 
 import argparse
@@ -75,11 +76,17 @@ def main(argv=None):
     import numpy as np
     from table_1000.physics.test import run_jobs
     from table_1000.scenes import summary as scene_summary
-    available, scenes = [], set()
+    from table_1000.scenes.recordings import fingerprint
+    available, scenes, identities = [], set(), {}
     for path in args.trajectories:
         with h5py.File(path, 'r') as file:
             scenes.add(json.loads(file['data'].attrs['env_args'])['scene'])
-            available += [(path.resolve(), name) for name in file['data'] if args.demos is None or name in args.demos]
+            for name, group in file['data'].items():
+                if name in identities:
+                    parser.error(f'duplicate episode {name}; give one recording per seed')
+                identities[name] = fingerprint(group)
+                if args.demos is None or name in args.demos:
+                    available.append((path.resolve(), name))
     if len(scenes) != 1:
         parser.error(f'the files hold scenes {sorted(scenes)}; give the files of one scene')
     scene = scenes.pop()
@@ -104,7 +111,7 @@ def main(argv=None):
             jobs.append((command, logs / f'run{len(jobs)}.log', f'{path.parent.name} {len(names)} episodes'))
     failed = run_jobs(jobs, args.gpus)
     print('SUMMARY', scene_summary.update(args.assets.resolve(), scene, 'preview',
-                                          scene_summary.preview_section(args.assets.resolve() / 'scenes' / scene / 'preview')))
+                                          scene_summary.preview_section(output, identities)))
     if failed:
         raise SystemExit('failed: ' + ', '.join(failed))
 
@@ -119,6 +126,7 @@ def worker(args):
         import numpy as np
         from table_1000.robots import load_spec
         from table_1000.scenes import load
+        from table_1000.scenes.recordings import begin_render, fingerprint, write_render
         from table_1000.sim import CONTROL_HZ
         from table_1000.sim.isaaclab import render, replay
         from table_1000.sim.isaaclab.env import RobotEnv
@@ -138,8 +146,7 @@ def worker(args):
             started = time.perf_counter()
             episode = episodes[name]
             directory = output / name
-            if not args.sheets:
-                shutil.rmtree(directory, ignore_errors=True)
+            record = begin_render(directory, fingerprint(episode.group), sheets=args.sheets)
             videos = Video(env, list(views), directory / 'views', CONTROL_HZ)
             frames = Video(env, list(cameras), directory / 'frames', CONTROL_HZ)
             picks = np.linspace(0, episode.length, SHEET[0] * SHEET[1]).round().astype(int)
@@ -160,6 +167,10 @@ def worker(args):
                 shots = [first / f'{t:05d}.jpg' for t in picks]
             sheet(shots, [f't={t / CONTROL_HZ:.1f}s {episode.subtask(t) or ""}' for t in picks], directory / 'sheet.jpg')
             shutil.rmtree(directory / 'views')
+            record['sheet'] = True
+            if not args.sheets:
+                record.update(cameras=list(cameras), videos=[f'{view}.mp4' for view in views])
+            write_render(directory, record)
             print(name, episode.length, f'{time.perf_counter() - started:.0f} s', flush=True)
         env.close()
     except Exception:

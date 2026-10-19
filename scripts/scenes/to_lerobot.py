@@ -19,22 +19,41 @@ import argparse
 import json
 from pathlib import Path
 import shutil
+import sys
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
 
 import h5py
 import numpy as np
 from PIL import Image
 
-
-def subtask(attrs, t, length):
-    for entry in json.loads(attrs['subtasks']):
-        if entry['start'] <= t < (entry['end'] if entry['end'] is not None else length):
-            return entry['instruction']
-    return None
+from table_1000.scenes.recordings import fingerprint, read_render, subtask
 
 
 def rendered_episodes(files, frames):
-    """``[(group, name)]`` of the episodes in ``files`` rendered under ``frames``, in seed order."""
-    found = [(file['data'][name], name) for file in files for name in file['data'] if (frames / name / 'frames').is_dir()]
+    """Select completed renders, refusing stale or incomplete camera observations."""
+    found, names, cameras = [], set(), None
+    for file in files:
+        for name, group in file['data'].items():
+            if name in names:
+                raise ValueError(f'duplicate episode {name}; give one recording per seed')
+            names.add(name)
+            directory = frames / name
+            if not (directory / 'frames').is_dir():
+                continue
+            record = read_render(directory)
+            if record.get('trajectory') != fingerprint(group) or not record.get('cameras'):
+                raise ValueError(f'{directory}: stale or incomplete camera render; rerun render.py without --sheets')
+            current = sorted(record['cameras'])
+            if cameras is not None and current != cameras:
+                raise ValueError(f'{directory}: camera set differs; rerender with the same --cameras')
+            cameras = current
+            expected = {f'{t:05d}.jpg' for t in range(int(group.attrs['num_samples']))}
+            for camera in cameras:
+                if {p.name for p in (directory / 'frames' / camera).glob('*.jpg')} != expected:
+                    raise ValueError(f'{directory}: incomplete frames for {camera}; rerun render.py without --sheets')
+            found.append((group, name))
     return sorted(found, key=lambda item: int(item[1].split('_')[1]))
 
 
@@ -54,7 +73,7 @@ def main(argv=None):
     if not episodes:
         raise SystemExit(f'no rendered episodes of {[str(p) for p in args.trajectories]} in {args.frames}')
     first = args.frames / episodes[0][1] / 'frames'
-    cameras = sorted(path.name for path in first.iterdir())
+    cameras = sorted(read_render(first.parent)['cameras'])
     sizes = {camera: Image.open(next((first / camera).iterdir())).size for camera in cameras}
     actions = [f'{group}.{i}' for group, (start, stop) in meta['action_layout'].items() for i in range(stop - start)]
     features = {

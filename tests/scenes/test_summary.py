@@ -4,6 +4,7 @@ import json
 
 from scripts.scenes.generate import split
 from table_1000.scenes import summary
+from table_1000.scenes.recordings import write_render
 
 
 def test_seeds_split_into_contiguous_parts():
@@ -35,5 +36,13 @@ def test_preview_section_lists_rendered_episodes(tmp_path):
         for file in files:
             (tmp_path / name / file).touch()
     (tmp_path / 'demo_10' / 'frames').mkdir()
-    section = summary.preview_section(tmp_path)
+    (tmp_path / 'demo_10' / 'frames' / 'face').mkdir()
+    write_render(tmp_path / 'demo_10', {'trajectory': 'ten', 'sheet': True,
+                                      'videos': ['wide.mp4'], 'cameras': ['face']})
+    write_render(tmp_path / 'demo_2', {'trajectory': 'two', 'sheet': True})
+    section = summary.preview_section(tmp_path, {'demo_10': 'ten', 'demo_2': 'two'})
     assert section['sheets'] == 2 and section['videos'] == ['demo_10'] and section['camera_frames'] == ['demo_10']
+    assert section['output'] == str(tmp_path)
+    section = summary.preview_section(tmp_path, {'demo_10': 'new', 'demo_2': 'two'})
+    assert section['sheets'] == 1 and not section['videos'] and not section['camera_frames']
+    assert section['stale'] == ['demo_10']

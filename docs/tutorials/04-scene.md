@@ -55,13 +55,16 @@ uv run python scripts/scenes/render.py outputs/scenes/000000/isaac-cpu/part*/tra
 
 - 选中的轨迹分到 `--gpus` 列出的卡上，每张卡同时一个进程。评审图每条约 1 s，视频和相机图像每条约 2.5 分钟，每个进程另有约 1 分钟启动。
 - `--count` 随机选择，`--seed` 固定选法；`--demos demo_27 demo_51` 指定轨迹；`--views`、`--cameras` 选择视角和相机。
-- `--sheets` 只替换 `sheet.jpg`，已渲染的视频和图像保留。
+- `--sheets` 只替换同一轨迹的 `sheet.jpg`，通过 `render.json` 指纹匹配的视频和图像保留；换批次或旧预览没有来源记录时，清理该 demo 的旧产品。
+- `--output DIR` 指定自定义预览目录，摘要记录实际路径；导出时对应使用 `--frames DIR`。重新生成轨迹后摘要标为 `needs_render`，重新渲染后只统计与输入轨迹匹配的产品。
 
 **导出 LeRobot**：把预览目录中渲染过机器人相机图像的轨迹写成数据集，本例 5 条约 7.5 分钟：
 
 ```bash
 uv run python scripts/scenes/to_lerobot.py outputs/scenes/000000/isaac-cpu/part*/trajectories.hdf5 --output outputs/scenes/000000/lerobot
 ```
+
+导出前会校验轨迹指纹、相机集合和完整帧编号。旧预览缺少 `render.json`、与轨迹不匹配或缺帧时会报错，请先不带 `--sheets` 重新渲染相应轨迹，再导出。
 
 `task` 默认是每步所属子任务的英文指令，`--task instruction` 改用高层指令 `tidy up the table`。读取时用 `video_backend='pyav'`：LeRobot 默认的 torchcodec 需要系统里有 FFmpeg 4–7 的共享库。
 
@@ -87,6 +90,8 @@ dataset = LeRobotDataset('table-1000/000000', root='outputs/scenes/000000/lerobo
 | `generation.<后端>.missing_seeds`、`failed_parts` | 空 | 每个 seed 都有结果 |
 | `generation.<后端>.mean_duration_s`、`mean_wall_s` | 27.7 s、64 s | 轨迹时长与每条墙钟耗时 |
 | `preview` | 98 条评审图，5 条视频 | 评审图覆盖所有成功轨迹 |
+
+表中数值是修复前 bbc5e0e 对应批次的历史结果，不能代替修改后逐刚体静置检查和来源校验的验收；新批次以实际生成的摘要为准。静置阈值现在应用到每个刚体，包括笔帽和钢珠。
 
 单条轨迹的细节在 `episodes/<seed>.json`：每次尝试的初态、子任务起止、每次规划、手指碰过的部件、换用的候选、物体终态。
 

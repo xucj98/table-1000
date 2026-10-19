@@ -11,6 +11,8 @@ import json
 import h5py
 import torch
 
+from table_1000.scenes.recordings import subtask
+
 
 def read_tree(group, index=None):
     """Nested dict of ``[1, ...]`` tensors from an HDF5 group (row ``index`` of each dataset, or the
@@ -40,10 +42,7 @@ class Episode:
 
     def subtask(self, t):
         """Instruction of the subtask step ``t`` belongs to, or None."""
-        for entry in self.attrs.get('subtasks', []):
-            if entry['start'] <= t < (entry['end'] if entry['end'] is not None else self.length):
-                return entry['instruction']
-        return None
+        return subtask(self.attrs, t, self.length)
 
 
 def episodes(path):

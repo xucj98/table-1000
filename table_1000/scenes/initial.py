@@ -6,7 +6,7 @@ One attempt of seed ``s`` runs ``scene.initialize(layout)`` with
 1. **no penetration** of the placed objects and the table (collision geometry,
    at rest; touching is allowed, :data:`~table_1000.scenes.layout.PENETRATION_LIMIT`);
 2. after the reset, **settling** for :data:`SETTLE_S` with the robot holding still:
-   every object stays within :data:`MOVE_LIMIT` / :data:`TURN_LIMIT` of where it was
+   every object body stays within :data:`MOVE_LIMIT` / :data:`TURN_LIMIT` of where it was
    put, relative to its support (the table or another object), its joints within
    :data:`JOINT_LIMIT`, and the robot touches nothing.
 
@@ -37,10 +37,17 @@ class InitializationFailed(RuntimeError):
 
 
 def relative_poses(env, layout):
-    """Each object's frame relative to its support's frame (the world for the table)."""
-    poses = {name: env.object_pose(name)[0] for name in layout.poses}
-    return {name: np.linalg.inv(poses[on]) @ poses[name] if on != 'table' else poses[name]
-            for name, on in layout.supports.items()}
+    """Every object body's pose relative to its support (the world for the table)."""
+    poses = env.privileged()['poses']
+    supports = {on: np.linalg.inv(env.object_pose(on)[0])
+                for on in set(layout.supports.values()) if on != 'table'}
+    relative = {}
+    for key, pose in poses.items():
+        name, separator, _ = key.partition(':')
+        if separator and name in layout.supports:
+            on = layout.supports[name]
+            relative[key] = supports[on] @ pose[0] if on != 'table' else pose[0].copy()
+    return relative
 
 
 def settle_report(env, layout, seconds=SETTLE_S):

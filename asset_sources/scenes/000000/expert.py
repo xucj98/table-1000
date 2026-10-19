@@ -29,6 +29,8 @@ HANDLE_HELD_GAP = (.035, .06)
 # The drawer is pulled in segments; after each it must have followed the hand
 # within SLIP_TOLERANCE, else the hand regrasps (at most MAX_REGRASPS times).
 SEGMENTS, SLIP_TOLERANCE, MAX_REGRASPS = 3, .015, 2
+# Bound every slide, including small stalls that do not exceed the slip tolerance.
+MAX_SLIDE_MOVES = SEGMENTS * (MAX_REGRASPS + 1)
 # A drawer that jams (a pen not lying flat catches on the housing) makes the
 # hand push the whole cabinet instead; stop once it has moved this much.
 CABINET_MOVE_LIMIT = .01
@@ -184,7 +186,7 @@ class Expert:
         arm, segments = self.arm, SEGMENTS
         carried = ['cabinet:' + DRAWER, 'cabinet:' + HANDLE]
         contacts = ['cabinet:cabinet.housing', 'pen:pen']
-        while True:
+        for _ in range(MAX_SLIDE_MOVES):
             start = self.ctx.joint('cabinet', SLIDE)
             if abs(target - start) <= .003:
                 return
@@ -207,6 +209,9 @@ class Expert:
                 self.ctx.note('regrasp', moved=moved, commanded=step)
                 self.release_handle()
                 self.grasp_handle()
+        remaining = target - self.ctx.joint('cabinet', SLIDE)
+        if abs(remaining) > .003:
+            self.ctx.fail('drawer motion limit reached', remaining=remaining, moves=MAX_SLIDE_MOVES)
 
     # -- pen ---------------------------------------------------------------------------
     def pick_pen(self):

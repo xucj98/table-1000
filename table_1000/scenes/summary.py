@@ -1,9 +1,10 @@
 """A scene's acceptance summary, ``assets/scenes/<scene>/summary.json``: what a person reads first.
 
-Each script rewrites only its own section, so rerunning one step keeps the others:
+Each script rewrites its own section; generating a new batch also invalidates
+the preview counts until the recordings are rendered again:
 
 - ``initial`` (``check_scene.py``): seeds with and without a valid initial state,
-  mean attempts, the largest settling motion of each object, robot contacts;
+  mean attempts, the largest settling motion of each object body, robot contacts;
 - ``generation.<backend>`` (``generate.py``): where the trajectories are, the
   commit, seeds, success rate, failures by subtask and reason, unexpected
   contacts, durations and wall times;
@@ -64,11 +65,24 @@ def initial_section(report):
             'view': report['view'], 'files': ['preview/initial.json', 'preview/initial_states.jpg']}
 
 
-def preview_section(preview):
-    """Rendered episodes under ``preview`` (``demo_<seed>/``): review sheets, videos, robot cameras."""
-    demos = sorted((directory for directory in Path(preview).glob('demo_*') if directory.is_dir()),
-                   key=lambda directory: int(directory.name.split('_')[1]))
-    videos = [d.name for d in demos if any(d.glob('*.mp4'))]
-    return {'sheets': sum(1 for d in demos if (d / 'sheet.jpg').exists()), 'videos': videos,
-            'camera_frames': [d.name for d in demos if (d / 'frames').is_dir()],
-            'files': 'preview/demo_<seed>/: sheet.jpg, <view>.mp4, frames/<camera>/'}
+def preview_section(preview, identities):
+    """Only completed products matching the supplied episodes count toward acceptance."""
+    from table_1000.scenes.recordings import read_render
+    preview = Path(preview).resolve()
+    sheets, videos, cameras, stale = [], [], [], []
+    for name in sorted(identities, key=lambda name: int(name.split('_')[1])):
+        directory = preview / name
+        record = read_render(directory)
+        if record.get('trajectory') != identities[name]:
+            if directory.exists():
+                stale.append(name)
+            continue
+        if record.get('sheet') and (directory / 'sheet.jpg').is_file():
+            sheets.append(name)
+        if record.get('videos') and all((directory / video).is_file() for video in record['videos']):
+            videos.append(name)
+        if record.get('cameras') and all((directory / 'frames' / camera).is_dir() for camera in record['cameras']):
+            cameras.append(name)
+    return {'output': str(preview), 'sheets': len(sheets), 'videos': videos,
+            'camera_frames': cameras, 'stale': stale,
+            'files': str(preview / 'demo_<seed>') + '/: sheet.jpg, <view>.mp4, frames/<camera>/, render.json'}
