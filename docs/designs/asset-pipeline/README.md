@@ -1,42 +1,8 @@
 # 资产生产规范
 
-本目录规定 Table-1000 对象资产的文件结构与接口，覆盖从 Blender 建模到物理仿真资产的生产和验收。
+本目录规定 Table-1000 资产（对象、机器人、场景）的文件结构与接口，覆盖从建模到物理仿真资产、专家轨迹的生产和验收。
 
-README 说明整体流程，以及每个文件放在哪里、由哪份规范约定。各文件的字段、单位、默认值与约束见对应规范；具体执行命令见[操作手册](../../tutorials/README.md)。
-
-## 生产流程
-
-两个阶段都按“源码 → 构建产物 → 测试结果”组织。
-
-**第一阶段：建模与形状验收。** `object.py` 生成包含视觉、碰撞几何和关节的 `object.blend`；`preview.json` 指定观察视角和几何姿态，供验收工具检查并渲染图片、视频。
-
-```text
-object.py
-    ──构建──> object.blend
-            + preview.json
-            └──检查与渲染──> JPG / MP4 / acceptance.json
-```
-
-**第二阶段：物理属性与运动验收。** 将模型导出为 USD 几何层，由 `physics.py` 生成 `physics.usda` 并组合，必要时挂载 `behavior.py`；`physics_test.py` 使用公共工具与官方 API 执行单资产（含多实例）实验，输出视频、曲线和 RTF。
-
-```text
-object.blend ──导出──> geometry.usdc
-physics.py ──配置──> physics.usda
-    ──组合与打包──> object.usdz + 可选 object.usda / behavior.py
-                  + physics_test.py
-                  └──仿真测试──> MP4 / trace.csv / plots.jpg / result.json
-```
-
-**机器人** 以厂商 URDF 包为原始输入：`prepare.py` 写明所选配置与碰撞划分，转换工具生成仓库中的 URDF 与网格；Isaac Sim URDF 导入器生成 USD，`physics.py` 在其上叠加驱动、求解器与接触材料层 `robot.usda`。详见[机器人资产规范](robots.md)。
-
-```text
-raw/ 厂商 URDF 包 + prepare.py ──转换与检查──> robot.urdf + meshes/ + check.json
-robot.urdf + meshes/ ──导入──> import/robot.usd
-physics.py ──配置──> robot.usda
-robot.urdf ──Blender 渲染──> three_quarter.jpg
-```
-
-模型保存刚体划分、几何和关节定义；物理配置补充质量、材料与驱动。带行为资产使用生成的 `object.usda` 作为加载入口，见[行为分发](behaviors.md#分发)。几何预览配置与物理测试脚本均作为资产源码保存。已提供带盖笔与三抽屉盒的构建和测试示例。
+README 说明每个文件放在哪里、由哪份规范约定。各文件的字段、单位、默认值与约束见对应规范；具体执行命令见[操作手册](../../tutorials/README.md)。
 
 ## 资产布局
 
