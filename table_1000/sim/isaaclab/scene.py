@@ -2,10 +2,18 @@
 
 A scene source is a Python module (or namespace) with ``TABLE`` (a table built
 from boxes), ``ROBOT`` (``asset``, base ``position`` and ``yaw``, starting
-``joints``) and optionally ``PRIMITIVES``: simple rigid shapes for tests
-(``{name: {'shape': 'box' | 'sphere' | 'cylinder', 'size': ..., 'mass': kg or
-None, 'friction'?, 'color'?}}``); one without mass is kinematic, so it stays
-where it is put. Asset objects (``OBJECTS``) are not supported yet.
+``joints``), optionally ``OBJECTS`` (``{name: {'asset': path under assets/}}``,
+built assets) and ``PRIMITIVES``: simple rigid shapes for tests (``{name:
+{'shape': 'box' | 'sphere' | 'cylinder', 'size': ..., 'mass': kg or None,
+'friction'?, 'color'?}}``, posed by ``scene.placement()``); a primitive without
+mass is kinematic, so it stays where it is put.
+
+An asset object is referenced unchanged from its built USD (:func:`object_cfgs`):
+an asset with an articulation root (a cabinet with drawers) becomes an Isaac Lab
+articulation; one whose rigid bodies are joined without one (a pen whose cap is
+held by spring-loaded balls) is spawned as a whole and each body becomes a rigid
+object, so Isaac Lab's state reads and writes cover every body. Objects start
+parked far above the scene; resets place them (:func:`table_1000.sim.isaaclab.env.apply_layout`).
 
 Each environment's prims live under ``{ENV_REGEX_NS}`` (Isaac Lab's
 ``/World/envs/env_<i>``), all entities are declared here before the simulation
@@ -14,6 +22,8 @@ target writes: the same scene runs on CPU and GPU PhysX. Robot bodies and shapes
 report contacts (:mod:`table_1000.sim.isaaclab.contacts`).
 """
 
+from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -23,6 +33,8 @@ from table_1000.assets import usd_entry
 
 GROUND_PATH = '/World/defaultGroundPlane'
 SHAPE_PREFIX = 'Shape_'   # shape prims are {ENV_REGEX_NS}/Shape_<name>
+OBJECT_PREFIX = 'Object_'  # asset objects are {ENV_REGEX_NS}/Object_<name>
+PARKED_HEIGHT = 20.        # m, objects before the first reset (one 2 m apart from the next)
 SHAPE_CONTACT_OFFSET = .002
 
 
@@ -159,6 +171,74 @@ def shape_cfg(spec, contacts=True):
     return cfg
 
 
+@dataclass(frozen=True)
+class ObjectStructure:
+    """Rigid bodies of a built asset, named as in its ``model.json`` (``table1000:name``).
+
+    ``paths`` maps a body to its prim path below the asset's root prim, ``rest``
+    to its pose in the asset frame as built. ``root`` is the articulation's root
+    body, or None for bodies joined without an articulation.
+    """
+    entry: str
+    paths: dict
+    rest: dict
+    root: str = None
+
+    @property
+    def articulated(self):
+        return self.root is not None
+
+
+@lru_cache
+def object_structure(entry):
+    """:class:`ObjectStructure` of the USD ``entry`` (opened with ``pxr``, after ``start_app``)."""
+    from pxr import Usd, UsdGeom, UsdPhysics
+    stage = Usd.Stage.Open(str(entry))
+    asset = stage.GetDefaultPrim()
+    cache = UsdGeom.XformCache()
+    inverse = np.linalg.inv(np.array(cache.GetLocalToWorldTransform(asset)).T)
+    paths, rest, root = {}, {}, None
+    for prim in Usd.PrimRange(asset):
+        if not prim.HasAPI(UsdPhysics.RigidBodyAPI):
+            continue
+        name = prim.GetCustomDataByKey('table1000:name')
+        paths[name] = str(prim.GetPath())[len(str(asset.GetPath())):]
+        rest[name] = inverse @ np.array(cache.GetLocalToWorldTransform(prim)).T
+        if prim.HasAPI(UsdPhysics.ArticulationRootAPI):
+            root = name
+    return ObjectStructure(str(entry), paths, rest, root)
+
+
+def object_structures(scene, assets):
+    """``{name: ObjectStructure}`` of the scene's asset objects."""
+    return {name: object_structure(str(usd_entry(Path(assets) / spec['asset'])))
+            for name, spec in getattr(scene, 'OBJECTS', {}).items()}
+
+
+def body_entity(name, body):
+    """Scene entity name of the rigid body ``body`` of an unarticulated object."""
+    return f'{name}__{body.replace(".", "_")}'
+
+
+def object_cfgs(name, structure, index):
+    """``{entity: cfg}`` of one asset object, parked ``index`` places above the scene."""
+    import isaaclab.sim as sim_utils
+    from isaaclab.actuators import ImplicitActuatorCfg
+    from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
+    prim_path = f'{{ENV_REGEX_NS}}/{OBJECT_PREFIX}{name}'
+    spawn = sim_utils.UsdFileCfg(usd_path=structure.entry)
+    parked = (0., 0., PARKED_HEIGHT + 2. * index)
+    if structure.articulated:
+        # Joints without drives (sliding drawers) stay passive: gains come from the USD.
+        return {name: ArticulationCfg(
+            prim_path=prim_path, spawn=spawn, init_state=ArticulationCfg.InitialStateCfg(pos=parked),
+            actuators={'joints': ImplicitActuatorCfg(joint_names_expr=['.*'], stiffness=None, damping=None)})}
+    cfgs = {name: AssetBaseCfg(prim_path=prim_path, spawn=spawn, init_state=AssetBaseCfg.InitialStateCfg(pos=parked))}
+    for body, path in structure.paths.items():
+        cfgs[body_entity(name, body)] = RigidObjectCfg(prim_path=prim_path + path, spawn=None)
+    return cfgs
+
+
 def robot_cfg(scene, spec, assets, robot_q):
     """The robot as an Isaac Lab articulation from its built USD; drives keep the gains its
     ``physics.py`` authored. A robot with a mobile base is built at the world origin and moved by
@@ -182,7 +262,7 @@ def scene_cfg(scene, spec, assets, robot_q, *, num_envs=1, cameras=None, depth=F
     ``cameras``: the robot cameras (``{name: CameraSpec}``, default none) to render;
     ``depth`` adds ground-truth depth to rgb streams. ``views``: fixed video views
     (:func:`~table_1000.sim.isaaclab.cameras.view_camera_cfg`). Shapes start at
-    ``scene.placement()``.
+    ``scene.placement()``, asset objects parked (see :func:`object_cfgs`).
     """
     import isaaclab.sim as sim_utils
     from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
@@ -190,8 +270,6 @@ def scene_cfg(scene, spec, assets, robot_q, *, num_envs=1, cameras=None, depth=F
     from table_1000.robots import ROOT
     from table_1000.sim.isaaclab.cameras import robot_camera_cfg, view_camera_cfg
     from table_1000.sim.isaaclab.render import light_cfgs
-    if getattr(scene, 'OBJECTS', ()):
-        raise NotImplementedError('asset objects in Isaac Lab scenes')
     TableCfg, GroundCfg = spawner_classes()
     cfg = InteractiveSceneCfg(num_envs=num_envs, env_spacing=5., replicate_physics=False)
     # Entities are created in this order; cameras and the ground filter need the robot first.
@@ -201,11 +279,15 @@ def scene_cfg(scene, spec, assets, robot_q, *, num_envs=1, cameras=None, depth=F
         # Isaac Sim's default ground material, as before Isaac Lab.
         physics_material=sim_utils.RigidBodyMaterialCfg(static_friction=.5, dynamic_friction=.5, restitution=.8)))
     cfg.table = AssetBaseCfg(prim_path='{ENV_REGEX_NS}/Table', spawn=TableCfg(table=dict(scene.TABLE)))
-    layout = scene.placement()
-    for name, shape in getattr(scene, 'PRIMITIVES', {}).items():
+    shapes = getattr(scene, 'PRIMITIVES', {})
+    layout = scene.placement() if shapes else {}
+    for name, shape in shapes.items():
         position, rotation = pose(layout[name])
         setattr(cfg, name, RigidObjectCfg(prim_path=f'{{ENV_REGEX_NS}}/{SHAPE_PREFIX}{name}', spawn=shape_cfg(shape),
                                           init_state=RigidObjectCfg.InitialStateCfg(pos=position, rot=rotation)))
+    for index, (name, structure) in enumerate(object_structures(scene, assets).items()):
+        for entity, entity_cfg in object_cfgs(name, structure, index).items():
+            setattr(cfg, entity, entity_cfg)
     for name, light in light_cfgs().items():
         setattr(cfg, name, light)
     urdf = Path(root or ROOT) / spec.urdf
