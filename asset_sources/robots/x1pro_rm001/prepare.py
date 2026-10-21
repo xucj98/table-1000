@@ -16,5 +16,8 @@ BASE = 'x1pro'
 RAW = _X1PRO.RAW
 URDF = 'urdf/ex001_robot_rm001_g1_dvt1.urdf'
 PIECES = _X1PRO.PIECES
+# Each finger's inner face is a concave arc along its length (x): one hull or CoACD's pieces bridge
+# it, up to 5 mm off the face, and a held object rests on the bridge; 8 slabs follow it to 0.4 mm.
+SLABS = {f'{side}_arm_gripper_{finger}_link': (0, 8) for side in ('left', 'right') for finger in ('left', 'right')}
 NO_COLLISION = _X1PRO.NO_COLLISION
 edit = _X1PRO.edit

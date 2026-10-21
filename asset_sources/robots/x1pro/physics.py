@@ -58,9 +58,9 @@ def gains(name, drives=DRIVES):
     return matches[0]
 
 
-def author(import_path, output_path, drives=DRIVES):
-    """Write ``output_path`` as a layer over the imported robot, with the joint drives ``drives``
-    (x1pro_rm001 passes its own finger drives)."""
+def author(import_path, output_path, drives=DRIVES, materials=MATERIALS):
+    """Write ``output_path`` as a layer over the imported robot, with the joint drives ``drives`` and
+    contact ``materials`` (x1pro_rm001 passes its own finger drives and pads)."""
     from pxr import PhysxSchema, Sdf, Usd, UsdPhysics, UsdShade
 
     layer = Sdf.Layer.CreateNew(str(output_path))
@@ -101,18 +101,18 @@ def author(import_path, output_path, drives=DRIVES):
         pair = UsdPhysics.FilteredPairsAPI.Apply(root.GetChild(first))
         pair.CreateFilteredPairsRel().AddTarget(root.GetChild(second).GetPath())
 
-    materials = {}
-    for name, (static, dynamic) in MATERIALS.items():
+    bound = {}
+    for name, (static, dynamic) in materials.items():
         material = UsdShade.Material.Define(stage, root.GetPath().AppendPath(f'PhysicsMaterials/{name}'))
         api = UsdPhysics.MaterialAPI.Apply(material.GetPrim())
         api.CreateStaticFrictionAttr(static)
         api.CreateDynamicFrictionAttr(dynamic)
         api.CreateRestitutionAttr(0.)
-        materials[name] = material
+        bound[name] = material
     for prim in root.GetChildren():
         if prim.HasAPI(UsdPhysics.RigidBodyAPI):
             kind = 'finger' if prim.GetName().endswith(('_gripper_left_link', '_gripper_right_link')) else 'body'
-            UsdShade.MaterialBindingAPI.Apply(prim).Bind(materials[kind], materialPurpose='physics')
+            UsdShade.MaterialBindingAPI.Apply(prim).Bind(bound[kind], materialPurpose='physics')
             if kind == 'finger':
                 # The importer instances colliders; a finger's own copy can be edited.
                 for child in Usd.PrimRange(prim, Usd.TraverseInstanceProxies()):

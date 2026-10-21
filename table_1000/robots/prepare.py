@@ -7,7 +7,8 @@ package named by the source's ``prepare.py``:
 2. simplify every visual mesh by quadric decimation, doubling the face count
    until the two-sided 99th-percentile surface distance is within MAX_ERROR;
 3. split each simplified visual into convex pieces with CoACD (``PIECES`` per
-   link, one hull otherwise; ``NO_COLLISION`` links get none);
+   link, one hull otherwise; ``NO_COLLISION`` links get none), or for links in
+   ``SLABS`` into hulls of equal slabs along an axis of the link;
 4. apply the robot's joint edits and merge fixed-joint subtrees into their
    moving body (the Isaac importer only merges massless links).
 
@@ -90,6 +91,28 @@ def decompose(mesh, pieces):
                             preprocess_mode='auto', resolution=2000, seed=0)
     hulls = [trimesh.Trimesh(v, f).convex_hull for v, f in parts]
     return sorted(hulls, key=lambda hull: tuple(np.round(hull.vertices.mean(0), 6)))
+
+
+def slabs(mesh, axis, count):
+    """Hulls of ``count`` equal slabs of ``mesh`` along ``axis`` (0, 1, 2), each over the vertices within
+    it and where edges cross its two planes: together they cover the mesh exactly. A long part with a
+    concave edge along the axis (a finger's curved inner face) keeps that edge to the sag of one slab,
+    where CoACD's pieces bridge it."""
+    import trimesh
+    points, edges = mesh.vertices, mesh.edges_unique
+    first, second = points[edges[:, 0], axis], points[edges[:, 1], axis]
+    planes = np.linspace(points[:, axis].min(), points[:, axis].max(), count + 1)
+    hulls = []
+    for low, high in zip(planes[:-1], planes[1:]):
+        parts = [points[(points[:, axis] >= low) & (points[:, axis] <= high)]]
+        for plane in (low, high):
+            cross = (first - plane) * (second - plane) < 0
+            t = (plane - first[cross]) / (second[cross] - first[cross])
+            parts.append(points[edges[cross, 0]] + t[:, None] * (points[edges[cross, 1]] - points[edges[cross, 0]]))
+        # Crossings next to a vertex nearly coincide with it; once merged in float32 (the planning
+        # model's STL) such a pair breaks the hull, so points are snapped to a micrometre grid.
+        hulls.append(trimesh.convex.convex_hull(np.unique(np.round(np.concatenate(parts), 6), axis=0)))
+    return hulls
 
 
 # -- fixed-joint merge ---------------------------------------------------------
@@ -267,7 +290,11 @@ def prepare(source, raw):
             mesh_name = visual.find('geometry/mesh').get('filename')
             stem = Path(mesh_name).stem
             if mesh_name not in written:
-                hulls = decompose(load_mesh(source / mesh_name), spec.PIECES.get(link.get('name'), 1))
+                mesh = load_mesh(source / mesh_name)
+                if link.get('name') in getattr(spec, 'SLABS', {}):
+                    hulls = slabs(mesh, *spec.SLABS[link.get('name')])
+                else:
+                    hulls = decompose(mesh, spec.PIECES.get(link.get('name'), 1))
                 written[mesh_name] = []
                 for index, hull in enumerate(hulls):
                     output = f'meshes/collision/{stem}_{index}.ply'

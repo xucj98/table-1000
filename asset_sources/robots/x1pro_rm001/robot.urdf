@@ -1625,6 +1625,48 @@
         <mesh filename="meshes/collision/gripper_left_link_0.ply" />
       </geometry>
     </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_left_link_1.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_left_link_2.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_left_link_3.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_left_link_4.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_left_link_5.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_left_link_6.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_left_link_7.ply" />
+      </geometry>
+    </collision>
   </link>
   <joint name="left_arm_gripper_left_joint" type="revolute">
     <origin rpy="0 -0 0" xyz="0.077 0.025 -0.01" />
@@ -1660,6 +1702,48 @@
       <origin rpy="0 0 0" xyz="0 0 0" />
       <geometry>
         <mesh filename="meshes/collision/gripper_right_link_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_right_link_1.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_right_link_2.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_right_link_3.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_right_link_4.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_right_link_5.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_right_link_6.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_right_link_7.ply" />
       </geometry>
     </collision>
   </link>
@@ -1760,6 +1844,48 @@
         <mesh filename="meshes/collision/gripper_left_link_0.ply" />
       </geometry>
     </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_left_link_1.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_left_link_2.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_left_link_3.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_left_link_4.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_left_link_5.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_left_link_6.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_left_link_7.ply" />
+      </geometry>
+    </collision>
   </link>
   <joint name="right_arm_gripper_left_joint" type="revolute">
     <origin rpy="0 -0 0" xyz="0.077 0.025 -0.01" />
@@ -1795,6 +1921,48 @@
       <origin rpy="0 0 0" xyz="0 0 0" />
       <geometry>
         <mesh filename="meshes/collision/gripper_right_link_0.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_right_link_1.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_right_link_2.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_right_link_3.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_right_link_4.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_right_link_5.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_right_link_6.ply" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/collision/gripper_right_link_7.ply" />
       </geometry>
     </collision>
   </link>
