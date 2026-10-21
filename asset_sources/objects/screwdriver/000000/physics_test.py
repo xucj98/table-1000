@@ -39,6 +39,7 @@ def _observe(ctx, instance):
     ctx.observe_body(body)
     ctx.observe(instance.name+'.speed', lambda: float(np.linalg.norm(body.state['velocity'][:3])), unit='m/s')
     ctx.observe(instance.name+'.roll', lambda: math.atan2(body.state['rotation'][2, 1], body.state['rotation'][2, 2]), unit='rad')
+    ctx.observe(instance.name+'.environment_spread', lambda: _sample_environments(ctx, instance), unit='m')
     return body
 
 
@@ -168,3 +169,77 @@ def roll_release(ctx: TestContext):
 
 TESTS = {'axial_lateral': axial_lateral, 'support_drop': support_drop,
          'eccentric_impulse': eccentric_impulse, 'roll_release': roll_release}
+
+
+# Sample every replica; public video and curves continue to use environment 0.
+def _sample_environments(ctx, instance):
+    positions, rotations, _ = instance.environment_states()
+    velocities = instance.view.view.get_velocities().detach().cpu().numpy().reshape(ctx.num_envs, -1, 6)
+    if not hasattr(ctx, '_environment_records'):
+        ctx._environment_records = {}
+    ctx._environment_records.setdefault(instance.name, []).append(
+        (ctx.session.time, positions[:, 0].copy(), rotations[:, 0].copy(), velocities[:, 0].copy()))
+    return float(np.max(np.abs(positions-positions[:1])))
+
+
+def _validated(test):
+    from functools import wraps
+    @wraps(test)
+    def run(ctx):
+        test(ctx)
+        report = {}
+        contact = test.__name__ != 'eccentric_impulse'
+        vertices = _vertices(ctx) if contact else None
+        for name, records in ctx._environment_records.items():
+            times = np.array([r[0] for r in records])
+            positions = np.array([r[1] for r in records])
+            rotations = np.array([r[2] for r in records])
+            velocities = np.array([r[3] for r in records])
+            tail = times >= ctx.session.time-.5-1e-8
+            speeds = np.linalg.norm(velocities[..., :3], axis=-1)
+            data = {'displacement_m': (positions[-1]-positions[0]).tolist(),
+                    'final_velocity_m_s_rad_s': velocities[-1].tolist(),
+                    'tail_max_speed_m_s': speeds[tail].max(axis=0).tolist(),
+                    'tail_position_range_m': np.linalg.norm(np.ptp(positions[tail], axis=0), axis=-1).tolist()}
+            if contact:
+                assert np.all(speeds[tail] < .01), (name, data)
+                assert np.all(np.linalg.norm(np.ptp(positions[tail], axis=0), axis=-1) < .001), (name, data)
+                z = np.einsum('teij,vj->tevi', rotations, vertices)[..., 2] + positions[..., 2, None]
+                penetration = np.maximum(0, -z.min(axis=(0, 2)))
+                assert np.all(penetration < .002), (name, penetration)
+                data['maximum_geometry_penetration_m'] = penetration.tolist()
+            report[name] = data
+        if test.__name__ == 'axial_lateral':
+            assert all(d[0] > .003 for d in report['asset']['displacement_m'])
+            assert all(d[1] > .003 for d in report['lateral']['displacement_m'])
+            assert all(np.linalg.norm(d[:2]) < .001 for d in report['idle']['displacement_m'])
+            ctx.metric('axial_travel', report['asset']['displacement_m'][0][0]*1000, unit='mm', label='轴向停止位移')
+            ctx.metric('lateral_travel', report['lateral']['displacement_m'][0][1]*1000, unit='mm', label='侧向滚移')
+        elif test.__name__ == 'eccentric_impulse':
+            impulse = ctx.experiment_details['external_impulse_N_s']
+            errors = []
+            for name in ('asset', 'grip', 'shaft'):
+                v = np.array(report[name]['final_velocity_m_s_rad_s'])
+                errors.extend(np.abs(MASS_KG*v[:, 1]-impulse)/impulse)
+            assert max(errors) < .01, errors
+            assert np.all(np.array(report['grip']['final_velocity_m_s_rad_s'])[:, 5] < -.1)
+            assert np.all(np.array(report['shaft']['final_velocity_m_s_rad_s'])[:, 5] > .1)
+            assert np.all(np.linalg.norm(np.array(report['asset']['final_velocity_m_s_rad_s'])[:, 3:], axis=1) < .01)
+            assert np.all(np.linalg.norm(np.array(report['idle']['final_velocity_m_s_rad_s']), axis=1) < 1e-6)
+            ctx.metric('momentum_error', max(errors)*100, unit='%', label='全部环境最大线动量误差')
+            for name in ('grip', 'shaft'):
+                ctx.metric(name+'_spin', report[name]['final_velocity_m_s_rad_s'][0][5], unit='rad/s', label=name+'端加载Z角速')
+        elif test.__name__ == 'roll_release':
+            early = [r for r in ctx._environment_records['asset'] if r[0] <= .5]
+            roll = np.array([np.arctan2(r[2][:, 2, 1], r[2][:, 2, 2]) for r in early])
+            assert np.all(np.abs(roll).max(axis=0) > .1)
+            ctx.metric('final_roll', ctx.rows[-1]['asset.roll']*180/math.pi, unit='deg', label='首环境终态滚角')
+        if contact:
+            ctx.metric('maximum_penetration', max(max(d['maximum_geometry_penetration_m']) for d in report.values())*1000, unit='mm', label='全部环境最大几何穿地')
+            ctx.metric('tail_max_speed', max(max(d['tail_max_speed_m_s']) for d in report.values())*1000, unit='mm/s', label='全部环境末段最大速度')
+        ctx.experiment_details['per_environment'] = report
+        ctx.metric('environment_count', ctx.num_envs, unit='count', label='并行环境数')
+    return run
+
+
+TESTS = {name: _validated(test) for name, test in TESTS.items()}

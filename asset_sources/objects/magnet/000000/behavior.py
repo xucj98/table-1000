@@ -57,18 +57,27 @@ class MagnetBehavior(BehaviorScript):
         self.last_steel_diagnostic = None
         self.callback_count = 0
         self.error = None
+        self.environment_diagnostics = []
 
     def on_play(self):
         import omni.usd
         from omni.physx import get_physx_interface
         from table_1000.physics.simulation import session_for
         self.subscription = None
+        # One canonical component batches every physical environment separately.
+        path = str(self.prim_path)
+        if path.startswith('/World/envs/env_') and not path.startswith('/World/envs/env_0/'):
+            return
         self.session = session_for(omni.usd.get_context().get_stage())
         self.session._magnet_steel_geometry = None
+        self.session._magnet_environment_states = None
         self.instance = self.session.register(str(self.prim_path), name=str(self.prim_path))
         self.targets = []
         from pxr import UsdPhysics
         for prim in self.session.stage.Traverse():
+            target_path = str(prim.GetPath())
+            if target_path.startswith('/World/envs/env_') and not target_path.startswith('/World/envs/env_0/'):
+                continue
             if _value(prim, STEEL_ATTR) is not None:
                 target = {'path': str(prim.GetPath()), 'instance': None}
                 if prim.HasAPI(UsdPhysics.RigidBodyAPI):
@@ -83,6 +92,8 @@ class MagnetBehavior(BehaviorScript):
         self.targets = []
         if self.session is not None:
             self.session._magnet_steel_geometry = None
+            self.session._magnet_environment_states = None
+        self.environment_diagnostics = []
         self.last_force = np.zeros(3)
         self.last_torque = np.zeros(3)
         self.last_pairs = []
@@ -115,7 +126,7 @@ class MagnetBehavior(BehaviorScript):
         pass
 
     def _step(self, dt):
-        if not self.session.active or not self.session.ready:
+        if self.session is None or not self.session.active or not self.session.ready:
             return
         try:
             self._forces()
@@ -125,10 +136,43 @@ class MagnetBehavior(BehaviorScript):
             self.session.error = error
 
     def _forces(self):
+        self.environment_diagnostics = []
+        for environment in range(self.session.envs):
+            self._environment_forces(environment)
+            self.environment_diagnostics.append({
+                'force_N': self.last_force.copy(), 'torque_N_m': self.last_torque.copy(),
+                'pairs': self.last_pairs, 'steel': self.last_steel,
+                'steel_diagnostic': self.last_steel_diagnostic})
+        first = self.environment_diagnostics[0]
+        self.last_force, self.last_torque = first['force_N'], first['torque_N_m']
+        self.last_pairs, self.last_steel = first['pairs'], first['steel']
+        self.last_steel_diagnostic = first['steel_diagnostic']
+
+    def _state(self, instance, body, environment):
+        session = self.session
+        cached = getattr(session, '_magnet_environment_states', None)
+        if cached is None or cached[0] != session.callback_steps:
+            cached = (session.callback_steps, {})
+            session._magnet_environment_states = cached
+        if instance.path not in cached[1]:
+            cached[1][instance.path] = instance.environment_states()
+        values = cached[1][instance.path]
+        position, rotation, com = (v[environment, instance.indices[body.name]] for v in values)
+        return {'position': position, 'rotation': rotation, 'com': com}
+
+    def _environment_forces(self, environment):
         session, own = self.session, self.instance
+        def apply(body, force, point, torque=None):
+            # Only this environment receives this calculation's force.
+            forces, torques = np.zeros((session.envs, 3)), np.zeros((session.envs, 3))
+            forces[environment] = force
+            if torque is not None:
+                torques[environment] = torque
+            points = np.tile(point, (session.envs, 1))
+            session.force(body, forces, points, torques, external=False)
         stage = session.stage
         body = own.body('magnet.body')
-        state = body.state
+        state = self._state(own, body, environment)
         rotation = state['rotation']
         center = state['position']+rotation@CENTER_M
         moment = float(_value(stage.GetPrimAtPath(own.path), MOMENT_ATTR))*rotation[:, 2]
@@ -143,7 +187,7 @@ class MagnetBehavior(BehaviorScript):
             if peer.path == own.path or magnitude is None:
                 continue
             other = peer.body('magnet.body')
-            other_state = other.state
+            other_state = self._state(peer, other, environment)
             other_center = other_state['position']+other_state['rotation']@CENTER_M
             other_moment = float(magnitude)*other_state['rotation'][:, 2]
             force2, torque1, torque2 = dipole_pair(other_center-center, moment, other_moment)
@@ -156,8 +200,8 @@ class MagnetBehavior(BehaviorScript):
                     'force_N': force1.tolist(), 'intrinsic_torque_N_m': torque1.tolist(),
                     'applied_by_this_instance': own.path < peer.path})
             if own.path < peer.path:
-                session.force(body, force1, center, torque1, external=False)
-                session.force(other, force2, other_center, torque2, external=False)
+                apply(body, force1, center, torque1)
+                apply(other, force2, other_center, torque2)
 
         if not self.targets:
             return
@@ -191,7 +235,8 @@ class MagnetBehavior(BehaviorScript):
             if target['instance']:
                 instance = target['instance']
                 target_body = instance.body(instance.body_names[0])
-                origin, basis = target_body.state['position'], target_body.state['rotation']
+                target_state = self._state(instance, target_body, environment)
+                origin, basis = target_state['position'], target_state['rotation']
             centre_local = (state['position']-origin)@basis
             distance_bound = float(np.hypot(centre_local[2], max(0., float(np.max(np.abs(centre_local[:2])-half)))))
             # Every patch point lies within 8 mm of the base centre. A face
@@ -229,9 +274,9 @@ class MagnetBehavior(BehaviorScript):
         _, path, target_body, normal, points, gaps, magnitudes, facing = min(candidates, key=lambda x: (x[0], x[1]))
         for point, gap, magnitude in zip(points, gaps, magnitudes):
             force = -normal*magnitude
-            session.force(body, force, point, external=False)
+            apply(body, force, point)
             if target_body:
-                session.force(target_body, -force, point-gap*normal, external=False)
+                apply(target_body, -force, point-gap*normal)
             self.last_force += force
             self.last_torque += np.cross(point-state['com'], force)
         self.last_steel = {'target': path, 'gaps_m': gaps.tolist(), 'forces_N': magnitudes.tolist(),

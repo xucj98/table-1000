@@ -15,6 +15,189 @@ MASS_KG = .008
 HEIGHT_M = .00745
 
 
+def _environment_states(ctx, instance):
+    """Read each environment's own tensor state once per recorded sample."""
+    from scipy.spatial.transform import Rotation
+    key = (ctx.session.steps, ctx.session.callback_steps)
+    if getattr(instance, '_magnet_sample_key', None) != key:
+        positions, rotations, centers = instance.environment_states()
+        count, bodies = positions.shape[:2]
+        velocity = instance.view.view.get_velocities().detach().cpu().numpy().astype(float).reshape(count, bodies, 6)
+        quaternions = Rotation.from_matrix(rotations.reshape(-1, 3, 3)).as_quat().reshape(count, bodies, 4)[..., [3, 0, 1, 2]]
+        instance._magnet_sample = (positions, rotations, centers, velocity, quaternions)
+        instance._magnet_sample_key = key
+    return instance._magnet_sample
+
+
+def _observe_environments(ctx, instance, name):
+    i = instance.indices[name]
+    for e in range(ctx.num_envs):
+        prefix = f'env{e}.{instance.name}.{name}.'
+        for field, index, axes, unit in [('position', 0, 'xyz', 'm'),
+                ('quaternion', 4, 'wxyz', '1'), ('linear_velocity', 3, 'xyz', 'm/s'),
+                ('angular_velocity', 3, 'xyz', 'rad/s')]:
+            for j, axis in enumerate(axes):
+                k = j+3 if field == 'angular_velocity' else j
+                ctx.observe(prefix+field+'.'+axis,
+                    lambda e=e, index=index, k=k: _environment_states(ctx, instance)[index][e, i, k], unit=unit)
+        ctx.observe(f'env{e}.{instance.name}.speed',
+            lambda e=e: np.linalg.norm(_environment_states(ctx, instance)[3][e, i, :3]), unit='m/s')
+
+
+def _environment_diagnostic(instance, environment):
+    diagnostics = instance.behavior().environment_diagnostics
+    return diagnostics[environment] if diagnostics else {'force_N': np.zeros(3), 'torque_N_m': np.zeros(3), 'pairs': [], 'steel': None, 'steel_diagnostic': None}
+
+
+def _environment_momentum(ctx, environment):
+    linear, angular = np.zeros(3), np.zeros(3)
+    for instance in ctx.session.instances.values():
+        positions, rotations, centers, velocities, _ = _environment_states(ctx, instance)
+        for i in range(len(instance.body_names)):
+            p = instance.mass[i]*velocities[environment, i, :3]
+            r = rotations[environment, i]
+            linear += p
+            angular += np.cross(centers[environment, i], p)+r@instance.local_inertia[i]@r.T@velocities[environment, i, 3:]
+    return linear, angular
+
+
+def _validate_environment(ctx, test, e):
+    """Original physical criteria, evaluated on every replica's own records."""
+    rows = [{k[len(f'env{e}.'):]: v for k, v in row.items() if k.startswith(f'env{e}.')} | {'time': row['time']} for row in ctx.rows]
+    def values(instance, field):
+        return np.array([[r[f'{instance}.{BODY}.{field}.{a}'] for a in ('wxyz' if field == 'quaternion' else 'xyz')] for r in rows])
+    def speed(instance):
+        return np.array([r[instance+'.speed'] for r in rows])
+    def settled(names, limit):
+        tail = np.array([r['time'] >= rows[-1]['time']-.4-1e-8 for r in rows])
+        for name in names:
+            assert speed(name)[tail].max() < limit, (e, name, 'final speed')
+            assert np.linalg.norm(np.ptp(values(name, 'position')[tail], axis=0)) < .0005, (e, name, 'final drift')
+    from scipy.spatial.transform import Rotation
+    times = np.array([r['time'] for r in rows])
+    tail = times >= times[-1]-.4-1e-8
+    def centres(name):
+        rotation = Rotation.from_quat(values(name, 'quaternion')[:, [1, 2, 3, 0]]).as_matrix()
+        return values(name, 'position')+rotation@np.array([0, 0, .002])
+    def net_force(names):
+        force = sum(np.array([[r[n+'.magnetic_force.'+a] for a in 'xyz'] for r in rows]) for n in names)
+        residual = float(np.linalg.norm(force, axis=1).max())
+        assert residual < 1e-6, (e, 'net internal force', residual)
+        return residual
+    details = {'environment': e, 'recorded_samples': len(rows)}
+    if test == 'contact_faces':
+        for name, sign in [('asset', 1), ('cap', -1)]:
+            assert values(name, 'position')[-1, 0]-values(name, 'position')[0, 0] > .002
+            rotation = Rotation.from_quat(values(name, 'quaternion')[-1, [1, 2, 3, 0]]).as_matrix()
+            assert sign*rotation[2, 2] > .98, (e, name, 'unintended tipping')
+        xy = values('idle', 'position')[:, :2]
+        assert np.linalg.norm(xy-xy[0], axis=1).max() < .0002
+        settled(['asset', 'cap', 'idle'], .005)
+    elif test == 'free_impulses':
+        impulse = ctx.experiment_details['applied_impulse_N_s']
+        for name in ['asset', 'offset']:
+            assert abs(MASS_KG*values(name, 'linear_velocity')[-1, 0]-impulse)/impulse < .01
+        assert np.linalg.norm(values('asset', 'angular_velocity')[-1]) < .01
+        assert np.linalg.norm(values('offset', 'angular_velocity')[-1]) > .1
+        assert max(np.linalg.norm(values('idle', field), axis=1).max() for field in ['linear_velocity', 'angular_velocity']) < 1e-6
+    elif test == 'drop_faces':
+        from table_1000.physics.test import ground_clearance
+        model = json.loads((ctx.asset_path.parent/'model.json').read_text())
+        contact = ground_clearance(model, rows, ['asset', 'cap', 'side'], 0)
+        assert contact['maximum_geometry_penetration_m'] < .001, (e, contact)
+        details['geometry_contact'] = contact
+        settled(['asset', 'cap', 'side'], .01)
+    elif test == 'steel_distance':
+        for entry in ctx.experiment_details['measurements']:
+            actual = -rows[-1][entry['instance']+'.magnetic_force.z']
+            expected = entry['expected_force_N']
+            assert abs(actual-expected) < max(1e-6, .01*expected), (e, entry['instance'], actual, expected)
+    elif test == 'steel_capture':
+        for name in ['control1', 'control2']:
+            assert max(abs(r[name+'.magnetic_force.z']) for r in rows) < 1e-9
+        assert np.abs(values('asset', 'position')[tail, 2]).max() < .0003
+        settled(['asset', 'control1', 'control2'], .005)
+    elif test == 'steel_shear':
+        times = np.array([r['time'] for r in rows]);z = values('asset', 'position')[:, 2]
+        assert np.ptp(z[(times >= .3) & (times <= .8)]) < .0005
+        end = ctx.experiment_details['actual_strong_withdrawal_time_s']
+        assert np.ptp(z[(times >= 1) & (times <= end)]) > .002
+    elif test in ['mutual_attract', 'mutual_repel', 'mutual_range', 'mutual_tilt']:
+        from scipy.spatial.transform import Rotation
+        centres = []
+        for name in ['asset', 'peer']:
+            q = values(name, 'quaternion')[:, [1, 2, 3, 0]]
+            r = Rotation.from_quat(q).as_matrix()
+            centres.append(values(name, 'position')+r@np.array([0, 0, .002]))
+        distance = np.linalg.norm(centres[1]-centres[0], axis=1)
+        assert distance.min() >= .003
+        if test == 'mutual_attract':
+            assert distance[-1] < .008 and np.ptp(distance[tail]) < .0005
+        elif test == 'mutual_repel':
+            assert distance[-1] > .014
+        elif test == 'mutual_range':
+            assert np.abs(distance-.040).max() < 1e-6
+            assert max(abs(row['asset.magnetic_force.z']) for row in rows) == 0
+        else:
+            angle = np.arccos(np.clip(Rotation.from_quat(values('peer', 'quaternion')[:, [1, 2, 3, 0]]).as_matrix()[:, 2, 2], -1, 1))
+            assert np.abs(angle-math.radians(30)).max() > math.radians(5)
+        linear = np.array([[r['total_linear.'+a] for a in 'xyz'] for r in rows])
+        angular = np.array([[r['total_angular.'+a] for a in 'xyz'] for r in rows])
+        details['maximum_net_magnetic_force_N'] = net_force(['asset', 'peer'])
+        for name in ['asset', 'peer']:
+            assert max(r[name+'.owned_pairs'] for r in rows) <= 1
+        assert np.linalg.norm(linear, axis=1).max() < 1e-6
+        assert np.linalg.norm(angular, axis=1).max() < 5e-7
+        details.update(minimum_center_distance_m=float(distance.min()), final_center_distance_m=float(distance[-1]), angular_momentum_drift_kg_m2_s=float(np.linalg.norm(angular, axis=1).max()))
+    elif test == 'dynamic_steel_reaction':
+        linear = np.array([[r['total_linear.'+a] for a in 'xyz'] for r in rows])
+        angular = np.array([[r['total_angular.'+a] for a in 'xyz'] for r in rows])
+        assert np.linalg.norm(linear, axis=1).max() < 1e-6
+        assert np.linalg.norm(angular, axis=1).max() < 5e-7
+        assert max(abs(r['free_steel.free_steel.position.z']) for r in rows) > .0001
+    elif test == 'three_magnets':
+        assert max(r['idle.magnetic_pairs'] for r in rows) == 0
+        assert speed('idle').max() < 1e-6
+        assert max(sum(r[n+'.owned_pairs'] for n in ['asset', 'peer1', 'peer2']) for r in rows) == 3
+        details['maximum_net_magnetic_force_N'] = net_force(['asset', 'peer1', 'peer2'])
+    elif test == 'steel_two_magnets':
+        assert max(r['asset.owned_pairs']+r['peer.owned_pairs'] for r in rows) == 1
+        for name in ['asset', 'peer']:
+            assert rows[-1][name+'.steel_force'] > .9
+        settled(['asset', 'peer'], .005)
+    elif test == 'steel_pull_peel':
+        edge_rotation = Rotation.from_quat(values('edge', 'quaternion')[:, [1, 2, 3, 0]]).as_matrix()
+        assert np.arccos(np.clip(edge_rotation[:, 2, 2], -1, 1)).max() > math.radians(15)
+        details['detachments'] = {}
+        for name in ['asset', 'edge']:
+            force = np.array([[r[name+'.magnetic_force.'+a] for a in 'xyz'] for r in rows])
+            detached = (times <= 1.12) & (values(name, 'position')[:, 2] > .025) & (np.linalg.norm(force, axis=1) < 1e-8)
+            assert detached.any(), (e, name, 'did not detach before fixture return')
+            details['detachments'][name] = float(times[detached][0])
+            assert abs(values(name, 'position')[-1, 2]) < .0003
+        settled(['asset', 'edge'], .005)
+    elif test == 'mutual_pull_recapture':
+        distance = np.linalg.norm(centres('peer')-centres('asset'), axis=1)
+        force = np.array([[r['peer.magnetic_force.'+a] for a in 'xyz'] for r in rows])
+        before_return = times <= ctx.experiment_details['native_fixture_release']['time_s']-1.+1e-8
+        assert ((distance > .035) & (np.linalg.norm(force, axis=1) < 1e-8) & before_return).any(), (e, 'cutoff before return')
+        release = np.argmin(np.abs(times-ctx.experiment_details['native_fixture_release']['time_s']))
+        assert distance[release] > .009 and distance[-1] < .008
+        details.update(detached_center_distance_m=float(distance[before_return].max()), final_center_distance_m=float(distance[-1]))
+    if test in ['steel_capture', 'steel_shear', 'steel_pull_peel', 'steel_two_magnets']:
+        normal, origin = ((1, 0, 0), (0, 0, .03)) if test == 'steel_shear' else ((0, 0, 1), (0, 0, 0))
+        names = ['asset', 'control1', 'control2'] if test == 'steel_capture' else ['asset', 'edge'] if test == 'steel_pull_peel' else ['asset', 'peer'] if test == 'steel_two_magnets' else ['asset']
+        saved = ctx.rows
+        try:
+            ctx.rows = rows
+            contact = _plane_penetration(ctx, names, normal=normal, origin=origin)
+        finally:
+            ctx.rows = saved
+        assert contact['maximum_geometry_penetration_m'] <= .0005, (e, contact)
+        details['geometry_contact'] = contact
+    return details
+
+
 def _column(instance, field, axis):
     return f'{instance}.{BODY}.{field}.{axis}'
 
@@ -22,6 +205,7 @@ def _column(instance, field, axis):
 def _body(ctx, instance, name=BODY):
     body = instance.body(name)
     ctx.observe_body(body)
+    _observe_environments(ctx, instance, name)
     ctx.observe(f'{instance.name}.speed', lambda: np.linalg.norm(body.state['velocity'][:3]), unit='m/s')
     return body
 
@@ -146,8 +330,8 @@ def free_impulses(ctx: TestContext):
 
 
 def drop_faces(ctx: TestContext):
-    """20 mm release at 2 ms: the 4 ms diagnostic exceeds 1 mm penetration."""
-    ctx.simulation(dt=.002)
+    """20 mm release at CPU 2 ms/GPU 1 ms, retaining the 1 mm limit."""
+    ctx.simulation(dt=.001 if ctx.physics == 'gpu' else .002)
     _ground(ctx)
     ctx.initial(position=(-.05, 0, .020))
     cap = ctx.spawn(ctx.asset_path, name='cap', position=(0, 0, .020+HEIGHT_M), rotation=(0, 1, 0, 0))
@@ -163,7 +347,7 @@ def drop_faces(ctx: TestContext):
     _settled(ctx, ('asset', 'cap', 'side'), speed=.01)
     from table_1000.physics.test import ground_clearance
     model = json.loads((ctx.asset_path.parent/'model.json').read_text())
-    clearance = ground_clearance(model, ctx.rows, ctx.session.instances, 0)
+    clearance = ground_clearance(model, ctx.rows, ('asset', 'cap', 'side'), 0)
     assert clearance['maximum_geometry_penetration_m'] < .001
     ctx.experiment_details = {'contract': 'three-orientation 20 mm low release on unmarked ground',
         'release_clearance_m': .020, 'geometry_contact': clearance,
@@ -187,6 +371,17 @@ def _magnetic(ctx, instance, *, steel=False):
         ctx.observe(f'{instance.name}.magnetic_torque.{axis}',
                     lambda i=i: instance.behavior().last_torque[i], unit='N·m')
     ctx.observe(f'{instance.name}.magnetic_pairs', lambda: len(instance.behavior().last_pairs), unit='1')
+    for e in range(ctx.num_envs):
+        for i, axis in enumerate('xyz'):
+            ctx.observe(f'env{e}.{instance.name}.magnetic_force.{axis}',
+                lambda e=e, i=i: _environment_diagnostic(instance, e)['force_N'][i], unit='N')
+        ctx.observe(f'env{e}.{instance.name}.magnetic_pairs',
+            lambda e=e: len(_environment_diagnostic(instance, e)['pairs']), unit='1')
+        ctx.observe(f'env{e}.{instance.name}.owned_pairs',
+            lambda e=e: sum(p['applied_by_this_instance'] for p in _environment_diagnostic(instance, e)['pairs']), unit='1')
+        ctx.observe(f'env{e}.{instance.name}.steel_force',
+            lambda e=e: sum((_environment_diagnostic(instance, e)['steel'] or {}).get('forces_N', [])), unit='N')
+
     if steel:
         # No marked face => present=0 and zero diagnostic fields. Unmarked
         # controls still record native pose; no face is inferred from visuals.
@@ -206,7 +401,7 @@ def _steel(ctx, name, *, position=(0, 0, 0), rotation=(1, 0, 0, 0),
     """Finite ideal fixture, local XY surface at z=0; no magnetic force here."""
     from pxr import Gf, PhysxSchema, Sdf, UsdGeom, UsdPhysics, UsdShade
     stage = ctx.session.stage
-    path = '/World/Fixtures/'+name
+    path = ctx.session.environment(0)+'/Fixtures/'+name
     root = UsdGeom.Xform.Define(stage, path)
     root.AddTranslateOp().Set(Gf.Vec3d(*position))
     root.AddOrientOp().Set(Gf.Quatf(rotation[0], Gf.Vec3f(*rotation[1:])))
@@ -368,7 +563,7 @@ def steel_shear(ctx: TestContext):
 
 
 def _pair_test(ctx, mode, peer_path=None):
-    ctx.simulation(dt=.001 if mode == 'tilted' else .002 if mode == 'attract' else .004, gravity=(0, 0, 0))
+    ctx.simulation(dt=.001 if mode == 'tilted' or mode == 'attract' and ctx.physics == 'gpu' else .002 if mode == 'attract' else .004, gravity=(0, 0, 0))
     ctx.initial(position=(0, 0, .02))
     distance = .040 if mode == 'range' else .015 if mode == 'tilted' else .012
     angle = math.radians(30) if mode == 'tilted' else math.pi if mode == 'repel' else 0
@@ -441,38 +636,29 @@ TESTS.update(steel_distance=steel_distance, steel_capture=steel_capture, steel_s
              mutual_range=mutual_range, mutual_tilt=mutual_tilt)
 
 
-def _return_with_native_fixture(ctx, body, goal, *, duration=.8):
-    """Move only a native D6 fixture target; release without touching body state."""
-    from pxr import Gf
-    from scipy.spatial.transform import Rotation, Slerp
-    start = body.state['position'].copy()
-    q = body.state['quaternion'].copy()
-    slerp = Slerp([0, 1], Rotation.from_quat([q[[1, 2, 3, 0]], [0, 0, 0, 1]]))
-    with ctx.spring(body, position=start, rotation=q, linear_stiffness=1000, linear_damping=6,
-                    angular_stiffness=.01, angular_damping=.0002) as joint:
-        for i in range(round(duration/ctx.dt)):
-            u = (i+1)/round(duration/ctx.dt)
-            # Smooth velocity at both ends; this is an actuator command.
-            u = u*u*(3-2*u)
-            target = (1-u)*start+u*np.asarray(goal)
-            quat = slerp([u]).as_quat()[0][[3, 0, 1, 2]]
-            joint.GetLocalPos0Attr().Set(Gf.Vec3f(*target))
-            joint.GetLocalRot0Attr().Set(Gf.Quatf(quat[0], Gf.Vec3f(*quat[1:])))
-            ctx.step()
-        ctx.run(.2)
-        release = {'time_s': ctx.session.time, 'position_m': body.state['position'].tolist(),
-                   'velocity_m_s_rad_s': body.state['velocity'].tolist()}
+def _return_with_native_fixture(ctx, grip, goal, *, duration=.8):
+    """Use a predeclared native tensor grip; release keeps body state."""
+    grip.grasp()
+    grip.move_to(position=goal, rotation=(1, 0, 0, 0), duration=duration)
+    ctx.run(.2)
+    body = grip.body
+    release = {'time_s': ctx.session.time, 'position_m': body.state['position'].tolist(),
+               'velocity_m_s_rad_s': body.state['velocity'].tolist()}
+    grip.release()
     return release
 
 
 def steel_pull_peel(ctx: TestContext):
     """COM/edge equal ramps; detach, actuator return, free recapture."""
-    ctx.simulation(dt=.002, gravity=(0, 0, 0))
+    ctx.simulation(dt=.001 if ctx.physics == 'gpu' else .002, gravity=(0, 0, 0))
     ctx.initial(position=(0, -.035, .0002))
     edge = ctx.spawn(ctx.asset_path, name='edge', position=(0, .035, .0002))
     _steel(ctx, 'com_plate', position=(0, -.035, 0), half=(.025, .025))
     _steel(ctx, 'edge_plate', position=(0, .035, 0), half=(.025, .025))
     bodies = [_magnetic(ctx, a, steel=True) for a in (ctx.asset, edge)]
+    guides = [ctx.grip(body, name='return_'+str(i)) for i, body in enumerate(bodies)]
+    for guide in guides:
+        guide.release()
     for label, body in zip(('com_pull', 'edge_pull'), bodies):
         frames = [{'time': 0, 'force': (0, 0, 0)}, {'time': .3, 'force': (0, 0, 0)},
                   {'time': 1.1, 'force': (0, 0, 1.5)}, {'time': 1.104, 'force': (0, 0, 0)}]
@@ -486,27 +672,22 @@ def steel_pull_peel(ctx: TestContext):
     ctx.plots('com_pull.force.z', 'edge_pull.force.z', 'asset.magnetic_force.z', 'edge.magnetic_force.z',
               _column('asset', 'position', 'z'), _column('edge', 'position', 'z'), 'edge.angle')
     detached = {}
-    with ExitStack() as holds:
-        while ctx.session.time < 1.12 and len(detached) < 2:
-            ctx.step()
-            for a, body, label in zip((ctx.asset, edge), bodies, ('com_pull', 'edge_pull')):
-                if a.name not in detached and body.state['position'][2] > .025 and np.linalg.norm(a.behavior().last_force) < 1e-8:
-                    detached[a.name] = {'time_s': ctx.session.time,
-                        'applied_force_N': float(ctx.rows[-1][label+'.force.z']), 'height_m': float(body.state['position'][2])}
-                    ctx.actions.pop(label, None)
-                    holds.enter_context(ctx.spring(body, position=body.state['position'], rotation=body.state['quaternion'],
-                        linear_stiffness=1000, linear_damping=6, angular_stiffness=.01, angular_damping=.0002))
+    while ctx.session.time < 1.12 and len(detached) < 2:
+        ctx.step()
+        for a, body, label, guide in zip((ctx.asset, edge), bodies, ('com_pull', 'edge_pull'), guides):
+            if a.name not in detached and body.state['position'][2] > .025 and np.linalg.norm(a.behavior().last_force) < 1e-8:
+                detached[a.name] = {'time_s': ctx.session.time,
+                    'applied_force_N': float(ctx.rows[-1][label+'.force.z']), 'height_m': float(body.state['position'][2])}
+                ctx.actions.pop(label, None)
+                guide.grasp()
     assert len(detached) == 2
     assert max(r['edge.angle'] for r in ctx.rows) > math.radians(15)
     ctx.actions.pop('com_pull', None); ctx.actions.pop('edge_pull', None)
-    phase['name'] = 'native fixture return (not free magnetic motion)'
-    # Catch both before returning either, preventing free flight off camera.
-    with ctx.spring(bodies[1], position=bodies[1].state['position'], rotation=bodies[1].state['quaternion'],
-                    linear_stiffness=1000, linear_damping=6, angular_stiffness=.01, angular_damping=.0002):
-        release_com = _return_with_native_fixture(ctx, bodies[0], (0, -.035, .0025))
-    with ctx.spring(bodies[0], position=bodies[0].state['position'], rotation=bodies[0].state['quaternion'],
-                    linear_stiffness=1000, linear_damping=6, angular_stiffness=.01, angular_damping=.0002):
-        release_edge = _return_with_native_fixture(ctx, bodies[1], (0, .035, .0025))
+    phase['name'] = 'native tensor grip return (not free magnetic motion)'
+    release_com = _return_with_native_fixture(ctx, guides[0], (0, -.035, .0025))
+    guides[0].grasp()
+    release_edge = _return_with_native_fixture(ctx, guides[1], (0, .035, .0025))
+    guides[0].release()
     phase['name'] = 'fixtures released; free recapture'
     # Finish on a 25 FPS frame boundary, including the final physical sample.
     ctx.run(round((math.ceil((ctx.session.time+.8)/.04)*.04-ctx.session.time)/ctx.dt)*ctx.dt)
@@ -536,14 +717,17 @@ def mutual_pull_recapture(ctx: TestContext):
     phase = {'name': 'pull; lower magnet clamped'}
     ctx.video_annotation = lambda: phase['name']
     ctx.plots('pull.force.z', 'peer.magnetic_force.z', 'pair.distance', _column('peer', 'linear_velocity', 'z'))
+    guide = ctx.grip(b2, name='return_peer')
+    guide.release()
     with ctx.fixed(b1):
+        ctx.ensure_initialized()
         while ctx.session.time < 1. and np.linalg.norm(_center(b2)-_center(b1)) < .040:
             ctx.step()
         detached_distance = float(np.linalg.norm(_center(b2)-_center(b1)))
         assert detached_distance > .035 and np.linalg.norm(peer.behavior().last_force) < 1e-8
         ctx.actions.pop('pull', None)
         phase['name'] = 'native actuator return; lower magnet clamped'
-        release = _return_with_native_fixture(ctx, b2, (0, 0, .032))
+        release = _return_with_native_fixture(ctx, guide, (0, 0, .032))
         assert np.linalg.norm(_center(b2)-_center(b1)) > .009
         phase['name'] = 'upper magnet freely recaptures; lower magnet clamped'
         # Finish on a 25 FPS boundary; this adds at most one frame interval.
@@ -607,7 +791,7 @@ def steel_two_magnets(ctx: TestContext):
     ctx.run(1.6)
     assert max(r['owned_pairs'] for r in ctx.rows) == 1
     for instance in (ctx.asset, peer):
-        assert instance.behavior().last_steel['target'] == '/World/Fixtures/shared_steel'
+        assert instance.behavior().last_steel['target'] == ctx.session.environment(0)+'/Fixtures/shared_steel'
         assert sum(instance.behavior().last_steel['forces_N']) > .9
         assert instance.behavior().callback_count == ctx.session.steps
         assert min(r[_column(instance.name, 'position', 'z')] for r in ctx.rows) >= -.0005
@@ -650,10 +834,216 @@ TESTS.update(steel_pull_peel=steel_pull_peel, mutual_pull_recapture=mutual_pull_
              steel_two_magnets=steel_two_magnets)
 
 
+def environment_isolation(ctx: TestContext):
+    """Different initial states per replica test force isolation, before motion."""
+    import torch
+    ctx.simulation(dt=.001 if ctx.physics == 'gpu' else .002, gravity=(0, 0, 0))
+    ctx.initial(position=(-.06, 0, .02))
+    peer = ctx.spawn(ctx.asset_path, name='peer', position=(-.06, 0, .032))
+    steel_magnet = ctx.spawn(ctx.asset_path, name='steel_magnet', position=(.06, 0, .0002))
+    _steel(ctx, 'isolation_plate', position=(.06, 0, 0), half=(.025, .025))
+    for instance in [ctx.asset, peer, steel_magnet]:
+        _magnetic(ctx, instance, steel=instance is steel_magnet)
+    ctx.camera(position=(.20, -.27, .16), target=(0, 0, .018))
+    ctx.video_annotation = lambda: 'Environment 0 shown | replicas have distinct initial gaps/polarities | initialization only'
+    ctx.plots('asset.magnetic_force.z', 'peer.magnetic_force.z', 'steel_magnet.magnetic_force.z')
+    ctx.ensure_initialized()
+    configurations = []
+    for e in range(ctx.num_envs):
+        distance, inverted, gap, back = [(.012, False, .0002, False), (.018, False, .002, False),
+            (.040, False, .010, False), (.012, True, .0002, True)][e % 4]
+        configurations.append((distance, inverted, gap, back))
+    # All heterogeneous transforms are initialization, before the first physical step.
+    for instance in [peer, steel_magnet]:
+        view = instance.view.view
+        transforms = view.get_transforms().clone()
+        for e, (distance, inverted, gap, back) in enumerate(configurations):
+            if instance is peer:
+                transforms[e, 2] = .022+distance+(.002 if inverted else -.002)
+                transforms[e, 3:7] = torch.tensor([1, 0, 0, 0] if inverted else [0, 0, 0, 1], device=transforms.device)
+            else:
+                transforms[e, 2] = gap+(HEIGHT_M if back else 0)
+                transforms[e, 3:7] = torch.tensor([1, 0, 0, 0] if back else [0, 0, 0, 1], device=transforms.device)
+        view.set_transforms(transforms, torch.arange(ctx.num_envs, dtype=torch.int32, device=transforms.device))
+    ctx.world.forward();ctx.session.refresh()
+    ctx.step()
+    checks = []
+    for e, (distance, inverted, gap, back) in enumerate(configurations):
+        softened = math.sqrt(distance*distance+.002**2)
+        product = .035**2*(-1 if inverted else 1)
+        expected_peer = 0. if distance >= .035 else 1e-7*product*(9*distance/softened**5-15*distance**3/softened**7)
+        expected_steel = 0. if back or gap >= .008 else -1/(1+gap/.002)**2
+        actual = [float(_environment_diagnostic(a, e)['force_N'][2]) for a in [ctx.asset, peer, steel_magnet]]
+        for a, b in zip(actual, [-expected_peer, expected_peer, expected_steel]):
+            assert abs(a-b) < max(1e-6, abs(b)*.01), (e, actual, expected_peer, expected_steel)
+        assert abs(actual[0]+actual[1]) < 1e-6
+        checks.append({'environment': e, 'initial_pair_distance_m': distance, 'peer_inverted': inverted,
+            'initial_steel_gap_m': gap, 'steel_back': back, 'first_step_force_z_N': actual,
+            'expected_peer_force_z_N': expected_peer, 'expected_steel_force_z_N': expected_steel})
+    ctx.run(.039 if ctx.physics == 'gpu' else .038)
+    for a in [ctx.asset, peer, steel_magnet]:
+        assert a.behavior().callback_count == ctx.session.steps
+    ctx.experiment_details = {'contract': 'heterogeneous initialization followed by per-environment force calculation; no state writes during motion',
+        'environment_checks': checks, 'rendered_environment': 0, 'not_a_same_input_backend_comparison': True}
+    ctx.metric('isolated_environments', ctx.num_envs, unit='1', label='异初态独立磁力环境数')
+
+
+def behavior_lifecycle(ctx: TestContext):
+    """Official components, same stage, stop/reset and real unload/reload."""
+    import torch
+    from pxr import Sdf, UsdPhysics
+    from omni.kit.scripting import ScriptManager
+    from table_1000.physics import simulation
+    ctx.simulation(dt=.001 if ctx.physics == 'gpu' else .002, gravity=(0, 0, 0))
+    ctx.initial(position=(0, 0, .020))
+    peer = ctx.spawn(ctx.asset_path, name='peer', position=(0, 0, .032))
+    steel = _steel(ctx, 'distant_steel', position=(1, 0, 0), half=(.025, .025), dynamic=True)
+    for a in [ctx.asset, peer]: _magnetic(ctx, a)
+    ctx.camera(position=(.12, -.18, .10), target=(0, 0, .03))
+    ctx.video_annotation = lambda: 'Official components after same-stage stop/reset, unload and reload | final repeat shown'
+    ctx.plots('asset.magnetic_force.z', 'peer.magnetic_force.z', _column('peer', 'position', 'z'))
+    ctx.ensure_initialized()
+    stage = ctx.session.stage
+    stage_id = stage.GetRootLayer().identifier
+    render = ctx.render
+    ctx.render = False
+    def updates():
+        if ctx.app:
+            for _ in range(5): ctx.app.update()
+    def snapshot():
+        return {n: (a.view.view.get_transforms().clone(), a.view.view.get_velocities().clone())
+                for n,a in ctx.session.instances.items()}
+    def restore(saved):
+        for n,(pose,velocity) in saved.items():
+            a = ctx.session.instances[n]
+            indices = torch.arange(len(pose), dtype=torch.int32, device=pose.device)
+            a.view.view.set_transforms(pose.clone(), indices)
+            a.view.view.set_velocities(velocity.clone(), indices)
+            a._magnet_sample_key = None
+        ctx.world.forward();ctx.session.refresh()
+        return max(float((x-y).abs().max().item()) for n,state in snapshot().items() for x,y in zip(state,saved[n]))
+    def stop():
+        ctx.session.active = False
+        ctx.world._disable_app_control_on_stop_handle = True
+        ctx.world.stop();updates()
+    def start(saved):
+        ctx.world.reset();ctx.session.initialize()
+        error = restore(saved)
+        assert error < 1e-6, error
+        ctx.session.time = 0.;ctx.session.steps = ctx.session.callback_steps = 0
+        ctx.session.error = None
+        ctx.rows.clear();ctx.action_values.clear()
+        ctx.experiment_started = None
+        return error
+    def captured():
+        checks=[]
+        for e in range(ctx.num_envs):
+            positions=[]
+            for a in [ctx.asset, ctx.session.instances['peer']]:
+                pos,rot,_ = a.environment_states()
+                positions.append(pos[e,0]+rot[e,0]@np.array([0,0,.002]))
+            distance=float(np.linalg.norm(positions[1]-positions[0]));assert distance < .008,(e,distance)
+            for a in [ctx.asset, ctx.session.instances['peer']]:
+                b=a.behavior();assert b.error is None and b.callback_count == ctx.session.steps
+                assert len(b.environment_diagnostics[e]['pairs']) == 1
+            checks.append({'environment':e,'final_center_distance_m':distance})
+        return checks
+    saved=snapshot();initial_session=ctx.session
+    ctx.run(.8);first=captured()
+    a,b=ctx.asset.behavior(),peer.behavior()
+    counts=[a.callback_count,b.callback_count]
+    ctx.world.pause();updates();updates()
+    assert [a.callback_count,b.callback_count] == counts
+    ctx.world.play();updates()
+    before=[a.callback_count,b.callback_count]
+    ctx.step()
+    assert [a.callback_count-before[0],b.callback_count-before[1]] == [1,1]
+    stop()
+    assert all(s.subscription is None and s.callback_count == 0 and not s.last_pairs for s in [a,b])
+    reset_error=start(saved);ctx.run(.8);second=captured()
+    retained={n:v for n,v in snapshot().items() if n!='peer'}
+    stop()
+    for e in range(ctx.num_envs): stage.RemovePrim(ctx.session.replica_path(peer.path,e))
+    updates()
+    assert b.session is None and b.instance is None and b.subscription is None
+    assert peer.path not in ScriptManager.get_instance()._prim_to_scripts
+    assert set(ctx.session.instances) == {'asset','distant_steel'}
+    # Keep surviving bodies at their current state only at the stopped boundary.
+    ctx.observers.clear();ctx.units.clear()
+    _magnetic(ctx,ctx.asset)
+    start(retained);ctx.run(.04)
+    for e in range(ctx.num_envs):
+        diag=_environment_diagnostic(ctx.asset,e)
+        assert not diag['pairs'] and np.linalg.norm(diag['force_N']) == 0
+    stop();old_session=ctx.session
+    for e in range(ctx.num_envs): stage.RemovePrim(old_session.replica_path(ctx.asset.path,e))
+    updates()
+    assert a.session is None and a.instance is None and a.subscription is None
+    assert not old_session.instances and old_session.key not in simulation._sessions
+    assert old_session.prepare_subscription is None and old_session.flush_subscription is None
+    # Reuse this same stage; new session and official scripts discover fresh views.
+    ctx.session=simulation.session_for(stage)
+    assert ctx.session is not old_session
+    ctx.session.active=False;ctx.session.set_environments(ctx.num_envs)
+    ctx.session.actions=ctx.apply_actions;ctx.session.fixtures=ctx.fixtures
+    ctx.asset=ctx.spawn(ctx.asset_path,name='asset',position=(0,0,.020))
+    peer=ctx.spawn(ctx.asset_path,name='peer',position=(0,0,.032))
+    ctx.session.register(steel.path,name='distant_steel')
+    for instance in [ctx.asset,peer]:
+        for e in range(1,ctx.num_envs):
+            assert Sdf.CopySpec(stage.GetRootLayer(),instance.path,stage.GetRootLayer(),ctx.session.replica_path(instance.path,e))
+    updates();ctx.observers.clear();ctx.units.clear()
+    for instance in [ctx.asset,peer]: _magnetic(ctx,instance)
+    ctx.plots('asset.magnetic_force.z','peer.magnetic_force.z',_column('peer','position','z'))
+    reload_error=start(saved)
+    assert ctx.asset.behavior() is not a and peer.behavior() is not b
+    ctx.render=render;ctx.images.clear();ctx.integrating_seconds=0.
+    ctx.run(.8);third=captured()
+    assert stage.GetRootLayer().identifier == stage_id
+    body_counts=[]
+    for e in range(ctx.num_envs):
+        from pxr import Usd
+        count=sum(p.HasAPI(UsdPhysics.RigidBodyAPI) for p in Usd.PrimRange(stage.GetPrimAtPath(ctx.session.environment(e))))
+        assert count == 3,(e,count);body_counts.append(count)
+    ctx.experiment_details={'contract':'official scripting component lifecycle; same stage; no live topology edits',
+        'first_capture':first,'reset_capture':second,'reloaded_capture':third,
+        'reset_max_component_error':reset_error,'reload_max_component_error':reload_error,
+        'pause_callbacks_unchanged':True,'resume_callbacks_per_step':[1,1],
+        'unloaded_peer_residual_force_N':0.,'last_magnet_released_dynamic_target_and_callbacks':True,
+        'new_script_objects_after_reload':True,'rigid_bodies_per_environment':body_counts,
+        'state_writes':'only reset/initialization boundaries, never force-driven motion',
+        'media_scope':'final reloaded .8s capture; prior segments numerically checked',
+        'performance_scope':'lifecycle diagnostic; exclude from steady-state benchmark','gui_visible':'not tested'}
+    ctx.metric('reset_error',reset_error,unit='1',label='复位状态最大分量误差')
+    ctx.metric('reload_error',reload_error,unit='1',label='重载状态最大分量误差')
+
+
+TESTS.update(environment_isolation=environment_isolation, behavior_lifecycle=behavior_lifecycle)
+
 def _record_configuration(test):
     """Keep scene-level contact requirements in each official result."""
     def experiment(ctx):
+        for e in range(ctx.num_envs):
+            for j, kind, unit in [(0, 'linear', 'kg·m/s'), (1, 'angular', 'kg·m²/s')]:
+                for i, axis in enumerate('xyz'):
+                    ctx.observe(f'env{e}.total_{kind}.{axis}',
+                        lambda e=e, j=j, i=i: _environment_momentum(ctx, e)[j][i], unit=unit)
         test(ctx)
+        ctx.experiment_details['environment_checks'] = [_validate_environment(ctx, test.__name__, e) for e in range(ctx.num_envs)]
+        for metric, key, factor, unit, label in [
+                ('maximum_penetration', 'maximum_geometry_penetration_m', 1000, 'mm', '最大几何穿入'),
+                ('shear_peak', 'actual_peak_applied_shear_N', 1, 'N', '实际峰值剪切外力'),
+                ('angular_momentum_drift', 'angular_momentum_drift_kg_m2_s', 1, 'kg·m²/s', '角动量漂移'),
+                ('minimum_pair_distance', 'minimum_center_distance_m', 1000, 'mm', '最小磁矩中心距')]:
+            value = ctx.experiment_details.get(key, ctx.experiment_details.get('geometry_contact', {}).get(key))
+            if value is not None:
+                ctx.metric(metric, value*factor, unit=unit, label=label)
+        for instance in ctx.session.instances.values():
+            prim = ctx.session.stage.GetPrimAtPath(instance.path)
+            if prim.GetAttribute('table1000:magnet:moment'):
+                behavior = instance.behavior()
+                assert behavior.error is None and behavior.callback_count == ctx.session.steps
+        ctx.metric('validated_environments', ctx.num_envs, unit='1', label='逐项验证环境数')
         from pxr import PhysxSchema, UsdPhysics
         scene = next(p for p in ctx.session.stage.Traverse() if p.IsA(UsdPhysics.Scene))
         api = PhysxSchema.PhysxSceneAPI(scene)
@@ -667,4 +1057,4 @@ def _record_configuration(test):
     return experiment
 
 
-TESTS = {name: _record_configuration(test) for name, test in TESTS.items()}
+TESTS = {name: test if name in ['behavior_lifecycle', 'environment_isolation'] else _record_configuration(test) for name, test in TESTS.items()}

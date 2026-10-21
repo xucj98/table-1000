@@ -14,11 +14,32 @@ BODY = 'staple.strip'
 SQRT_HALF = math.sqrt(.5)
 
 
+def _states(ctx, instance):
+    key = (ctx.session.steps, ctx.session.time)
+    cache = getattr(instance, '_staple_observation', None)
+    if cache is None or cache[0] != key:
+        pose = instance.view.view.get_transforms().detach().cpu().numpy().reshape(ctx.num_envs, 1, 7)[:, 0]
+        vel = instance.view.view.get_velocities().detach().cpu().numpy().reshape(ctx.num_envs, 1, 6)[:, 0]
+        cache = (key, pose[:, :3]-ctx.session.offsets, pose[:, [6, 3, 4, 5]], vel)
+        instance._staple_observation = cache
+    return cache[1:]
+
+
+def _prefix(env, name):
+    return name if env == 0 else f'env{env}.{name}'
+
+
 def _body(ctx, instance):
     body = instance.body(BODY)
     ctx.observe_body(body)
-    ctx.observe(f'{instance.name}.speed', lambda: float(np.linalg.norm(body.state['velocity'][:3])), unit='m/s')
-    ctx.observe(f'{instance.name}.angular_speed', lambda: float(np.linalg.norm(body.state['velocity'][3:])), unit='rad/s')
+    for env in range(ctx.num_envs):
+        name = _prefix(env, instance.name)
+        ctx.observe(name+'.speed', lambda e=env: np.linalg.norm(_states(ctx, instance)[2][e, :3]), unit='m/s')
+        ctx.observe(name+'.angular_speed', lambda e=env: np.linalg.norm(_states(ctx, instance)[2][e, 3:]), unit='rad/s')
+        if env:
+            for field, index, axes, unit in [('position', 0, 'xyz', 'm'), ('quaternion', 1, 'wxyz', '1')]:
+                for i, axis in enumerate(axes):
+                    ctx.observe(f'{name}.{BODY}.{field}.{axis}', lambda e=env, j=i, k=index: _states(ctx, instance)[k][e, j], unit=unit)
     return body
 
 
@@ -28,17 +49,31 @@ def _ground(ctx):
 
 def _contact(ctx):
     from table_1000.physics.test import ground_clearance
-    result = ground_clearance(json.loads((ctx.asset_path.parent/'model.json').read_text()),
-                              ctx.rows, ctx.session.instances, 0)
-    assert result['maximum_geometry_penetration_m'] < .000255, result
-    return result
+    model = json.loads((ctx.asset_path.parent/'model.json').read_text())
+    results = []
+    for env in range(ctx.num_envs):
+        prefix = f'env{env}.'
+        rows = ctx.rows if env == 0 else [
+            {'time': row['time'], **{k[len(prefix):]: v for k, v in row.items() if k.startswith(prefix)}}
+            for row in ctx.rows]
+        results.append(ground_clearance(model, rows, ctx.session.instances, 0))
+    peak = max(x['maximum_geometry_penetration_m'] for x in results)
+    ctx.metric('penetration', peak, unit='m', label='Maximum sampled ground penetration, all environments')
+    assert peak < .000255, results
+    return {'per_environment': results, 'maximum_geometry_penetration_m': peak}
 
 
 def _settled(ctx, names, speed=.005):
-    tail = [row for row in ctx.rows if row['time'] >= ctx.session.time - .25 - 1e-9]
-    for name in names:
-        assert max(row[f'{name}.speed'] for row in tail) < speed, f'{name}: residual linear motion'
-        assert max(row[f'{name}.angular_speed'] for row in tail) < speed / .01, f'{name}: residual angular motion'
+    tail = [row for row in ctx.rows if row['time'] >= ctx.session.time-.25-1e-9]
+    peaks = []
+    for env in range(ctx.num_envs):
+        for original in names:
+            name = _prefix(env, original)
+            peak = max(row[f'{name}.speed'] for row in tail)
+            peaks.append(peak)
+            assert peak < speed, f'{name}: residual linear motion'
+            assert max(row[f'{name}.angular_speed'] for row in tail) < speed/.01, f'{name}: residual angular motion'
+    ctx.metric('settled_speed', max(peaks), unit='m/s', label='Maximum tail speed, all environments')
 
 
 def orientation_settle(ctx: TestContext):
@@ -68,6 +103,8 @@ def orientation_settle(ctx: TestContext):
 
 def low_drop(ctx: TestContext):
     """Low-height release in the three reference orientations."""
+    if ctx.physics == 'gpu':
+        ctx.simulation(dt=.0005)  # 4 ms GPU drop exceeds the half-wire penetration limit.
     _ground(ctx)
     instances = [
         ctx.asset,
@@ -113,13 +150,16 @@ def push_release(ctx: TestContext):
               'asset.speed', 'control.speed')
     ctx.run(2.0)
     displacement = pushed_body.state['position'][0] - control_body.state['position'][0]
-    assert displacement > .001, 'push did not produce measurable strip translation'
+    displacements = (_states(ctx, pushed)[0][:, 0]-_states(ctx, control)[0][:, 0]).tolist()
+    assert min(displacements) > .001, displacements
+    ctx.metric('slide', displacement, unit='m', label='Loaded strip travel relative to idle')
+    assert np.max(np.abs(_states(ctx, control)[0][:, 0])) < .000255
     _settled(ctx, ('asset', 'control'))
     assert abs(control_body.state['position'][0]) < .000255
     ctx.experiment_details = {
         'geometry_contact': _contact(ctx),
         'contract': '8 mN horizontal pulse with 4 ms ramps and 80 ms plateau; free control strip',
-        'load_N': .008, 'load_interval_s': [.404, .488], 'relative_displacement_m': float(displacement),
+        'load_N': .008, 'load_interval_s': [.404, .488], 'relative_displacement_m': float(displacement), 'per_environment_displacement_m': displacements,
         'boundary': 'effective rigid-body sliding check; not a paper-feed or stapling-force measurement',
     }
 
@@ -133,7 +173,7 @@ def u_probe(ctx: TestContext):
     from pxr import Gf, PhysxSchema, UsdGeom, UsdPhysics, UsdShade
     ctx.simulation(gravity=(0, 0, 0))
     stage = ctx.session.stage
-    gauge = UsdGeom.Cube.Define(stage, '/World/Fixtures/slot_gauge')
+    gauge = UsdGeom.Cube.Define(stage, ctx.session.environment(0)+'/Fixtures/slot_gauge')
     gauge.CreateSizeAttr(1)
     xform = UsdGeom.Xformable(gauge)
     xform.AddTranslateOp().Set(Gf.Vec3d(0, 0, .013))
@@ -143,7 +183,7 @@ def u_probe(ctx: TestContext):
     collision = PhysxSchema.PhysxCollisionAPI.Apply(gauge.GetPrim())
     collision.CreateContactOffsetAttr(.00005)
     collision.CreateRestOffsetAttr(0)
-    material = UsdShade.Material.Define(stage, '/World/Fixtures/gauge_material')
+    material = UsdShade.Material.Define(stage, ctx.session.environment(0)+'/Fixtures/gauge_material')
     api = UsdPhysics.MaterialAPI.Apply(material.GetPrim())
     api.CreateStaticFrictionAttr(.35)
     api.CreateDynamicFrictionAttr(.25)
@@ -162,8 +202,7 @@ def u_probe(ctx: TestContext):
     ctx.video_annotation = lambda: 'Orange: static 6 x 2 mm gauge inside U | 1 mN +Y load then release'
     ctx.plots('probe_load.force.y', 'asset.staple.strip.position.y', 'asset.speed')
     # Ideal test guide: lock X/Z and rotations, leave Y translation free.
-    ctx.ensure_initialized()
-    guide = UsdPhysics.Joint.Define(stage, '/World/Fixtures/probe_guide')
+    guide = UsdPhysics.Joint.Define(stage, ctx.session.environment(0)+'/Fixtures/probe_guide')
     guide.CreateBody1Rel().SetTargets([body.path])
     guide.CreateLocalPos0Attr(Gf.Vec3f(0, 0, .016))
     guide.CreateLocalRot0Attr(Gf.Quatf(0, Gf.Vec3f(1, 0, 0)))
@@ -173,12 +212,12 @@ def u_probe(ctx: TestContext):
         limit = UsdPhysics.LimitAPI.Apply(guide.GetPrim(), axis)
         limit.CreateLowAttr(0)
         limit.CreateHighAttr(0)
-    try:
-        ctx.run(.8)
-    finally:
-        stage.RemovePrim(guide.GetPath())
-    peak = max(r['asset.staple.strip.position.y'] for r in ctx.rows)
-    assert .0025 < peak < .003095, ('U-slot gauge side contact', peak)
+    ctx.run(.8)
+    peaks = [max(row[_prefix(e, 'asset')+'.'+BODY+'.position.y'] for row in ctx.rows) for e in range(ctx.num_envs)]
+    assert all(.0025 < peak < .003095 for peak in peaks), peaks
+    peak = peaks[0]
+    ctx.metric('probe_travel', peak, unit='m', label='U-slot gauge contact travel')
+    ctx.metric('probe_environment_spread', max(peaks)-min(peaks), unit='m', label='Contact travel spread across environments')
     ctx.experiment_details = {
         'contract': 'crown-down strip moves in zero gravity until a leg contacts the internal static gauge; withdraw load',
         'gauge_dimensions_m': [.010, .006, .002], 'gauge_center_m': [0, 0, .013],
@@ -186,7 +225,7 @@ def u_probe(ctx: TestContext):
         'initial_origin_m': [0, 0, .016], 'nominal_lateral_clearance_m': .00284,
         'contact_envelope_m': .0003,
         'accepted_peak_interval_m': [.0025, .003095],
-        'peak_lateral_travel_m': peak, 'applied_load_N': .001,
+        'peak_lateral_travel_m': peak, 'per_environment_peak_travel_m': peaks, 'applied_load_N': .001,
         'boundary': 'ideal gauge validates the U void and leg contact, not an insertion path or real stapler loading',
     }
 
@@ -215,11 +254,15 @@ def free_impulse(ctx: TestContext):
               'offset.staple.strip.linear_velocity.x', 'offset.angular_speed', 'idle.speed')
     ctx.run(.8)
     impulse = sum(row['com.force.x'] for row in ctx.rows)*ctx.dt
-    errors = [abs(.002*b.state['velocity'][0]-impulse)/impulse for b in bodies[:2]]
-    assert max(errors) < .01, errors
-    assert np.linalg.norm(bodies[0].state['velocity'][3:]) < .001
-    assert np.linalg.norm(bodies[1].state['velocity'][3:]) > .1
-    assert np.linalg.norm(bodies[2].state['velocity']) < 1e-6
+    velocities = [_states(ctx, b.instance)[2] for b in bodies]
+    errors = [abs(.002*v[:, 0]-impulse)/impulse for v in velocities[:2]]
+    assert np.max(errors) < .01, errors
+    assert np.max(np.linalg.norm(velocities[0][:, 3:], axis=1)) < .001
+    assert np.min(np.linalg.norm(velocities[1][:, 3:], axis=1)) > .1
+    assert np.max(np.linalg.norm(velocities[2], axis=1)) < 1e-6
+    errors = np.asarray(errors).tolist()
+    ctx.metric('momentum_error', np.max(errors), unit='1', label='Maximum relative momentum error, all environments')
+    ctx.metric('offset_spin', np.linalg.norm(velocities[1][0, 3:]), unit='rad/s', label='Offset-loaded strip angular speed')
     ctx.experiment_details = {
         'contract': 'equal 1 mN world-X COM/offset pulses and untouched free instance',
         'applied_impulse_N_s': impulse, 'relative_linear_momentum_errors': errors,
@@ -227,6 +270,47 @@ def free_impulse(ctx: TestContext):
         'boundary': 'single rigid strip only; inertia uses uniform collision-volume estimate',
     }
 
+def stop_reset(ctx: TestContext):
+    """Two free instances; restore tensors only at an explicit reset boundary."""
+    ctx.simulation(gravity=(0, 0, 0))
+    ctx.initial(position=(0, -.03, .03), linear_velocity=(.02, 0, 0))
+    idle = ctx.spawn(ctx.asset_path, name='idle', position=(0, .03, .03))
+    for instance in (ctx.asset, idle):
+        _body(ctx, instance)
+    ctx.camera(position=(.10, -.14, .13), target=(.01, 0, .03))
+    ctx.video_annotation = lambda: 'Two free rigid strips | explicit stop/reset at 0.4 s'
+    ctx.plots('asset.staple.strip.position.x', 'idle.staple.strip.position.x', 'asset.speed', 'idle.speed')
+    ctx.ensure_initialized()
+    saved = {name: instance.snapshot() for name, instance in ctx.session.instances.items()}
+    ctx.run(.4)
+    first = _states(ctx, ctx.asset)[0].copy()
+    ctx.session.active = False
+    ctx.world.stop()
+    ctx.world.reset()
+    ctx.session.initialize()
+    for name, state in saved.items():
+        ctx.session.instances[name].restore(state)
+    ctx.world.forward()
+    ctx.session.refresh()
+    errors = []
+    for name, instance in ctx.session.instances.items():
+        instance._staple_observation = None
+        pos, quat, vel = _states(ctx, instance)
+        positions, quaternions, velocity = saved[name]
+        error = max(np.max(abs(pos-positions)), np.max(abs(quat-quaternions)), np.max(abs(vel-velocity)))
+        assert error < 1e-6, (name, error)
+        errors.append(float(error))
+    ctx.run(.4)
+    repeat_error = float(np.max(abs(_states(ctx, ctx.asset)[0]-first)))
+    assert repeat_error < 1e-6, repeat_error
+    assert np.max(np.linalg.norm(_states(ctx, idle)[2], axis=1)) < 1e-6
+    ctx.metric('reset_error', max(errors), unit='1', label='Maximum reset component error, all environments')
+    ctx.metric('repeat_error', repeat_error, unit='m', label='Repeated free-motion end-position error')
+    ctx.experiment_details = {'contract': 'same-stage stop/reset, free moving and idle instances',
+        'reset_at_timeline_s': .4, 'reset_errors': errors, 'repeat_position_error_m': repeat_error,
+        'scope': 'lifecycle diagnostic excluded from steady-state benchmark; no behavior script'}
+
+
 
 TESTS = {'orientation_settle': orientation_settle, 'low_drop': low_drop,
-         'push_release': push_release, 'u_probe': u_probe, 'free_impulse': free_impulse}
+         'push_release': push_release, 'u_probe': u_probe, 'free_impulse': free_impulse, 'stop_reset': stop_reset}

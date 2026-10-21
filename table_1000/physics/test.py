@@ -3,6 +3,7 @@ import argparse
 import csv
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -59,18 +60,111 @@ def ground_clearance(model, rows, instance_names, ground_z):
             'method':'collision hull vertices and analytic sphere extents transformed by recorded rigid poses; geometric overlap excludes contact margins'}
 
 
-def benchmark(asset,name,test,app,physics="cpu",num_envs=1,utilization=None):
-    from table_1000.physics.testing import TestContext
-    # Warm a disposable scene: restoring poses alone cannot restore the
-    # contact solver's internal state. Every measured repeat starts fresh.
-    warm = TestContext(asset, name=name, app=app, physics=physics, num_envs=num_envs)
-    start = time.perf_counter()
+def retain_failure(ctx, asset, name, directory, error, *, physics, num_envs, phase, gpu=None):
+    """Save evidence already produced; never advance physics or claim acceptance."""
+    directory.mkdir(parents=True, exist_ok=True)
+    diagnostics = directory / 'diagnostics'
+    diagnostics.mkdir(exist_ok=True)
+    result = {'test':name, 'asset':str(asset), 'execution_status':'failed',
+              'failed_phase':phase, 'error':error,
+              'environments':{'count':num_envs},
+              'diagnostics':{'acceptance_eligible':False,
+                             'scope':'available samples before failure; may be incomplete',
+                             'files':{}, 'capture_errors':{}}}
+    captured = result['diagnostics']
+
+    def attempt(key, action):
+        try:
+            return action()
+        except Exception:
+            captured['capture_errors'][key] = traceback.format_exc()
+            return None
+
+    def field(key, value):
+        # One unsupported measurement must not discard other evidence.
+        json.dumps(value)
+        result[key] = value
+
+    for key, attribute in [('columns','units'), ('plots','plot_columns'),
+                           ('metrics','metrics'), ('experiment','experiment_details')]:
+        attempt(key, lambda key=key, attribute=attribute: field(key, getattr(ctx,attribute,{})))
+    attempt('conditions', lambda: field('conditions', {**conditions(ctx), 'gpu':gpu}))
+    if 'conditions' not in result:
+        result['conditions'] = {'physics_backend':physics, 'dt':getattr(ctx,'dt',None),
+                                'gpu':gpu, 'complete':False,
+                                'note':'full engine readback unavailable; see diagnostics.capture_errors.conditions'}
+
+    rows = getattr(ctx,'rows',[])
+    result['steps'] = getattr(getattr(ctx,'session',None),'steps',None)
+    captured['sample_count'] = len(rows)
+    if rows:
+        def save_trace():
+            columns = list(dict.fromkeys(key for row in rows for key in row))
+            with (diagnostics/'trace.csv').open('w',newline='') as stream:
+                writer=csv.DictWriter(stream,columns)
+                writer.writeheader()
+                writer.writerows(rows)
+            captured['files']['trace'] = 'diagnostics/trace.csv'
+        attempt('trace',save_trace)
+    images = getattr(ctx,'images',[])
+    captured['frame_count_available'] = len(images)
+    captured['frame_count_saved'] = 0
+    if images:
+        frames=diagnostics/'frames'
+        attempt('frames_directory',lambda: frames.mkdir(exist_ok=True))
+        for i,image in enumerate(images):
+            def save_frame(i=i,image=image):
+                image.save(frames/f'{i:05}.jpg',quality=95)
+                captured['frame_count_saved'] += 1
+            attempt(f'frame_{i}',save_frame)
+        if captured['frame_count_saved']:
+            captured['files']['frames'] = 'diagnostics/frames/'
+    (directory/'result.json').write_text(json.dumps(result,indent=2)+'\n')
+
+
+def capture_failure(ctx, asset, name, directory, *, physics, num_envs, phase, gpu=None):
+    """Best-effort diagnostics must not replace the active experiment exception."""
+    error=traceback.format_exc()
     try:
-        test(warm)
-        assert warm.session.time >= 1., 'RTF warmup requires at least one simulated second'
-        warmup = time.perf_counter()-start
-    finally:
-        warm.close()
+        retain_failure(ctx,asset,name,directory,error,physics=physics,num_envs=num_envs,phase=phase,gpu=gpu)
+    except Exception:
+        print('PHYSICS_TEST_DIAGNOSTICS_FAILED',name,traceback.format_exc(),file=sys.stderr,flush=True)
+
+
+def close_context(ctx):
+    """Keep an active experiment error authoritative if cleanup also fails."""
+    if sys.exc_info()[0] is None:
+        ctx.close()
+    else:
+        try:
+            ctx.close()
+        except Exception:
+            print('PHYSICS_TEST_CLEANUP_FAILED',traceback.format_exc(),file=sys.stderr,flush=True)
+
+
+def benchmark(asset,name,test,app,physics="cpu",num_envs=1,utilization=None,diagnostics_directory=None):
+    from table_1000.physics.testing import TestContext
+    # Complete short experiments in fresh scenes until the warmup totals 1 s.
+    # Restoring poses alone cannot restore the contact solver's internal state;
+    # neither warmup nor measured repeats append an idle tail to the experiment.
+    warmup = warm_seconds = 0.
+    warm_repeats = 0
+    while warm_seconds < 1-1e-8:
+        warm = TestContext(asset, name=name, app=app, physics=physics, num_envs=num_envs)
+        start = time.perf_counter()
+        try:
+            test(warm)
+            duration = warm.session.time
+            assert math.isfinite(duration) and duration > 0, 'RTF warmup requires a finite positive experiment duration'
+            warm_seconds += duration
+            warmup += time.perf_counter()-start
+            warm_repeats += 1
+        except Exception:
+            if diagnostics_directory is not None:
+                capture_failure(warm,asset,name,diagnostics_directory,physics=physics,num_envs=num_envs,phase='benchmark_warmup')
+            raise
+        finally:
+            close_context(warm)
     rounds=[]
     for _ in range(3):
         seconds=wall=prepare=0.
@@ -86,13 +180,18 @@ def benchmark(asset,name,test,app,physics="cpu",num_envs=1,utilization=None):
                 if utilization: utilization.stop()
                 prepare+=construction+ctx.preparation_seconds
                 finals.append(ctx.rows[-1])
+            except Exception:
+                if diagnostics_directory is not None:
+                    capture_failure(ctx,asset,name,diagnostics_directory,physics=physics,num_envs=num_envs,phase='benchmark_round')
+                raise
             finally:
-                ctx.close()
+                close_context(ctx)
         rounds.append({'simulated_seconds':seconds,'wall_seconds':wall,'RTF':seconds/wall,
                        'independent_repeats':len(finals),'preparation_reset_seconds':prepare,
                        'final_states':finals})
     median=statistics.median(r['RTF'] for r in rounds)
-    return {'warmup':{'wall_seconds':warmup,'method':'one complete experiment in a disposable scene before measured rounds'},
+    return {'warmup':{'wall_seconds':warmup,'simulated_seconds':warm_seconds,'independent_repeats':warm_repeats,
+                      'method':'complete independent experiments totaling at least one simulated second in disposable scenes before measured rounds'},
             'rounds':rounds,'median_RTF':median,'environments':num_envs,'median_environment_seconds_per_second':median*num_envs,
             'utilization':utilization.summary() if utilization else None,
             'includes':'physical steps, official behavior, test actions, state reading and in-memory sampling; no camera or rendering'}
@@ -157,6 +256,7 @@ def conditions(ctx):
                 '/rtx/reflections/sampledLighting/samplesPerPixel','/rtx/reflections/denoiser/enabled','/rtx/post/taa/samples']},
             'camera':ctx.camera_config,
             'render_passes_per_capture':2 if ctx.camera_instance else 0,
+            'capture_render_pass_counts':ctx.camera_instance.capture_render_counts if ctx.camera_instance else [],
             'lighting':{'dome_intensity':ctx.session.stage.GetPrimAtPath('/World/Light').GetAttribute('inputs:intensity').Get(),
                         'sun_intensity':ctx.session.stage.GetPrimAtPath('/World/Sun').GetAttribute('inputs:intensity').Get(),
                         'sun_rotation_xyz_degrees':list(ctx.session.stage.GetPrimAtPath('/World/Sun').GetAttribute('xformOp:rotateXYZ').Get())}
@@ -219,8 +319,11 @@ def run_video(asset,name,test,output,app,startup,rtf,gpu,physics="cpu",num_envs=
         (directory/'result.json').write_text(json.dumps(result,indent=2)+'\n')
         print('PHYSICS_TEST_COMPLETED',name,flush=True)
         return result
+    except Exception:
+        capture_failure(ctx,asset,name,directory,physics=physics,num_envs=num_envs,phase='video',gpu=gpu)
+        raise
     finally:
-        ctx.close()
+        close_context(ctx)
 
 
 def clear(output,name):
@@ -233,12 +336,28 @@ def run_case(asset,name,test,output,app,startup,gpu,physics="cpu",num_envs=1,uti
     directory=output/name
     clear(output,name)
     directory.mkdir(parents=True)
+    rtf = None
+    phase = 'benchmark' if standard else 'video'
     try:
-        rtf=benchmark(asset,name,test,app,physics=physics,num_envs=num_envs,utilization=utilization) if standard else None
+        rtf=benchmark(asset,name,test,app,physics=physics,num_envs=num_envs,utilization=utilization,diagnostics_directory=directory) if standard else None
+        phase = 'video'
         return run_video(asset,name,test,output,app,startup,rtf,gpu,physics=physics,num_envs=num_envs,utilization=utilization)
     except Exception:
-        (directory/'result.json').write_text(json.dumps({'test':name,'execution_status':'failed',
-            'error':traceback.format_exc()},indent=2)+'\n')
+        error=traceback.format_exc()
+        failure={}
+        # clear() removed prior results; only merge this run's diagnostics.
+        if (directory/'result.json').exists():
+            try:
+                saved=json.loads((directory/'result.json').read_text())
+                if saved.get('execution_status')=='failed':failure=saved
+            except (ValueError,OSError):
+                pass
+        failure.update(test=name,execution_status='failed',error=error)
+        failure.setdefault('failed_phase',phase)
+        if rtf is not None:
+            failure['performance'] = {'no_render':rtf}
+            failure['benchmark_status'] = 'completed'
+        (directory/'result.json').write_text(json.dumps(failure,indent=2)+'\n')
         raise
 
 

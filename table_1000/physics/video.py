@@ -1,6 +1,8 @@
 """Synchronous camera capture without advancing physical time."""
 import numpy as np
 
+MAX_CAPTURE_RENDERS = 10
+
 class Camera:
     def __init__(self, stage, config):
         import carb
@@ -21,7 +23,8 @@ class Camera:
         sun = UsdLux.DistantLight.Define(stage, '/World/Sun')
         sun.CreateIntensityAttr(2500)
         UsdGeom.Xformable(sun).AddRotateXYZOp().Set(Gf.Vec3f(-40, 20, 0))
-        self.product = rep.create.render_product(camera.GetPath(), tuple(self.size))
+        self.product = rep.create.render_product(camera.GetPath(), tuple(self.size), force_new=True)
+        self.capture_render_counts = []
         self.rgb = rep.AnnotatorRegistry.get_annotator('rgb')
         self.rgb.attach([self.product])
 
@@ -33,15 +36,28 @@ class Camera:
         else:
             from omni.physx import get_physx_interface
             get_physx_interface().update_transformations(True, True, True, False)
-        before = {key: value['position'].copy() for key, value in runtime.states.items()}
-        # Lab render disables timeline simulation while updating Hydra and RTX.
-        # Replicator.step can stall with the Lab-managed timeline on either backend.
+        before = {key: {field: value[field].copy() for field in ('position', 'quaternion', 'velocity')}
+                  for key, value in runtime.states.items()}
+        # A newly attached annotator can return an empty 1-D buffer while
+        # Hydra compiles/activates the render product. Render only (no step)
+        # until this product has a real frame, with a bounded startup cost.
         ctx.world.render()
-        ctx.world.render()
+        for renders in range(2, MAX_CAPTURE_RENDERS + 1):
+            ctx.world.render()
+            data = self.rgb.get_data()
+            if np.asarray(data).size:
+                break
+        self.capture_render_counts.append(renders)
         runtime.refresh()
-        if any(not np.array_equal(value, runtime.states[key]['position']) for key, value in before.items()):
+        if any(not np.array_equal(values[field], runtime.states[key][field])
+               for key, values in before.items() for field in values):
             raise RuntimeError('Rendering advanced physical state')
-        image = Image.fromarray(self.rgb.get_data()[:, :, :3])
+        data = np.asarray(data)
+        expected = (self.size[1], self.size[0])
+        if data.ndim != 3 or data.shape[:2] != expected or data.shape[2] < 3:
+            raise RuntimeError(f'RGB render product not ready after {renders} render passes: '
+                               f'expected {expected} RGB image, got shape {data.shape}')
+        image = Image.fromarray(data[:, :, :3])
         draw = ImageDraw.Draw(image)
         draw.rectangle((0, 0, self.size[0], 35), fill='white')
         active = ', '.join(key for key, value in ctx.action_values.items()
@@ -54,5 +70,5 @@ class Camera:
         return image
 
     def close(self):
-        self.rgb.detach()
+        self.rgb.detach([self.product.path])
         self.product.destroy()

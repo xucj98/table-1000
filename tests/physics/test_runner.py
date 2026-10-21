@@ -49,6 +49,22 @@ class CaseResultsTests(unittest.TestCase):
             self.assertEqual(other.read_bytes(), b'other result')
             self.assertEqual(source.read_text(), 'TESTS = {}\n')
 
+    def test_video_failure_keeps_completed_independent_benchmark(self):
+        measured = {'median_RTF': 2.5, 'rounds': [{'RTF': 2.5}]}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output = root / 'physics_test'
+            with patch('table_1000.physics.test.benchmark', return_value=measured), \
+                 patch('table_1000.physics.test.run_video', side_effect=RuntimeError('empty RGB')):
+                with self.assertRaisesRegex(RuntimeError, 'empty RGB'):
+                    run_case(root / 'object.usda', 'pull', None, output, None, 0, 0, standard=True)
+            result = json.loads((output / 'pull' / 'result.json').read_text())
+        self.assertEqual(result['execution_status'], 'failed')
+        self.assertEqual(result['failed_phase'], 'video')
+        self.assertEqual(result['benchmark_status'], 'completed')
+        self.assertEqual(result['performance'], {'no_render': measured})
+        self.assertNotIn('video_end_to_end', result['performance'])
+
     def test_default_run_skips_the_standard_benchmark(self):
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / 'physics_test'

@@ -17,6 +17,8 @@ Equal-limit locks cannot do that: moving them leaves the body at rest after
 every step and, with written velocities, injects impulses into drawers.
 """
 
+from numbers import Real
+
 import numpy as np
 from scipy.spatial.transform import Rotation
 
@@ -68,13 +70,15 @@ class Fixture:
         stage = ctx.session.stage
         # Changing the articulation root must retain the asset's solver and
         # collision settings, rather than silently taking PhysX defaults.
-        source = stage.GetPrimAtPath(body.instance.articulation_root or body.path)
-        source_api = (PhysxSchema.PhysxArticulationAPI(source) if body.instance.articulation_root
+        instance = body.instance
+        holds_tree = body.name in instance.articulation_bodies
+        source = stage.GetPrimAtPath(instance.articulation_root if holds_tree else body.path)
+        source_api = (PhysxSchema.PhysxArticulationAPI(source) if holds_tree
                       else PhysxSchema.PhysxRigidBodyAPI(source))
         position_iterations = source_api.GetSolverPositionIterationCountAttr().Get()
         velocity_iterations = source_api.GetSolverVelocityIterationCountAttr().Get()
         self_collisions = (source_api.GetEnabledSelfCollisionsAttr().Get()
-                           if body.instance.articulation_root else False)
+                           if holds_tree else False)
         UsdGeom.Xform.Define(stage, self.path)
         previous = None
         for i in range(4):
@@ -128,16 +132,17 @@ class Fixture:
         if not hasattr(instance, "fixture_bodies"):
             instance.fixture_bodies = set()
         instance.fixture_bodies.add(body.name)
-        if instance.articulation_root:
+        if holds_tree:
             stage.GetPrimAtPath(instance.articulation_root).RemoveAPI(UsdPhysics.ArticulationRootAPI)
             instance.fixture_root = self.path+'/root_joint'
-        else:
+        elif not instance.articulation_root:
             # The pen's radial joints stay maximal, with their original drives.
             for name in instance.joint_names:
                 UsdPhysics.Joint(instance.joint(name)).CreateExcludeFromArticulationAttr(True)
         # Bodies whose mass the fixture carries: the whole reduced-coordinate
         # tree, or just the body when its other joints stay maximal.
-        self.tree = list(instance.body_names) if instance.articulation_root else [body.name]
+        self.tree = ([name for name in instance.body_names if name in instance.articulation_bodies]
+                     if holds_tree else [body.name])
         self.view = None
         ctx.fixtures.append(self)
 
@@ -281,7 +286,15 @@ class Grip:
     torque magnitudes, turning position control into force control.
     """
 
-    def __init__(self, ctx, body, *, name):
+    def __init__(self, ctx, body, *, name, gain_reference_dt=None):
+        assert not ctx.initialized, 'Declare grips before the first simulation step'
+        if gain_reference_dt is not None:
+            if (isinstance(gain_reference_dt, (bool, np.bool_))
+                    or not isinstance(gain_reference_dt, Real)
+                    or not np.isfinite(gain_reference_dt) or gain_reference_dt <= 0):
+                raise ValueError('gain_reference_dt must be a finite positive number of seconds')
+            gain_reference_dt = float(gain_reference_dt)
+        self._gain_reference_dt = gain_reference_dt
         self.ctx, self.body, self.name = ctx, body, name
         self.fixture = Fixture(ctx, body, name=name, locked=False)
         position, quaternion = ctx.body_pose(body)
@@ -382,12 +395,14 @@ class Grip:
     # -- control -------------------------------------------------------------------------
     def initialize(self):
         tree = self.tree_state(0, self.fixture.positions())
-        linear, angular = LINEAR_STEPS / self.ctx.dt, ANGULAR_STEPS / self.ctx.dt
+        reference_dt = self.ctx.dt if self._gain_reference_dt is None else self._gain_reference_dt
+        linear, angular = LINEAR_STEPS / reference_dt, ANGULAR_STEPS / reference_dt
         inertia = np.linalg.eigvalsh(tree['inertia']).max()
         self.gains = {'linear_stiffness_N_per_m': tree['mass']*linear**2, 'linear_damping_N_s_per_m': 2*tree['mass']*linear,
                       'angular_stiffness_N_m_per_rad': inertia*angular**2, 'angular_damping_N_m_s_per_rad': 2*inertia*angular,
                       'held_mass_kg': tree['mass'], 'held_inertia_kg_m2': inertia,
-                      'linear_natural_frequency_rad_s': linear, 'angular_natural_frequency_rad_s': angular}
+                      'linear_natural_frequency_rad_s': linear, 'angular_natural_frequency_rad_s': angular,
+                      'physics_dt_s': self.ctx.dt, 'gain_reference_dt_s': reference_dt}
 
     def tree_state(self, environment=0, positions=None):
         """Mass, center of mass and inertia (about the joint point) of the held tree.
@@ -521,9 +536,11 @@ class Grip:
 
         CPU PhysX reports the full incoming joint force of the held link; GPU
         PhysX leaves drive forces out of it, so the drive law gives the force.
-        The GPU spherical drive is effectively stiffer than its nominal gains,
-        so GPU torque reads low (about 5% at the default gains); GPU force is
-        exact.
+        GPU torque read about 5% low in the original reference load, not at
+        every scale. When a small angular deflection is rounded to zero by
+        the native joint-position readback, this estimate can also be zero
+        despite a nonzero applied load. It is not a direct reaction sensor;
+        quantitative use requires validation at the experiment's load scale.
         """
         fixture = self.fixture
         if fixture.released:

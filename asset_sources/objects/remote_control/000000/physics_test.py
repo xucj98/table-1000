@@ -25,6 +25,15 @@ def _body(ctx, instance):
     b = instance.body(BODY)
     ctx.observe_body(b)
     ctx.observe(instance.name+'.speed', lambda: np.linalg.norm(b.state['velocity'][:3]), unit='m/s')
+    if not hasattr(ctx, '_remote_histories'):
+        ctx._remote_histories = {}
+    history = ctx._remote_histories[instance.name] = []
+    def sample_environments():
+        positions, rotations, _ = instance.environment_states()
+        velocities = instance.view.view.get_velocities().detach().cpu().numpy().reshape(ctx.num_envs, 1, 6)[:, 0]
+        history.append((ctx.session.time, positions[:, 0].copy(), rotations[:, 0].copy(), velocities.copy()))
+        return float(np.linalg.norm(velocities[:, :3], axis=1).max())
+    ctx.observe(instance.name+'.all_env_max_speed', sample_environments, unit='m/s')
     return b
 
 
@@ -63,6 +72,39 @@ def _contact(ctx):
     return result
 
 
+def _replicas(ctx, *, stable=False, contact=False):
+    """Apply the original stability/contact bounds to every environment."""
+    report = {}
+    vertices = _vertices(ctx) if contact else None
+    for name, history in ctx._remote_histories.items():
+        times = np.array([h[0] for h in history])
+        positions = np.stack([h[1] for h in history])
+        velocities = np.stack([h[3] for h in history])
+        tail = times >= ctx.session.time-.5-1e-8
+        speed = np.linalg.norm(velocities[tail, :, :3], axis=2).max(axis=0)
+        drift = np.linalg.norm(np.ptp(positions[tail], axis=0), axis=1)
+        if stable:
+            assert np.all(speed < .01), (name, speed)
+            assert np.all(drift < .001), (name, drift)
+        entry = {'tail_max_speed_m_s': speed.tolist(), 'tail_position_range_m': drift.tolist(),
+                 'final_positions_m': positions[-1].tolist()}
+        if contact:
+            minimum = np.full(ctx.num_envs, np.inf)
+            for _, p, r, _ in history:
+                z = np.einsum('ej,pj->ep', r[:, 2, :], vertices) + p[:, 2, None]
+                minimum = np.minimum(minimum, z.min(axis=1))
+            overlap = np.maximum(0, -minimum)
+            assert np.all(overlap < .002), (name, overlap)
+            entry['maximum_geometry_penetration_m'] = overlap.tolist()
+        report[name] = entry
+    ctx.experiment_details['per_environment'] = report
+    ctx.metric('environments_checked', ctx.num_envs, unit='1', label='独立检查环境数')
+    if contact:
+        ctx.metric('maximum_penetration', max(max(v['maximum_geometry_penetration_m']) for v in report.values())*1000,
+                   unit='mm', label='全部环境最大穿地')
+    return report
+
+
 def slide_faces(ctx: TestContext):
     _ground(ctx)
     ctx.initial(position=(0, -.12, _height(ctx, BACK, 0)), rotation=BACK)
@@ -88,9 +130,18 @@ def slide_faces(ctx: TestContext):
         onset = next(r for r in ctx.rows if r['time'] >= .5 and r[_col(name, 'position', 'x')]-start[_col(name, 'position', 'x')] > .0005)
         measurements[name] = {'travel_m': shift, 'onset_applied_N': onset[load+'.force.x'],
                              'release_stop_distance_m': ctx.rows[-1][_col(name, 'position', 'x')]-release[_col(name, 'position', 'x')]}
+        ctx.metric(name+'_onset', measurements[name]['onset_applied_N'], unit='N', label=name+' 起滑载荷')
+        ctx.metric(name+'_stop_distance', measurements[name]['release_stop_distance_m']*1000,
+                   unit='mm', label=name+' 撤力停止距离')
     ctx.experiment_details = {'contract': 'back/face/side equal COM push and release; free rotations',
         'measurements': measurements, 'geometry_contact': _contact(ctx),
         'boundary': 'effective support responses, not isolated friction measurement; side may tip'}
+    _replicas(ctx, stable=True, contact=True)
+    for name, history in ctx._remote_histories.items():
+        start = min(history, key=lambda h: abs(h[0]-.5))
+        travel = history[-1][1][:, 0]-start[1][:, 0]
+        assert np.all(travel > .005), (name, travel)
+        ctx.experiment_details['per_environment'][name]['travel_m'] = travel.tolist()
 
 
 def drop_orientations(ctx: TestContext):
@@ -110,9 +161,13 @@ def drop_orientations(ctx: TestContext):
     _stable(ctx, ('asset', 'face', 'side'))
     ctx.experiment_details = {'release_clearance_m': .03, 'geometry_contact': _contact(ctx),
                               'boundary': 'rigid placement only; no damage, button action or battery motion'}
+    _replicas(ctx, stable=True, contact=True)
 
 
 def flip_release(ctx: TestContext):
+    # GPU 4 ms penetrated 2.423 mm: retain the 2 mm bound with finer steps.
+    if ctx.physics == 'gpu':
+        ctx.simulation(dt=.002)
     _ground(ctx)
     ctx.initial(position=(-.07, 0, _height(ctx, BACK, 0)), rotation=BACK)
     idle = ctx.spawn(ctx.asset_path, name='idle', position=(.07, 0, _height(ctx, BACK, 0)))
@@ -129,6 +184,12 @@ def flip_release(ctx: TestContext):
     assert idle.body(BODY).state['rotation'][2, 2] > .98
     _stable(ctx, ('asset', 'idle'))
     ctx.experiment_details = {'contract': 'whole-body roll under torque then release; idle control', 'geometry_contact': _contact(ctx)}
+    _replicas(ctx, stable=True, contact=True)
+    normals = np.stack([h[2][:, 2, 2] for h in ctx._remote_histories['asset']])
+    assert np.all(normals.min(axis=0) < -.5), normals.min(axis=0)
+    assert np.all(ctx._remote_histories['idle'][-1][2][:, 2, 2] > .98)
+    ctx.experiment_details['minimum_face_normal_z_per_environment'] = normals.min(axis=0).tolist()
+    ctx.metric('minimum_face_normal_z', normals.min(), unit='1', label='加载面法线Z最小值')
 
 
 def ring_contact(ctx: TestContext):
@@ -137,7 +198,7 @@ def ring_contact(ctx: TestContext):
     ctx.initial(position=(0, -.055, .04))
     free = ctx.spawn(ctx.asset_path, name='free', position=(0, .055, .04))
     bodies = [_body(ctx, i) for i in (ctx.asset, free)]
-    pin = UsdGeom.Cylinder.Define(ctx.session.stage, '/World/FixturePin')
+    pin = UsdGeom.Cylinder.Define(ctx.session.stage, ctx.session.environment(0)+'/FixturePin')
     pin.CreateRadiusAttr(.00065); pin.CreateHeightAttr(.08); pin.CreateAxisAttr('Z')
     pin.AddTranslateOp().Set(Gf.Vec3d(.0445, -.065, .046))
     pin.CreateDisplayColorAttr([Gf.Vec3f(.7, .25, .08)])
@@ -168,6 +229,16 @@ def ring_contact(ctx: TestContext):
     ctx.experiment_details = {'contract': 'fixed hole contact vs unpinned free rigid body',
         'pin_radius_m': .00065, 'pin_height_m': .08, 'maximum_hole_axis_offset_m': maximum,
         'boundary': 'ideal static straight pin, zero gravity; no activity of ring, no hook retention or pull-off rating'}
+    _replicas(ctx)
+    offsets = np.stack([np.linalg.norm((p+np.einsum('eij,j->ei', r, [.0445, -.010, .006]))[:, :2]-[.0445, -.065], axis=1)
+                        for _, p, r, _ in ctx._remote_histories['asset']]).max(axis=0)
+    free_travel = ctx._remote_histories['free'][-1][1][:, 0]
+    assert np.all(offsets < .002), offsets
+    assert np.all(free_travel > .05), free_travel
+    ctx.experiment_details['hole_offset_per_environment_m'] = offsets.tolist()
+    ctx.experiment_details['free_travel_per_environment_m'] = free_travel.tolist()
+    ctx.metric('maximum_hole_offset', offsets.max()*1000, unit='mm', label='全部环境最大孔心偏移')
+    ctx.metric('minimum_free_travel', free_travel.min()*1000, unit='mm', label='全部环境自由件最小位移')
 
 
 def free_eccentric(ctx: TestContext):
@@ -197,6 +268,22 @@ def free_eccentric(ctx: TestContext):
     ctx.experiment_details = {'applied_impulse_N_s': impulse, 'relative_linear_momentum_errors': list(map(float, errors)),
                               'contract': 'equal COM/ring-point impulses; idle control; one rigid body',
                               'asset_pose_writes_after_initialization': False}
+    _replicas(ctx)
+    all_errors = []
+    for name in ('asset', 'offset'):
+        velocity = ctx._remote_histories[name][-1][3]
+        error = np.abs(MASS_KG*velocity[:, 0]-impulse)/impulse
+        assert np.all(error < .01), (name, error)
+        all_errors.extend(error.tolist())
+        angular = np.linalg.norm(velocity[:, 3:], axis=1)
+        if name == 'asset':
+            assert np.all(angular < .01), angular
+        else:
+            assert np.all(angular > .1), angular
+    assert np.all(np.linalg.norm(ctx._remote_histories['idle'][-1][3], axis=1) < 1e-6)
+    ctx.experiment_details['momentum_errors_all_environments'] = all_errors
+    ctx.metric('maximum_momentum_error', max(all_errors)*100, unit='%', label='全部环境最大线动量误差')
+    ctx.metric('applied_impulse', impulse, unit='N·s', label='施加冲量')
 
 
 TESTS = {'slide_faces': slide_faces, 'drop_orientations': drop_orientations,

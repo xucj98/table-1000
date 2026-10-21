@@ -70,6 +70,8 @@ def lock_pressure(ctx:TestContext):
     assert max(r[_col('full',PRESS)] for r in ctx.rows)>.0012
     assert max(r[_col('full',SLIDE)] for r in ctx.rows)-.010>.005
     assert _p(ctx,full)<.0001
+    ctx.metric('locked_error',max(v['max_axial_error_m'] for v in metrics.values())*1000,unit='mm',label='未按/浅按最大锁止偏差')
+    ctx.metric('full_travel',(max(r[_col('full',SLIDE)] for r in ctx.rows)-.010)*1000,unit='mm',label='按足后轴向移动')
     ctx.experiment_details={'contract':'equal axial force; three pressure states, no pose writes','locked_error':metrics,'full_max_q_m':max(r[_col('full',SLIDE)] for r in ctx.rows)}
 
 
@@ -96,6 +98,8 @@ def cycle(ctx:TestContext):
     # Vertical joint decouples blade height from button depression.
     height=[r[f'asset.{CARRIAGE}.position.z']-r[f'asset.{BODY}.position.z'] for r in ctx.rows]
     assert np.ptp(height)<.0001
+    ctx.metric('cycle_end_error',max(errors)*1000,unit='mm',label='五次循环最大端点误差')
+    ctx.metric('blade_height_range',float(np.ptp(height))*1000,unit='mm',label='刀片相对高度变化')
     ctx.experiment_details={'complete_cycles':5,'end_stop_errors_m':errors,'blade_relative_height_range_m':float(np.ptp(height))}
 
 
@@ -116,6 +120,8 @@ def loaded_unlock(ctx:TestContext):
         assert max(abs(x-.010) for x in pre)<.0005
         assert abs(_q(ctx,a)-target)<.0005
         assert _p(ctx,a)<.0001
+    ctx.metric('loaded_unlock_end_error',max(abs(_q(ctx,a)-target) for a,target in [(ctx.asset,.020),(reverse,0)])*1000,unit='mm',label='带载解锁后最大端点误差')
+    ctx.metric('press_force',1.2,unit='N',label='受测带载解锁按压力')
     ctx.experiment_details={'axial_load_N':.5,'press_load_N':1.2,'pressure_limit_N':1.4,'two_directions':True}
 
 
@@ -124,16 +130,44 @@ def relock_between(ctx:TestContext):
     ctx.simulation(dt=ctx.dt,gravity=(0,0,0))
     ctx.initial(position=(0,0,.015),joints={SLIDE:.0075,PRESS:.0015})
     button=_observe(ctx,ctx.asset)
-    _load(ctx,'operate',button,[(0,0,1.0),(.16,0,1.0),(.20,0,0),(.48,0,0),(.52,.08,0),(1.32,.08,0),(1.36,0,0),(2.8,0,0)])
+    _load(ctx,'operate',button,[(0,0,1.0),(.16,0,1.0),(.20,0,0),(.48,0,0),(2.8,0,0)])
     _camera(ctx);ctx.video_annotation=lambda:'Release midway: not locked | gentle axial force finds next slot; no snapping'
     ctx.plots('operate.force.x','operate.force.z',_col('asset',SLIDE),_col('asset',PRESS))
+    # Bounded external hand force, with each environment's own velocity feedback.
+    # It moves slowly until the next slot, then releases; no asset state changes.
+    original_actions=ctx.session.actions
+    released=np.zeros(ctx.num_envs,dtype=bool)
+    applied=[]
+    def align(t,dt):
+        original_actions(t,dt)
+        force=np.zeros((ctx.num_envs,3))
+        if .48<=t<2.20:
+            view=ctx.asset.articulation.view
+            index=view.shared_metatype.dof_names.index(ctx.asset.joint(SLIDE).GetName())
+            q=view.get_dof_positions().detach().cpu().numpy()[:,index]
+            v=view.get_dof_velocities().detach().cpu().numpy()[:,index]
+            released[:] |= q>=.0099
+            speed=np.minimum(.004,np.maximum(0,(.010-q)*4))
+            effort=np.where(released,0,np.clip(100*(speed-v),-.20,.20))
+            rotations=ctx.asset.environment_states()[1][:,ctx.asset.indices[BUTTON]]
+            force=-rotations[:,:,0]*effort[:,None]
+            ctx.session.force(button,force)
+        applied.append(force.tolist())
+        ctx.action_values['alignment']={'force':force[0]}
+    ctx.session.actions=align
+    for i,axis in enumerate('xyz'):
+        ctx.observe('alignment.force.'+axis,lambda i=i:ctx.action_values.get('alignment',{}).get('force',np.zeros(3))[i],unit='N')
+    ctx.plots('alignment.force.x','operate.force.z',_col('asset',SLIDE),_col('asset',PRESS))
     with ctx.fixed(ctx.asset.body(BODY)):ctx.run(2.8)
+    ctx.session.actions=original_actions
     waiting=[r for r in ctx.rows if .3<=r['time']<=.48]
     assert max(abs(r[_col('asset',SLIDE)]-.0075) for r in waiting)<.0002
     assert min(r[_col('asset',PRESS)] for r in waiting)>.0004
     assert abs(_q(ctx)-.010)<.0005
     assert _p(ctx)<.0001
-    ctx.experiment_details={'release_between_slots_q_m':.0075,'final_q_m':_q(ctx),'final_p_m':_p(ctx),'no_snap_or_position_write':True}
+    ctx.metric('relock_position',_q(ctx)*1000,unit='mm',label='档间对槽后位置')
+    ctx.metric('relock_press',_p(ctx)*1000,unit='mm',label='对槽后残余按压量')
+    ctx.experiment_details={'release_between_slots_q_m':.0075,'final_q_m':_q(ctx),'final_p_m':_p(ctx),'no_snap_or_position_write':True,'alignment_controller':{'max_external_force_N':.20,'speed_limit_m_s':.004,'independent_feedback_per_environment':True,'released_by_q_m':.0099,'force_history_N':applied}}
 
 
 def hold_gravity(ctx:TestContext):
@@ -147,7 +181,7 @@ def hold_gravity(ctx:TestContext):
             position=((i-2)*.027,(side-.5)*.06,.065)
             a=ctx.asset if side==0 and i==0 else ctx.spawn(ctx.asset_path,name=name,position=position,rotation=rotation)
             ctx.initial(a,position=position,rotation=rotation,joints={SLIDE:q})
-            button=_observe(ctx,a);_load(ctx,a.name+'_proof',button,[(0,0,0),(.4,0,0),(.5,.5,0),(.8,.5,0),(.9,0,0),(1.,-.5,0),(1.3,-.5,0),(1.4,0,0),(3.6,0,0)])
+            button=_observe(ctx,a);_load(ctx,a.name+'_proof',button,[(0,0,0),(.4,0,0),(.7,.5,0),(1.0,.5,0),(1.3,0,0),(1.6,-.5,0),(1.9,-.5,0),(2.2,0,0),(3.6,0,0)])
             instances.append((a,q))
     ctx.camera(position=(0,-.35,1.1),target=(0,0,.065),focal_length=65);ctx.video_annotation=lambda:'Five detents, two vertical directions | +/-0.5 N without pressing'
     ctx.plots(*[_col(a.name,SLIDE) for a,q in instances])
@@ -157,24 +191,26 @@ def hold_gravity(ctx:TestContext):
     errors={a.name:max(abs(r[_col(a.name,SLIDE)]-q) for r in ctx.rows) for a,q in instances}
     assert max(errors.values())<.0005,errors
     assert all(max(r[_col(a.name,PRESS)] for r in ctx.rows)<.0004 for a,q in instances)
+    ctx.metric('vertical_lock_error',max(errors.values())*1000,unit='mm',label='五档两朝向最大锁止偏差')
     ctx.experiment_details={'detents_m':[0,.005,.010,.015,.020],'orientations':'blade vertically up/down','lock_load_N':.5,'max_q_errors_m':errors}
 
 
 def free_reaction(ctx:TestContext):
     """Free assembly: external button impulse and untouched instance control."""
     ctx.simulation(dt=ctx.dt,gravity=(0,0,0));ctx.initial(position=(0,-.04,.06))
-    idle=ctx.spawn(ctx.asset_path,name='idle',position=(0,.04,.06))
+    idle=ctx.spawn(ctx.asset_path,name='idle',position=(0,.12,.06))
     _observe(ctx,ctx.asset);_observe(ctx,idle)
     # Subthreshold lateral load keeps the lock engaged; total momentum is checked.
     ctx.force('external',ctx.asset.body(BUTTON),keyframes=[{'time':0,'force':(0,0,0)},{'time':.2,'force':(0,0,0)},{'time':.24,'force':(0,.005,0)},{'time':.44,'force':(0,.005,0)},{'time':.48,'force':(0,0,0)}])
-    ctx.camera(position=(.2,-.3,.25),target=(0,0,.06));ctx.video_annotation=lambda:'Free assembly | side force on button | idle instance | zero gravity'
+    ctx.camera(position=(.25,-.35,.30),target=(0,.04,.06));ctx.video_annotation=lambda:'Free assembly | side force on button | idle instance | zero gravity'
     ctx.plots('external.force.y',f'asset.{BODY}.linear_velocity.y',f'asset.{BUTTON}.linear_velocity.y',_col('asset',SLIDE),_col('asset',PRESS))
-    ctx.run(.8)
+    ctx.run(1.2)
     impulse=sum(r['external.force.y'] for r in ctx.rows)*ctx.dt
     momentum=sum(float(ctx.asset.mass[ctx.asset.indices[n]])*ctx.asset.body(n).state['velocity'][1] for n in ctx.asset.body_names)
     error=abs(momentum-impulse)/impulse
     assert error<.02,error
     assert max(np.linalg.norm(idle.body(n).state['velocity'][:3]) for n in idle.body_names)<.002
+    ctx.metric('momentum_error',error*100,unit='%',label='自由整体冲量动量相对误差')
     ctx.experiment_details={'external_impulse_N_s':impulse,'total_linear_momentum_kg_m_s':momentum,'relative_error':error,'world_anchor':False}
 
 
@@ -194,6 +230,7 @@ def drop_states(ctx:TestContext):
     assert contact['maximum_geometry_penetration_m']<.002
     for n in ('asset','extended','side'):
         q=[r[_col(n,SLIDE)] for r in ctx.rows];assert min(q)>-.0005 and max(q)<.0205
+    ctx.metric('ground_penetration',contact['maximum_geometry_penetration_m']*1000,unit='mm',label='低落放最大几何穿地')
     ctx.experiment_details={'drop_clearance_m':.030,'ground_contact':contact,'final_extension_m':{a.name:_q(ctx,a) for a in (ctx.asset,extended,side)},'impact_lock_not_guaranteed':True}
 
 
@@ -213,6 +250,8 @@ def push_release(ctx:TestContext):
     for a in (ctx.asset,extended):
         assert a.body(BODY).state['position'][0]>.005
     assert abs(_q(ctx))<.0005 and abs(_q(ctx,extended)-.020)<.0005
+    ctx.metric('shell_travel',ctx.asset.body(BODY).state['position'][0]*1000,unit='mm',label='收刀壳体推移距离')
+    ctx.metric('final_speed',max(a.body(BODY).state['velocity'][:3].dot(a.body(BODY).state['velocity'][:3])**.5 for a in (ctx.asset,extended))*1000,unit='mm/s',label='两状态末态最大速度')
     ctx.experiment_details={'release_time_s':1.24,'two_extension_states':True}
 
 
@@ -232,6 +271,7 @@ def side_tip(ctx:TestContext):
     ctx.run(3.2);_stable(ctx,('asset','idle'))
     assert max(r['asset.tilt'] for r in ctx.rows)>math.pi/4
     assert max(r['idle.tilt'] for r in ctx.rows)<math.radians(5)
+    ctx.metric('peak_tilt',math.degrees(max(r['asset.tilt'] for r in ctx.rows)),unit='deg',label='受推实例峰值倾角')
     ctx.experiment_details={'high_push_N':.16,'final_q_m':_q(ctx),'peak_tilt_rad':max(r['asset.tilt'] for r in ctx.rows)}
 
 
@@ -255,6 +295,7 @@ def relock_slots(ctx:TestContext):
     for a,q in instances:
         assert max(r[_col(a.name,PRESS)] for r in ctx.rows)>.0012
         assert _p(ctx,a)<.0001
+    ctx.metric('slot_return_error',max(errors.values())*1000,unit='mm',label='五档回弹受载最大偏差')
     ctx.experiment_details={'returned_and_proof_loaded_slots_m':[0,.005,.010,.015,.020],'q_error_m':errors}
 
 

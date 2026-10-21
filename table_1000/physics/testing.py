@@ -225,16 +225,19 @@ class TestContext:
         finally:
             lock.release()
 
-    def grip(self, body, *, name=None):
+    def grip(self, body, *, name=None, gain_reference_dt=None):
         """Ideal six-axis grip of ``body`` at its declared pose; declare before the first step.
 
         See :class:`table_1000.sim.isaaclab.fixtures.Grip` for its motions.
         Records ``<name>.target.position``, ``.force``, ``.torque`` (world, about
         the held point) and ``.error.position`` / ``.error.angle``.
+        ``gain_reference_dt`` optionally fixes the gain derivation timestep in
+        seconds; the default uses the physics step at initialization. It does
+        not change the integration, motion or sampling timestep.
         """
         from table_1000.sim.isaaclab.fixtures import Grip
         name = name or 'grip_'+str(len(self.grips))
-        return Grip(self, body, name=name)
+        return Grip(self, body, name=name, gain_reference_dt=gain_reference_dt)
 
     def wait(self, *motions):
         """Step until every given grip motion has ended."""
@@ -245,7 +248,13 @@ class TestContext:
             self.run(remaining*self.dt)
 
     def grip_details(self):
-        return {grip.name: {'body': f'{grip.body.instance.name}.{grip.body.name}', **(grip.gains or {})}
+        readback = ({'source':'incoming joint force in child joint frame, transformed to world',
+                     'quantitative_accuracy':'requires experiment-specific validation'} if self.physics == 'cpu' else
+                    {'source':'nominal drive law plus commanded feedforward; not direct reaction measurement',
+                     'quantitative_accuracy':'not guaranteed near joint-state resolution; torque may read zero under nonzero load',
+                     'zero_does_not_prove_no_support_wrench':True})
+        return {grip.name: {'body': f'{grip.body.instance.name}.{grip.body.name}',
+                            **(grip.gains or {}), 'wrench_readback':readback}
                 for grip in self.grips}
 
     def force(self, name, body, *, keyframes, frame='world', point_frame='world'):
