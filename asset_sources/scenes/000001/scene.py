@@ -38,8 +38,8 @@ OBJECTS = {
 VIEWS = {
     'wide': {'position': (1.55, -1.55, 1.8), 'target': (0., .0, .95),
              'focal_length_mm': 22, 'resolution': (1280, 720)},
-    'overhead': {'position': (0., -.25, 2.05), 'target': (0., .0, .80),
-                 'focal_length_mm': 22, 'resolution': (1280, 720)},
+    'overhead': {'position': (0., -.10, 2.55), 'target': (0., .0, .755),
+                 'focal_length_mm': 18, 'resolution': (1280, 720)},
 }
 
 # The entire collision footprint, not just the origin, must be inside this area.
