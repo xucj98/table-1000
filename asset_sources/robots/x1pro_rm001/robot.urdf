@@ -1667,6 +1667,31 @@
         <mesh filename="meshes/collision/gripper_left_link_7.ply" />
       </geometry>
     </collision>
+    <collision name="left_pad_3">
+      <geometry>
+        <mesh filename="meshes/collision/gripper_left_link_pad3.ply" />
+      </geometry>
+    </collision>
+    <collision name="left_pad_4">
+      <geometry>
+        <mesh filename="meshes/collision/gripper_left_link_pad4.ply" />
+      </geometry>
+    </collision>
+    <collision name="left_pad_5">
+      <geometry>
+        <mesh filename="meshes/collision/gripper_left_link_pad5.ply" />
+      </geometry>
+    </collision>
+    <collision name="left_pad_6">
+      <geometry>
+        <mesh filename="meshes/collision/gripper_left_link_pad6.ply" />
+      </geometry>
+    </collision>
+    <collision name="left_pad_7">
+      <geometry>
+        <mesh filename="meshes/collision/gripper_left_link_pad7.ply" />
+      </geometry>
+    </collision>
   </link>
   <joint name="left_arm_gripper_left_joint" type="revolute">
     <origin rpy="0 -0 0" xyz="0.077 0.025 -0.01" />
@@ -1744,6 +1769,31 @@
       <origin rpy="0 0 0" xyz="0 0 0" />
       <geometry>
         <mesh filename="meshes/collision/gripper_right_link_7.ply" />
+      </geometry>
+    </collision>
+    <collision name="right_pad_3">
+      <geometry>
+        <mesh filename="meshes/collision/gripper_right_link_pad3.ply" />
+      </geometry>
+    </collision>
+    <collision name="right_pad_4">
+      <geometry>
+        <mesh filename="meshes/collision/gripper_right_link_pad4.ply" />
+      </geometry>
+    </collision>
+    <collision name="right_pad_5">
+      <geometry>
+        <mesh filename="meshes/collision/gripper_right_link_pad5.ply" />
+      </geometry>
+    </collision>
+    <collision name="right_pad_6">
+      <geometry>
+        <mesh filename="meshes/collision/gripper_right_link_pad6.ply" />
+      </geometry>
+    </collision>
+    <collision name="right_pad_7">
+      <geometry>
+        <mesh filename="meshes/collision/gripper_right_link_pad7.ply" />
       </geometry>
     </collision>
   </link>
@@ -1886,6 +1936,31 @@
         <mesh filename="meshes/collision/gripper_left_link_7.ply" />
       </geometry>
     </collision>
+    <collision name="left_pad_3">
+      <geometry>
+        <mesh filename="meshes/collision/gripper_left_link_pad3.ply" />
+      </geometry>
+    </collision>
+    <collision name="left_pad_4">
+      <geometry>
+        <mesh filename="meshes/collision/gripper_left_link_pad4.ply" />
+      </geometry>
+    </collision>
+    <collision name="left_pad_5">
+      <geometry>
+        <mesh filename="meshes/collision/gripper_left_link_pad5.ply" />
+      </geometry>
+    </collision>
+    <collision name="left_pad_6">
+      <geometry>
+        <mesh filename="meshes/collision/gripper_left_link_pad6.ply" />
+      </geometry>
+    </collision>
+    <collision name="left_pad_7">
+      <geometry>
+        <mesh filename="meshes/collision/gripper_left_link_pad7.ply" />
+      </geometry>
+    </collision>
   </link>
   <joint name="right_arm_gripper_left_joint" type="revolute">
     <origin rpy="0 -0 0" xyz="0.077 0.025 -0.01" />
@@ -1963,6 +2038,31 @@
       <origin rpy="0 0 0" xyz="0 0 0" />
       <geometry>
         <mesh filename="meshes/collision/gripper_right_link_7.ply" />
+      </geometry>
+    </collision>
+    <collision name="right_pad_3">
+      <geometry>
+        <mesh filename="meshes/collision/gripper_right_link_pad3.ply" />
+      </geometry>
+    </collision>
+    <collision name="right_pad_4">
+      <geometry>
+        <mesh filename="meshes/collision/gripper_right_link_pad4.ply" />
+      </geometry>
+    </collision>
+    <collision name="right_pad_5">
+      <geometry>
+        <mesh filename="meshes/collision/gripper_right_link_pad5.ply" />
+      </geometry>
+    </collision>
+    <collision name="right_pad_6">
+      <geometry>
+        <mesh filename="meshes/collision/gripper_right_link_pad6.ply" />
+      </geometry>
+    </collision>
+    <collision name="right_pad_7">
+      <geometry>
+        <mesh filename="meshes/collision/gripper_right_link_pad7.ply" />
       </geometry>
     </collision>
   </link>

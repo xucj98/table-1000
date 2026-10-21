@@ -121,6 +121,13 @@ def author(import_path, output_path, drives=DRIVES, materials=MATERIALS):
                 for shape in Usd.PrimRange(prim):
                     if shape.HasAPI(UsdPhysics.CollisionAPI):
                         collision = PhysxSchema.PhysxCollisionAPI.Apply(shape)
-                        collision.CreateTorsionalPatchRadiusAttr(PAD_PATCH_RADIUS)
-                        collision.CreateMinTorsionalPatchRadiusAttr(PAD_PATCH_RADIUS)
+                        pad = bound.get('pad')
+                        # Mesh colliders are nested below the named URDF collision
+                        # (the leaf itself is typically just "node_").
+                        is_pad = 'pad' in str(shape.GetPath().MakeRelativePath(prim.GetPath())).lower()
+                        if pad is not None and is_pad:
+                            UsdShade.MaterialBindingAPI.Apply(shape).Bind(pad, materialPurpose='physics')
+                        if pad is None or is_pad:
+                            collision.CreateTorsionalPatchRadiusAttr(PAD_PATCH_RADIUS)
+                            collision.CreateMinTorsionalPatchRadiusAttr(PAD_PATCH_RADIUS)
     layer.Save()

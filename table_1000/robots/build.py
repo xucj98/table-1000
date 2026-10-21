@@ -94,6 +94,29 @@ def author_physics(source, output):
     physics.author(output / 'import' / 'robot.usd', output / 'robot.usda')
 
 
+def author_effort_limits(urdf, output):
+    """Explicitly preserve URDF effort limits in the final physics layer.
+
+    Angular drive gains use degrees, but maxForce is torque in N m (linear
+    drives use N). Include the virtual base joints from the imported URDF.
+    """
+    from pxr import Usd, UsdPhysics
+
+    efforts = {joint.get('name'): float(joint.find('limit').get('effort'))
+               for joint in ET.parse(urdf).getroot().findall('joint')
+               if joint.find('limit') is not None and joint.find('limit').get('effort') is not None}
+    stage = Usd.Stage.Open(str(output))
+    for prim in stage.Traverse():
+        if prim.IsA(UsdPhysics.RevoluteJoint):
+            axis = 'angular'
+        elif prim.IsA(UsdPhysics.PrismaticJoint):
+            axis = 'linear'
+        else:
+            continue
+        UsdPhysics.DriveAPI.Apply(prim, axis).CreateMaxForceAttr(efforts[prim.GetName()])
+    stage.GetRootLayer().Save()
+
+
 def build(source, output):
     started = time.perf_counter()
     shutil.rmtree(output / 'import', ignore_errors=True)
@@ -107,6 +130,7 @@ def build(source, output):
     import_urdf(urdf, output / 'import' / 'robot.usd')
     imported = time.perf_counter()
     author_physics(source, output)
+    author_effort_limits(urdf, output / 'robot.usda')
     for name in ('robot.urdf', 'physics.py', 'robot.py'):
         if (source / name).exists():
             shutil.copyfile(source / name, output / name)
