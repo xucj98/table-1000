@@ -31,7 +31,7 @@
 uv run python scripts/robots/build_robot.py x1pro --gpu 0
 ```
 
-约 40 s，写出 `assets/robots/x1pro/robot.usda`，场景按 `robots/x1pro` 引用。代码中用 `table_1000.robots.load_spec('x1pro')` 取机器人描述，`RobotModel` 做运动学与规划，`RobotEnv` 在仿真中控制机器人（25 Hz 一个动作），见[规范](../designs/asset-pipeline/robots.md#机器人层运动学规划与控制)。
+约 40 s，写出 `assets/robots/x1pro/robot.usda`，场景按 `robots/x1pro` 引用。构建失败时退出码为 1，错误写在 `assets/robots/build-error.txt`。代码中用 `table_1000.robots.load_spec('x1pro')` 取机器人描述，`RobotModel` 做运动学与规划，`RobotEnv` 在仿真中控制机器人（25 Hz 一个动作），见[规范](../designs/asset-pipeline/robots.md#机器人层运动学规划与控制)。
 
 ## 开发机器人
 

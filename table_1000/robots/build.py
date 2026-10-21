@@ -125,14 +125,16 @@ def main(argv=None):
     args = parser.parse_args(argv)
     from table_1000.sim.isaaclab.app import start_app
     app = start_app(gpu=args.gpu, workers=4, cameras=False)
-    # Kit owns stdout/stderr and app.close() may end the process, so failures
-    # are written next to the output before closing.
+    # Kit owns stdout/stderr and app.close() ends the process, so a failure is
+    # written next to the output and passed on as the exit status (1).
+    error = args.output / 'build-error.txt'
+    error.unlink(missing_ok=True)
+    failed = False
     try:
         for name in args.robots:
             print(json.dumps(build((args.source / name).resolve(), (args.output / name).resolve())), flush=True)
     except Exception:
         import traceback
-        (args.output / 'build-error.txt').write_text(traceback.format_exc())
-        raise
-    finally:
-        app.close()
+        error.write_text(traceback.format_exc())
+        failed = True
+    app.close(exit_code=int(failed))
