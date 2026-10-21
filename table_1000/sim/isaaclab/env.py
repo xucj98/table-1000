@@ -17,7 +17,7 @@ Observation (ManiSkill's layout; only what the real robot measures):
   with the sensor's calibrated intrinsics and the optical frame's pose (OpenCV axes)
 - ``time``: simulated seconds since the reset
 
-Camera images are rendered on request (:meth:`RobotEnv.images`), not every step.
+Camera images are returned on request; the simulator renders at the control period.
 Simulator-only state -- object poses and velocities, contacts, rendering aids --
 is reached through :meth:`RobotEnv.privileged` and the other methods, for experts,
 checks and evaluation, never for a policy. ``recorders`` (Isaac Lab's
