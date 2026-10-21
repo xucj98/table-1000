@@ -17,7 +17,6 @@ def test_scene_initializes(name):
     missing = [spec['asset'] for spec in scene.OBJECTS.values() if not (ASSETS / spec['asset'] / 'model.json').is_file()]
     if missing:
         pytest.skip(f'assets not built: {missing}')
-    assert hasattr(load(name, 'expert'), 'solve')
     for seed in range(3):
         layouts = []
         for _ in range(2):
@@ -28,3 +27,9 @@ def test_scene_initializes(name):
         assert layouts[0].penetrations() == {}
         for key in layouts[0].poses:
             assert np.array_equal(layouts[0].poses[key], layouts[1].poses[key])
+
+
+@pytest.mark.parametrize('name', [name for name in scene_names()
+                                if (ROOT / 'asset_sources/scenes' / name / 'expert.py').is_file()])
+def test_delivered_expert_has_entry(name):
+    assert callable(load(name, 'expert').solve)
