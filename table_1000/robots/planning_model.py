@@ -85,13 +85,16 @@ def write_planning_urdf(source, output, active, frozen, tcp, padding=0., unpadde
             _grow_primitive(geometry, amount)
     for mesh in root.iter('mesh'):
         name = Path(mesh.get('filename'))
-        (output.parent / name).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source.parent / name, output.parent / name)
+        # Meshes of a base robot (../<base>/meshes/...) are copied inside the output directory too.
+        copy = Path(*['up' if part == '..' else part for part in name.parts])
+        (output.parent / copy).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source.parent / name, output.parent / copy)
         hull = trimesh.load(source.parent / name, force='mesh').convex_hull
         if grown[mesh.get('filename')]:
             from table_1000.planning.world import grow
             hull = trimesh.Trimesh(grow(hull.vertices, grown[mesh.get('filename')]), hull.faces)
-        hull.export(output.parent / name.with_name(name.name + '.convex.stl'))
+        hull.export(output.parent / copy.with_name(copy.name + '.convex.stl'))
+        mesh.set('filename', copy.as_posix())
     for joint in root.findall('joint'):
         if joint.get('type') != 'fixed' and joint.get('name') not in active:
             _freeze(joint, float(frozen.get(joint.get('name'), 0.)))

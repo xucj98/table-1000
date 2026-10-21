@@ -11,6 +11,12 @@ package named by the source's ``prepare.py``:
 4. apply the robot's joint edits and merge fixed-joint subtrees into their
    moving body (the Isaac importer only merges massless links).
 
+A robot that differs from another only in some parts (a gripper variant) sets
+``BASE`` in its ``prepare.py`` to that robot's name: meshes of the raw package
+that the base robot's URDF also uses are referenced from the base source
+(``../<base>/meshes/...``, with its collision pieces) instead of written again;
+budgets are shared out over all meshes as if every one were new.
+
 ``check`` measures the source as committed: every visual vertex inside its
 collision pieces, and the directory within the size budget. Both write a JSON
 report under ``assets/robots/<name>/``. Needs trimesh, open3d and coacd.
@@ -188,11 +194,32 @@ def merge(root):
 
 # -- prepare and check ---------------------------------------------------------
 
+def raw_meshes(root):
+    return {shape.get('filename') for shape in root.iter('mesh')}
+
+
+def base_meshes(source, spec, raw):
+    """``{raw mesh: (visual, [collision pieces])}`` paths relative to ``source`` for the meshes the
+    base robot (``spec.BASE``) shares with this one; empty without a base."""
+    name = getattr(spec, 'BASE', None)
+    if name is None:
+        return {}
+    base = Path(source).parent / name
+    used = raw_meshes(ET.parse(raw / load_prepare(base).URDF).getroot())
+    pieces = {}
+    for collision in ET.parse(base / 'robot.urdf').getroot().iter('collision'):
+        mesh = collision.find('geometry/mesh').get('filename')
+        pieces.setdefault(Path(mesh).stem.rsplit('_', 1)[0], set()).add(f'../{name}/{mesh}')
+    return {mesh: (f'../{name}/meshes/visual/{Path(mesh).stem}.ply', sorted(pieces.get(Path(mesh).stem, ())))
+            for mesh in used}
+
+
 def prepare(source, raw):
     """Rewrite ``source/robot.urdf`` and ``source/meshes/`` from the raw package."""
     source, raw = Path(source), Path(raw)
     spec = load_prepare(source)
     root = ET.parse(raw / spec.URDF).getroot()
+    shared = base_meshes(source, spec, raw)
     meshes = source / 'meshes'
     shutil.rmtree(meshes, ignore_errors=True)
     (meshes / 'visual').mkdir(parents=True)
@@ -209,8 +236,16 @@ def prepare(source, raw):
     originals = {name: load_mesh(raw / name) for name in shapes}
     weights = {name: np.sqrt(len(mesh.faces)) for name, mesh in originals.items()}
     total = sum(weights.values())
-    report = {'raw': str(raw), 'urdf': spec.URDF, 'max_error_m': MAX_ERROR, 'visual': {}, 'collision': {}}
+    report = {'raw': str(raw), 'urdf': spec.URDF, 'max_error_m': MAX_ERROR, 'visual': {}, 'collision': {},
+              'shared': sorted(shared[name][0] for name in shapes if name in shared)}
+    written = {}
     for name, references in shapes.items():
+        if name in shared:
+            visual, pieces = shared[name]
+            written[visual] = pieces
+            for shape in references:
+                shape.set('filename', visual)
+            continue
         budget = min(len(originals[name].faces), max(300, int(INITIAL_FACES * weights[name] / total)))
         mesh, error = simplify(originals[name], budget)
         output = f'meshes/visual/{Path(name).stem}.ply'
@@ -222,7 +257,6 @@ def prepare(source, raw):
         for shape in references:
             shape.set('filename', output)
 
-    written = {}
     for link in root.findall('link'):
         for collision in link.findall('collision'):
             link.remove(collision)
@@ -232,15 +266,15 @@ def prepare(source, raw):
         for visual in visuals:
             mesh_name = visual.find('geometry/mesh').get('filename')
             stem = Path(mesh_name).stem
-            if stem not in written:
+            if mesh_name not in written:
                 hulls = decompose(load_mesh(source / mesh_name), spec.PIECES.get(link.get('name'), 1))
-                written[stem] = []
+                written[mesh_name] = []
                 for index, hull in enumerate(hulls):
                     output = f'meshes/collision/{stem}_{index}.ply'
                     hull.export(source / output)
-                    written[stem].append(output)
+                    written[mesh_name].append(output)
                 report['collision'][stem] = len(hulls)
-            for output in written[stem]:
+            for output in written[mesh_name]:
                 collision = ET.SubElement(link, 'collision')
                 if visual.find('origin') is not None:
                     collision.append(copy.deepcopy(visual.find('origin')))
@@ -271,13 +305,14 @@ def check(source):
     root = ET.parse(source / 'robot.urdf').getroot()
     pieces = {}
     for collision in root.iter('collision'):
-        name = collision.find('geometry/mesh').get('filename')
-        pieces.setdefault(Path(name).stem.rsplit('_', 1)[0], set()).add(name)
+        name = Path(collision.find('geometry/mesh').get('filename'))
+        visual = name.parent.parent / 'visual' / f'{name.stem.rsplit("_", 1)[0]}.ply'
+        pieces.setdefault(visual.as_posix(), set()).add(name)
     coverage = {}
-    for stem, names in sorted(pieces.items()):
-        vertices = load_mesh(source / 'meshes' / 'visual' / f'{stem}.ply').vertices
+    for visual, names in sorted(pieces.items()):
+        vertices = load_mesh(source / visual).vertices
         outside = outside_distance(vertices, [load_mesh(source / name) for name in sorted(names)])
-        coverage[stem] = {'pieces': len(names), 'max_outside_m': float(outside.max())}
+        coverage[visual] = {'pieces': len(names), 'max_outside_m': float(outside.max())}
     size = sum(path.stat().st_size for path in source.rglob('*') if path.is_file())
     failing = sorted(stem for stem, entry in coverage.items() if entry['max_outside_m'] > OUTSIDE_TOLERANCE)
     return {'status': 'PASS' if not failing and size <= SIZE_BUDGET else 'FAIL', 'size_bytes': size,

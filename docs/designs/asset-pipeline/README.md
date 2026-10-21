@@ -50,6 +50,7 @@ asset_sources/robots/x1pro/
   robot_test.py       验收设置
   README.md
   three_quarter.jpg   1920 × 960 缩略图
+asset_sources/robots/x1pro_rm001/    同一台机器人换 rm001 夹爪：只有夹爪网格，其余网格与 .py 引用 x1pro
 assets/robots/x1pro/
   raw/                厂商原始 URDF 包，存档于 Hugging Face 数据集，版本见 assets.lock.json
   import/             Isaac Sim URDF 导入结果

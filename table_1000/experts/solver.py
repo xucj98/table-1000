@@ -109,8 +109,7 @@ class MotionSolver:
         return self.model.tcp(self.arm.name, world=True)
 
     def finger_gap(self):
-        left, right = self.ctx.env.qpos(self.arm.fingers)[0]
-        return float(left - right)
+        return self.arm.gap(self.ctx.env.qpos(self.arm.fingers)[0])
 
     # -- planning ------------------------------------------------------------------------
     def _plan(self, kind, function):

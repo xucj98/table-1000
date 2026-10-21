@@ -2,7 +2,7 @@
 
 规定从厂商 URDF 包得到仿真用机器人的文件、几何、碰撞、物理、控制接口与验收要求。交付物包括可以导入仿真器的模型，规划器、控制接口（关节控制和末端位姿控制），并在仿真中验证行为和性能。以 [X1Pro](../../../asset_sources/robots/x1pro/) 为例；执行命令见[第三章](../../tutorials/03-robot-import.md)。
 
-**适用范围**：带平行两指夹爪手臂的机器人，从固定底座的单臂（如装在台座上的 Franka）到带升降、头部和移动底盘的双臂机器人（如 X1Pro）。升降、头部、移动底盘都是可选部件。腿式机器人（如机械狗）不在范围内：转换、构建、环境与后端接口可以复用，机器人描述、控制器和验收用例需另行设计。
+**适用范围**：带两指夹爪（平动或转动手指）手臂的机器人，从固定底座的单臂（如装在台座上的 Franka）到带升降、头部和移动底盘的双臂机器人（如 X1Pro）。升降、头部、移动底盘都是可选部件。腿式机器人（如机械狗）不在范围内：转换、构建、环境与后端接口可以复用，机器人描述、控制器和验收用例需另行设计。
 
 ## 流程
 
@@ -21,7 +21,7 @@ robot.py (SPEC) ──> 运动学与规划模型、控制器 ──robot_test.py
 
 源码目录不超过 10 MB，不依赖上游 ROS 包即可构建：URDF 只用相对路径，不用 `package://`。README 写明原始包名称、所选 URDF 配置和对厂商数据的全部改动。
 
-**增加一台机器人**：在 `asset_sources/robots/<name>/` 下写 `prepare.py` 并生成 `robot.urdf` 与网格，写 `physics.py`、`robot.py`、`robot_test.py` 和 README；通用代码不需要改动。与物体资产把各自的 `physics_test.py` 放在资产目录下一样，每台机器人的验收设置放在它自己的 `robot_test.py` 里，用例和指标在 `table_1000/robots/checks.py` 中统一实现。
+**增加一台机器人**：在 `asset_sources/robots/<name>/` 下写 `prepare.py` 并生成 `robot.urdf` 与网格，写 `physics.py`、`robot.py`、`robot_test.py` 和 README；通用代码不需要改动。同一台机器人换一种夹爪等配置时，作为另一台机器人（如 [`x1pro_rm001`](../../../asset_sources/robots/x1pro_rm001/)）：它的四个 `.py` 用 `table_1000.robots.source_module` 读取原机器人的对应文件，只写出不同的部分。`prepare.py` 设 `BASE = '<原机器人>'`：原机器人也用到的厂商网格，`robot.urdf` 直接引用原机器人目录中的外观网格与碰撞凸块（`../<原机器人>/meshes/...`），只有新网格写入本目录（面数预算仍按全部网格分配），所以本目录只有不同的部分，源码检查也只计它的大小。与物体资产把各自的 `physics_test.py` 放在资产目录下一样，每台机器人的验收设置放在它自己的 `robot_test.py` 里，用例和指标在 `table_1000/robots/checks.py` 中统一实现。
 
 ## 运动学与刚体
 
@@ -64,6 +64,7 @@ robot.py (SPEC) ──> 运动学与规划模型、控制器 ──robot_test.py
 机器人描述、运动学与规划与仿真器无关；仿真环境用 Isaac Lab（`ManagerBasedEnv`），不自己实现环境框架。观测与动作的组织参照 ManiSkill3。
 
 - **描述**：`robot.py` 的 `SPEC`（`RobotSpec`）列出各手臂（关节、TCP、手指、开合换算、安装连杆；第一只为主手臂），可选的升降、头部、移动底盘（虚拟关节、轮子、速度、加速度、推力上限），关键姿态与相机。零位（全部关节为 0）总是关键姿态之一，X1Pro 的零位也是真机最常用的起始姿态（躯干最低、两臂折叠、头平视）。有移动底盘时，底盘位姿即虚拟关节值，机器人 prim 留在原点；没有时，机器人 prim 放在场景给定的位姿（可带高度，如台座）。
+- **夹爪**：两指对称开合，动作和观测都用指垫间距 `g`（0 到 `max_gap`）。平动手指按米驱动，每指 `g / 2`；转动手指（`finger_pivot`：转轴到中线的距离、手指坐标系中指垫点的位置）按弧度驱动，角度使指垫点到中线的距离为 `g / 2`。`ArmSpec.finger_targets` 与 `ArmSpec.gap` 做两者的换算，动作项用同一公式。
 - **感知**：`SPEC.cameras` 的每个 `CameraSpec` 是一路图像：传感器参数 `Sensor`（分辨率、内参、OpenCV 镜头模型——带畸变的 `pinhole` 或 `fisheye`、`rgb` 或 `depth`（米，无返回为 0）、近裁剪面），按真机相机报告的参数填写；安装位置为 URDF 中的光学坐标系（OpenCV 约定），或 `(link, xyz, rpy)`。名字与 robot-bridge 的视角一致。实验用 `override_cameras` 改参数或增删相机（规则同 ManiSkill 的 `sensor_configs`）。仿真用同一镜头模型渲染，`table_1000.robots.cameras.project` 给出点在图像中的像素；相机不设帧率，按需渲染。参数未标定的相机在 `robot.py` 中注明来源与替代值。
 - **运动学与规划**（`RobotModel`）：一个 MPlib/Pinocchio 模型包含全部身体关节，每只手臂一个规划器，升降保持不动。手臂规划同时检查躯干、头和另一只手臂当前的位置。提供正运动学、IK、头部朝向（look-at）、RRTConnect 与直线（screw）规划、路径碰撞检查。规划世界默认只有机器人本身（自碰撞），任务按需加入物体。
 - **控制**（`table_1000/sim/isaaclab/actions.py`，Isaac Lab 的动作项）：25 Hz 一个动作，每个动作覆盖 10 个 4 ms 物理步。位置目标在物理步间线性插值，并给出对应速度作前馈；`ee_delta` 直接用 Isaac Lab 的差分 IK。
@@ -73,7 +74,7 @@ robot.py (SPEC) ──> 运动学与规划模型、控制器 ──robot_test.py
 | `base` | 前进速度、偏航角速度 | 速度（限速、限加速度、防积分饱和） |
 | `lift`、`head` | 关节位置 | 绝对或增量 |
 | `<arm>` | 6 个关节位置，或 TCP 位姿增量（机器人根坐标系，有移动底盘时即世界系；Isaac Lab 差分 IK） | `pos`、`delta`、`ee_delta` |
-| `<arm>_gripper` | 两指间距 | 绝对 |
+| `<arm>_gripper` | 两指指垫间距（米） | 绝对 |
 
 **环境**（`table_1000/sim/isaaclab/`）：由场景源码和 `SPEC` 生成 Isaac Lab 配置——场景（地面、灯光、桌子、机器人、资产物体、简单形状、相机；资产物体的接入见[场景规范](scenes.md#场景源码-scenepy)）、动作项、观测与复位事件，`RobotEnv` 包装成字典动作与 NumPy 观测，所有数组带环境维 N。`reset(layout)` 通过复位事件写入物体摆放与机器人关节，`step(action)` 执行一个控制周期。观测按 ManiSkill 的结构，只含真机能测到的量：`agent`（关节位置与速度、底盘位姿、各手臂 TCP 位姿）、`sensor_param`（相机内参与光学坐标系位姿）；图像按需渲染（`images`）；物体位姿、接触等特权信息另由 `privileged()` 等方法提供。全部实体在仿真开始前声明，运行中只通过 Isaac Lab 的状态与目标写入改变它们（验收用的标记球和隐藏机器人只改显示，不涉及物理），所以同一配置可在 CPU 与 GPU PhysX 上运行（`device`）；目前只验收了 CPU（N = 1），GPU 与多环境见 [issue #11](https://github.com/xucj98/table-1000/issues/11)。接触穿透深度由 PhysX 接触报告统计（Isaac Lab 的接触传感器只给力）。
 

@@ -2,7 +2,7 @@
 
 ![preview](three_quarter.jpg)
 
-带抬升柱、双 6 自由度手臂和平动二指夹爪的差速轮式机器人。`robot.urdf` 来自真机控制容器中的 xacro 展开（底盘 dvt1、从臂 hy_1.0、夹爪 fx001_h_evt1），关节、限位、质量与惯量保持真机值。真机导出的原始 URDF 包（`ex001_render`，含 157.7 MB 外观 STL 与未采用的厂商碰撞网格，共 193 MB）不进入 Git：存档于 Hugging Face 私有数据集，版本记录在仓库根目录的 `assets.lock.json`，下载到已忽略的 `assets/robots/x1pro/raw/ex001_render/`。机器人构建只重写 `assets/robots/x1pro/` 下的 `import/` 与生成文件，不触及 `raw/`。
+带抬升柱、双 6 自由度手臂和平动二指夹爪的差速轮式机器人。换用转动二指夹爪 rm001 的同一台机器人见 [x1pro_rm001](../x1pro_rm001/)，它引用本目录的网格与 `.py` 文件。`robot.urdf` 来自真机控制容器中的 xacro 展开（底盘 dvt1、从臂 hy_1.0、夹爪 fx001_h_evt1），关节、限位、质量与惯量保持真机值。真机导出的原始 URDF 包（`ex001_render`，含 157.7 MB 外观 STL 与未采用的厂商碰撞网格，共 193 MB）不进入 Git：存档于 Hugging Face 私有数据集，版本记录在仓库根目录的 `assets.lock.json`，下载到已忽略的 `assets/robots/x1pro/raw/ex001_render/`。机器人构建只重写 `assets/robots/x1pro/` 下的 `import/` 与生成文件，不触及 `raw/`。
 
 ## 关节
 

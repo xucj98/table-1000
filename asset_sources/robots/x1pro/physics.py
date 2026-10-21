@@ -51,15 +51,16 @@ MATERIALS = {'body': (.4, .3), 'finger': (1., .8)}
 PAD_PATCH_RADIUS = .006
 
 
-def gains(name):
-    matches = [value for key, value in DRIVES.items() if key in name]
+def gains(name, drives=DRIVES):
+    matches = [value for key, value in drives.items() if key in name]
     if len(matches) != 1:
         raise ValueError(f'expected one drive entry for {name}, found {len(matches)}')
     return matches[0]
 
 
-def author(import_path, output_path):
-    """Write ``output_path`` as a layer over the imported robot."""
+def author(import_path, output_path, drives=DRIVES):
+    """Write ``output_path`` as a layer over the imported robot, with the joint drives ``drives``
+    (x1pro_rm001 passes its own finger drives)."""
     from pxr import PhysxSchema, Sdf, Usd, UsdPhysics, UsdShade
 
     layer = Sdf.Layer.CreateNew(str(output_path))
@@ -81,7 +82,7 @@ def author(import_path, output_path):
         if not (prim.IsA(UsdPhysics.RevoluteJoint) or prim.IsA(UsdPhysics.PrismaticJoint)):
             continue
         angular = prim.IsA(UsdPhysics.RevoluteJoint)
-        stiffness, damping = gains(prim.GetName())
+        stiffness, damping = gains(prim.GetName(), drives)
         scale = math.pi / 180 if angular else 1.
         drive = UsdPhysics.DriveAPI.Apply(prim, 'angular' if angular else 'linear')
         drive.CreateTypeAttr('force')

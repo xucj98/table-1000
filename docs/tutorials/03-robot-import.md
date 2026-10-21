@@ -117,3 +117,15 @@ uv run python scripts/robots/teleop.py x1pro --output outputs/robots/x1pro-teleo
 会话动作写入 `actions.jsonl`，可用 `teleop.replay` 回放。
 
 不通过时：外观或碰撞问题改 `prepare.py` 后重新生成；驱动、过滤、材料或夹爪问题改 `physics.py` 后重新构建。
+
+## 同一台机器人换夹爪
+
+真机现用的转动夹爪 rm001 是另一台机器人 [`x1pro_rm001`](../../asset_sources/robots/x1pro_rm001/)：目录中只有夹爪的 4 个网格（0.9 MB），其余网格和 `.py` 文件引用 x1pro。生成、构建与验收用同样的命令，把 `x1pro` 换成 `x1pro_rm001`：
+
+```bash
+uv run python scripts/robots/prepare_robot.py x1pro_rm001
+uv run python scripts/robots/build_robot.py x1pro_rm001 --gpu 0
+uv run python scripts/robots/check_robot.py x1pro_rm001 --gpu 0 --output outputs/robots/x1pro_rm001-check --video
+```
+
+`prepare.py` 设 `BASE = 'x1pro'`，原始包中 x1pro 也用到的网格不再生成，所以修改 x1pro 的网格后要重新生成 x1pro_rm001。转动手指同样按指尖间距控制，换算与验收结果见其 README。

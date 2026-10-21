@@ -64,7 +64,9 @@ DT = 1 / CONTROL_HZ
 
 # Primitives; a missing mass makes the shape kinematic (it stays where it is put).
 PRIMITIVES = {
-    'block': {'shape': 'box', 'size': (.06, .06, .14), 'color': (.8, .3, .2)},
+    # Tall enough to stop the whole hand, however long its fingers: the joint-space sweep lifts the hand
+    # mid-way, and the long fingers of X1Pro's rm001 gripper pass over a 0.14 m block with only the tips.
+    'block': {'shape': 'box', 'size': (.06, .06, .30), 'color': (.8, .3, .2)},
     'box': {'shape': 'box', 'size': (.05, .05, .08), 'mass': .2},
     'can': {'shape': 'cylinder', 'size': (.025, .10), 'mass': .2, 'color': (.3, .7, .3)},
     'stick': {'shape': 'cylinder', 'size': (.007, .14), 'mass': .02, 'color': (.9, .8, .2)},
@@ -142,7 +144,7 @@ def check_scene(spec, settings):
     """Scene source for :class:`~table_1000.sim.isaaclab.env.RobotEnv` from a robot's ``robot_test`` settings."""
     robot = settings.ROBOT
     scene = types.SimpleNamespace(
-        TABLE=settings.TABLE, OBJECTS=(), PRIMITIVES=PRIMITIVES,
+        TABLE=settings.TABLE, OBJECTS={}, PRIMITIVES=PRIMITIVES,
         ROBOT={'asset': f'robots/{spec.name}', 'position': robot['position'], 'yaw': robot['yaw'],
                'joints': spec.keyframe(robot.get('keyframe', 'zero'))})
 
@@ -371,7 +373,7 @@ class Checker:
     def arm_hits_block(self):
         """The hand sweeps sideways through a fixed block; it must stop, then reach the goal once freed."""
         arm = self.arm
-        self.reset(block=self.on_work(0., .03, .14))
+        self.reset(block=self.on_work(0., .03, PRIMITIVES['block']['size'][2]))
         start, goal = self.ik(arm, self.work_point(0., -.21, .045, down(70))), self.ik(arm, self.work_point(0., .20, .045, down(70)))
         self.move_joints(self.arm, start, 2.)
         self.move_joints(self.arm, goal, 3.)
@@ -419,13 +421,17 @@ class Checker:
                     continue
                 half = PRIMITIVES[body]['size'] if body == 'ball' else PRIMITIVES[body]['size'][2] / 2
                 self.env.set_shape_pose(body, translation(point[0], point[1], surface + .25 + half))
+                fastest, self.trace['object_speed'] = self.trace['object_speed'], 0.
                 self.step(count=round(2.5 / DT))
+                speed_of_drop = self.trace['object_speed']
+                self.trace['object_speed'] = max(fastest, speed_of_drop)
                 pose = self.pose_of(body)
                 speed = float(np.linalg.norm(self.env.privileged()['velocities'][body][0, :3]))
                 resting_on_robot = pose[2, 3] > .1 and speed < .02
                 gap = self.visual.distance(primitive_surface(PRIMITIVES[body], pose)) if resting_on_robot else None
                 results[f'{name}/{body}'] = {'link': link, 'resting_on_robot': bool(resting_on_robot),
-                                             'gap_to_visual_m': gap, 'penetration_m': self.penetration(sub_case=True)}
+                                             'gap_to_visual_m': gap, 'penetration_m': self.penetration(sub_case=True),
+                                             'max_object_speed': speed_of_drop}
         gaps = [r['gap_to_visual_m'] for r in results.values() if r['gap_to_visual_m'] is not None]
         result = {'drops': results, 'max_gap_m': max(gaps, default=0.)}
         # Resting more than 15 mm above the visible surface: the collision shell is too fat.
@@ -474,7 +480,8 @@ class Checker:
         return self.common(result)
 
     def colliding_target(self, arm, ready, beyond=.3):
-        """Arm joints just past the first self-collision along one shoulder or elbow joint from ``ready``."""
+        """Arm joints just past the first self-collision along one shoulder or elbow joint from ``ready``,
+        still in collision there (a hand that only grazes a body on the way is passed by)."""
         indices = self.model.arm_indices(arm)
         for joint in (0, 1, 2, 3):
             for sign in (1., -1.):
@@ -487,7 +494,9 @@ class Checker:
                     pairs = self.model.self_collisions(self.model.vector(dict(zip(self.spec.arms[arm].joints, q))))
                     if pairs:
                         q[joint] = np.clip(q[joint] + sign * beyond, low, high)
-                        return q, pairs
+                        if self.model.self_collisions(self.model.vector(dict(zip(self.spec.arms[arm].joints, q)))):
+                            return q, pairs
+                        break
         raise RuntimeError('no self-collision reachable along single joints')
 
     def _grasp(self, body, pose, height, approach=.10):
@@ -495,15 +504,16 @@ class Checker:
         self.reset(**{body: pose})
         self.step(count=round(.5 / DT))
         center = self.pose_of(body)[:3, 3]
-        # Pads 15 mm below the top, fingertips (18.5 mm past the TCP) clear of the table.
-        z = max(center[2] + height / 2 - .015, self.top + .0185 + .004)
+        # TCP at mid-height (pivoting fingers close on a wide object above the TCP), fingertips (up to
+        # 18.5 mm past the TCP) clear of the table.
+        z = max(center[2], self.top + .0185 + .004)
         grasp = translation(center[0], center[1], z, down(90))
         self.step({self.gripper: [[.08]]}, count=round(.6 / DT))
         self.move_joints(self.arm, self.ik(self.arm, translation(*grasp[:3, 3] + [0., 0., approach], down(90))), 2.5)
         self.move_joints(self.arm, self.ik(self.arm, grasp), 1.5)
         self.step({self.gripper: [[0.]]}, count=round(.8 / DT))
-        fingers = self.q(self.spec.arms[self.arm].fingers)
-        return float(fingers[0] - fingers[1])
+        arm = self.spec.arms[self.arm]
+        return arm.gap(self.q(arm.fingers))
 
     def grasp_and_shake(self):
         """Grasp a box, a can and a thin stick, lift and shake each: no slip, no finger penetration."""
