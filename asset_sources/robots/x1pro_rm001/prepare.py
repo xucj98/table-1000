@@ -75,5 +75,5 @@ def add_pads(root):
 
 
 def edit(root):
-    _X1PRO.edit(root)
+    _X1PRO.edit_joints(root)    # x1pro's fingertip pads do not fit these fingers
     add_pads(root)

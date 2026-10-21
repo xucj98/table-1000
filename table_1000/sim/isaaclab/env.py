@@ -461,6 +461,11 @@ class RobotEnv:
         pose[:, :3] += self.env.scene.env_origins
         place(self.env, self.env.scene[name], pose, torch.arange(self.num_envs, device=self.device))
 
+    def push_shape(self, name, force):
+        """Push a shape's centre of mass with the world ``force`` (N, every environment) until changed."""
+        force = torch.as_tensor(force, dtype=torch.float32, device=self.device).repeat(self.num_envs, 1, 1)
+        self.env.scene[name].set_external_force_and_torque(force, torch.zeros_like(force), is_global=True)
+
     def link_pose(self, link):
         """``[N, 4, 4]`` world pose of a robot body as simulated."""
         index = self.robot.body_names.index(link)

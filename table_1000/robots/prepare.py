@@ -332,6 +332,8 @@ def check(source):
     root = ET.parse(source / 'robot.urdf').getroot()
     pieces = {}
     for collision in root.iter('collision'):
+        if collision.find('geometry/mesh') is None:   # a primitive added by the robot's edit
+            continue
         name = Path(collision.find('geometry/mesh').get('filename'))
         visual = name.parent.parent / 'visual' / f'{name.stem.rsplit("_", 1)[0]}.ply'
         pieces.setdefault(visual.as_posix(), set()).add(name)

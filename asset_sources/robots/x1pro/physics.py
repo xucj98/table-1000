@@ -16,8 +16,11 @@ DRIVES = {
     'lift_joint': (20000., 1000.),
     'head_': (30., 3.),
     '_arm_joint': (1000., 60.),
-    # The left finger is driven; the right one follows it (MIMIC_FINGERS).
-    '_arm_gripper_left_joint': (1500., 20.),
+    # The left finger is driven; the right one follows it (MIMIC_FINGERS). The
+    # drive reaches the URDF's 20 N force limit once the target is 4 mm past the
+    # held object, so a 1 cm cube is squeezed as hard as a 4 cm one (at 1500 N/m
+    # the drive gave a 1 cm cube 7.5 N). The pair splits it: each pad presses with 10 N.
+    '_arm_gripper_left_joint': (5000., 60.),
     '_arm_gripper_right_joint': (0., 0.),
     '_wheel_joint': (0., 1.),
     # Virtual planar base joints (see table_1000.robots.build): stiff and close
