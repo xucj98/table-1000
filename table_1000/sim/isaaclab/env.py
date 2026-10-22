@@ -467,13 +467,17 @@ class RobotEnv:
         place(self.env, self.env.scene[name], pose, torch.arange(self.num_envs, device=self.device))
 
     def push_shape(self, name, force):
-        """Push a shape's centre of mass with the world ``force`` (N, every environment) until changed."""
-        force = torch.as_tensor(force, dtype=torch.float32, device=self.device).repeat(self.num_envs, 1, 1)
+        """Push a shape's centre of mass with the world ``force`` (N, every environment) until changed. The
+        force is held in the shape's frame, so it turns with the shape: call again each step to keep it along
+        a world direction. A zero ``force`` stops pushing."""
+        # The permanent composer, as the instantaneous one is cleared after each physics step of the
+        # several in a control step. It converts with the orientation read on its first call after a
+        # reset: resetting first converts with the current orientation.
         composer = self.env.scene[name].permanent_wrench_composer
-        # The composer keeps the force in the body frame, converted with the orientation it read on its first
-        # call after a reset: resetting first converts with the current orientation.
         composer.reset()
-        composer.set_forces_and_torques(forces=force, torques=torch.zeros_like(force), is_global=True)
+        if np.any(force):
+            force = torch.as_tensor(force, dtype=torch.float32, device=self.device).repeat(self.num_envs, 1, 1)
+            composer.set_forces_and_torques(forces=force, torques=torch.zeros_like(force), is_global=True)
 
     def link_pose(self, link):
         """``[N, 4, 4]`` world pose of a robot body as simulated."""

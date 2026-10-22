@@ -21,7 +21,7 @@ DRIVES = {**_X1PRO.DRIVES, '_arm_gripper_left_joint': (50., 20.)}
 MATERIALS = {**_X1PRO.MATERIALS, 'finger': (.4, .3), 'pad': (2., 1.6)}
 ARMATURE = {'_arm_gripper_': .001}   # kg m^2
 # 16 position iterations hold small objects in these fingers under a push
-# (grasp_and_push); more fling them.
+# (grasp_and_push); 32 fling them.
 SOLVER_ITERATIONS = (16, 4)
 
 
