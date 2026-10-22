@@ -737,11 +737,13 @@ class Skills:
                 break
             result['ik_checked'] += 1
             release = translated(placed, [0., 0., clearance]) @ np.linalg.inv(tcp_object)
-            status, q_above = self.ik(arm, translated(release, [0., 0., above]), self.model.q)
+            # Where it is let go (the hand and arm low by a wall), then above it at that torso height:
+            # the way down moves the arm alone.
+            status, q_release = self.ik(arm, release, self.model.q)
             if status != 'Success':
                 continue
-            # The way down ends clear too (the hand and arm low by a wall).
-            status, _ = self.model.ik(arm, release, q_above, world=True, attempts=IK_ATTEMPTS)
+            status, q_above = self.model.ik(arm, translated(release, [0., 0., above]), q_release, world=True,
+                                            attempts=IK_ATTEMPTS)
             if status != 'Success':
                 continue
             result['planned'] += 1
