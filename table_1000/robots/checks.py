@@ -46,6 +46,10 @@ IMPACT_PENETRATION_LIMIT = .01
 # a little past its limit; flung bodies go far beyond.
 SPEED_MARGIN = 1.5
 OBJECT_SPEED_LIMIT = 2.      # m/s, horizontal
+# A body dropped onto the robot bounces off at a solver-dependent speed (PhysX
+# resolves the step's overlap by pushing it out, up to about 3 m/s here, above
+# the 2.2 m/s of the impact); a flung body is far faster.
+DROP_SPEED_LIMIT = 4.
 JITTER_LIMIT = 1e-3          # rad or m, oscillation std of a blocked joint over 0.5 s
 HOLD_DRIFT_LIMIT = .005      # m, held object relative to the TCP
 # A held object is pushed at its centre of mass in each world axis direction and
@@ -336,14 +340,14 @@ class Checker:
                 depth = max(depth, entry['max_penetration_m'])
         return depth
 
-    def common(self, result, penetration_limit=PENETRATION_LIMIT):
+    def common(self, result, penetration_limit=PENETRATION_LIMIT, speed_limit=OBJECT_SPEED_LIMIT):
         result['max_penetration_m'] = self.penetration()
         result.update(max_joint_speed_ratio=self.trace['joint_speed'], fastest_joint=self.trace['joint'],
                       max_object_speed=self.trace['object_speed'])
         checks = result.setdefault('checks', {})
         checks['penetration'] = result['max_penetration_m'] <= penetration_limit
         checks['joint_speed'] = result['max_joint_speed_ratio'] <= SPEED_MARGIN
-        checks['object_speed'] = result['max_object_speed'] <= OBJECT_SPEED_LIMIT
+        checks['object_speed'] = result['max_object_speed'] <= speed_limit
         checks = {key: bool(value) for key, value in checks.items()}
         result['checks'] = checks
         result['status'] = 'PASS' if all(checks.values()) else 'FAIL'
@@ -353,6 +357,22 @@ class Checker:
             deepest[pair] = max(deepest.get(pair, 0.), entry['max_penetration_m'])
         result['contacts'] = dict(sorted(deepest.items(), key=lambda item: -item[1]))
         return result
+
+    def finger_reach(self, arm, gap, steps=9):
+        """Farthest point of ``arm``'s finger visual meshes past its TCP along the approach axis (+X), over
+        finger gaps from ``gap`` down to closed (pivoting fingertips advance as they close)."""
+        spec = self.spec.arms[arm]
+        reach = -np.inf
+        for value in np.linspace(gap, 0., steps):
+            q = np.array(self.model.q, dtype=float)
+            for joint, target in spec.finger_targets(value).items():
+                q[self.model.index[joint]] = target
+            inverse = np.linalg.inv(self.model.tcp(arm, q))
+            for link, transform, mesh in self.visual.parts:
+                if link in spec.finger_links:
+                    points = (inverse @ self.model.fk(link, q) @ transform)[:3] @ np.c_[mesh.vertices, np.ones(len(mesh.vertices))].T
+                    reach = max(reach, float(points[0].max()))
+        return reach
 
     def tcp(self, arm=None):
         return self.env.obs['agent']['tcp'][arm or self.arm][0]
@@ -446,7 +466,7 @@ class Checker:
         result = {'drops': results, 'max_gap_m': max(gaps, default=0.)}
         # Resting more than 15 mm above the visible surface: the collision shell is too fat.
         result['checks'] = {'rests_on_visible_surface': result['max_gap_m'] <= .015}
-        return self.common(result, IMPACT_PENETRATION_LIMIT)
+        return self.common(result, IMPACT_PENETRATION_LIMIT, DROP_SPEED_LIMIT)
 
     def lift_into_shelf(self):
         """The torso rises into a fixed shelf above its top (the head, if any): it stops there, then lowers again."""
@@ -514,9 +534,9 @@ class Checker:
         self.reset(**{body: pose})
         self.step(count=round(.5 / DT))
         center = self.pose_of(body)[:3, 3]
-        # TCP at mid-height (pivoting fingers close on a wide object above the TCP), fingertips (up to
-        # 18.5 mm past the TCP) ``clearance`` above the table.
-        z = max(center[2], self.top + .0185 + clearance)
+        # TCP at mid-height (pivoting fingers close on a wide object above the TCP), fingertips
+        # ``clearance`` above the table throughout the closing.
+        z = max(center[2], self.top + self.finger_reach(self.arm, .08) + clearance)
         grasp = translation(center[0], center[1], z, down(90))
         self.step({self.gripper: [[.08]]}, count=round(.6 / DT))
         self.move_joints(self.arm, self.ik(self.arm, translation(*grasp[:3, 3] + [0., 0., approach], down(90))), 2.5)

@@ -29,7 +29,9 @@ DRIVES = {
     'base_y_joint': (1e5, 6000.),
     'base_yaw_joint': (8000., 500.),
 }
-SOLVER_ITERATIONS = (16, 4)
+# (position, velocity). At 16 position iterations a 1 cm steel cube held by the
+# pads slips under a 5 N push (grasp_and_push); 32 holds it.
+SOLVER_ITERATIONS = (32, 4)
 # One motor moves both fingers of the real gripper through a rack. Two
 # independently driven fingers, both at their force limit on a held object,
 # have no restoring force along the closing axis: an acceleration of the hand
@@ -61,9 +63,10 @@ def gains(name, drives=DRIVES):
     return matches[0]
 
 
-def author(import_path, output_path, drives=DRIVES, materials=MATERIALS):
+def author(import_path, output_path, drives=DRIVES, materials=MATERIALS, armature=None, iterations=SOLVER_ITERATIONS):
     """Write ``output_path`` as a layer over the imported robot, with the joint drives ``drives`` and
-    contact ``materials`` (x1pro_rm001 passes its own finger drives and pads)."""
+    contact ``materials`` (x1pro_rm001 passes its own finger drives, pads and solver iterations).
+    ``armature`` maps joint name parts to added joint inertia (kg m^2 or kg)."""
     from pxr import PhysxSchema, Sdf, Usd, UsdPhysics, UsdShade
 
     layer = Sdf.Layer.CreateNew(str(output_path))
@@ -80,8 +83,8 @@ def author(import_path, output_path, drives=DRIVES, materials=MATERIALS):
         if prim.HasAPI(UsdPhysics.ArticulationRootAPI):
             articulation = PhysxSchema.PhysxArticulationAPI.Apply(prim)
             articulation.CreateEnabledSelfCollisionsAttr(True)
-            articulation.CreateSolverPositionIterationCountAttr(SOLVER_ITERATIONS[0])
-            articulation.CreateSolverVelocityIterationCountAttr(SOLVER_ITERATIONS[1])
+            articulation.CreateSolverPositionIterationCountAttr(iterations[0])
+            articulation.CreateSolverVelocityIterationCountAttr(iterations[1])
         if not (prim.IsA(UsdPhysics.RevoluteJoint) or prim.IsA(UsdPhysics.PrismaticJoint)):
             continue
         angular = prim.IsA(UsdPhysics.RevoluteJoint)
@@ -91,6 +94,9 @@ def author(import_path, output_path, drives=DRIVES, materials=MATERIALS):
         drive.CreateTypeAttr('force')
         drive.CreateStiffnessAttr(stiffness * scale)
         drive.CreateDampingAttr(damping * scale)
+        for key, value in (armature or {}).items():
+            if key in prim.GetName():
+                PhysxSchema.PhysxJointAPI.Apply(prim).CreateArmatureAttr(value)
 
     joints = {prim.GetName(): prim for prim in Usd.PrimRange(root) if prim.IsA(UsdPhysics.Joint)}
     for follower, leader in MIMIC_FINGERS:
