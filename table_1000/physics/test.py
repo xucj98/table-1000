@@ -372,7 +372,7 @@ def main(argv=None):
                 else sorted(path.parent.relative_to(source) for path in source.rglob('physics_test.py')))
     scripts={reference:(args.scripts.resolve()/reference if args.scripts else source/reference)/'physics_test.py'
              for reference in references}
-    if not args.scripts:
+    if not args.scripts and not args.plots_only:
         for reference,script in scripts.items():
             edited=ROOT/'asset_sources'/'objects'/reference/'physics_test.py'
             if edited.is_file() and script.is_file() and edited.read_bytes()!=script.read_bytes():

@@ -7,8 +7,8 @@ For each seed, makes the initial state as in ``table_1000/scenes/initial.py``
 on CPU PhysX. The seeds are split into ``--jobs`` contiguous parts, one process each, spread
 over ``--gpus`` or submitted through ``--launcher`` (see ``table_1000/common/batch.py``); each
 seed's result is written when it is done, and seeds whose process stopped before theirs run
-again (``--retries``). An error on a seed fails that seed and stops its process; the seeds after
-it run again. Logs are in ``outputs/scenes/<scene>/build/``; the processes' results go to
+again (``--retries``), as do seeds that raised an error (the error may be the process's: GPU memory,
+a lost device). Logs are in ``outputs/scenes/<scene>/build/``; the processes' results go to
 ``<output>/<scene>/staging/``, removed once merged. Into ``<output>/<scene>/``
 (``<output>`` = ``assets/scenes`` by default), replacing what an earlier run wrote:
 
@@ -21,11 +21,12 @@ it run again. Logs are in ``outputs/scenes/<scene>/build/``; the processes' resu
 Images come from ``--camera`` (default: the robot's first RGB camera; or a fixed
 view of the scene). When images are rendered into the default output, the
 smallest valid seed's image also becomes ``asset_sources/scenes/<scene>/thumbnail.jpg``
-(480 px wide). The exit status is non-zero when a seed has no result or no valid state.
+(480 px wide). The exit status is non-zero when a seed has no result, an error or no valid state.
 """
 
 import argparse
 import json
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -88,8 +89,11 @@ def worker(args):
         pictured = 0
 
         def save(record):
-            (work / 'records' / f'{record["seed"]}.json').write_text(
+            # Written whole or not at all: the file marks the seed as done.
+            path = work / 'records' / f'{record["seed"]}.json'
+            path.with_suffix('.tmp').write_text(
                 json.dumps({'robot': spec.name, 'camera': camera, 'record': record}, indent=1, default=float))
+            os.replace(path.with_suffix('.tmp'), path)
 
         for seed in parse_seeds(args.seeds):
             record = None
@@ -108,12 +112,11 @@ def worker(args):
                 record = {'seed': seed, 'attempt': None, 'attempts': error.attempts}
                 print(seed, 'no valid state', flush=True)
             except Exception:
-                # The error is this seed's result. The process stops, as the error may have broken it (GPU
-                # memory, a lost device): the seeds after this one run again in a new process.
+                # Kept as this seed's result if it errs again when retried in a new process.
+                traceback.print_exc()
                 (work / 'states' / f'{seed}.hdf5').unlink(missing_ok=True)
-                save({'seed': seed, 'attempt': None, 'attempts': record['attempts'] if record else [],
-                      'problems': [traceback.format_exc().strip().splitlines()[-1]]})
-                raise
+                record = {'seed': seed, 'attempt': None, 'attempts': record['attempts'] if record else [],
+                          'error': traceback.format_exc().strip().splitlines()[-1]}
             save(record)
         env.close()
     except Exception:
@@ -175,6 +178,11 @@ def main(argv=None):
     root = args.root.resolve()
     output = ((args.output or args.assets / 'scenes') / args.scene).resolve()
     staging, logs = output / 'staging', root / 'outputs' / 'scenes' / args.scene / 'build'
+
+    def result(seed):
+        path = parts[seed] / 'records' / f'{seed}.json'
+        return json.loads(path.read_text()) if path.is_file() else None
+
     shutil.rmtree(staging, ignore_errors=True)
     shutil.rmtree(logs, ignore_errors=True)
     checkout = commit(root)
@@ -192,13 +200,14 @@ def main(argv=None):
 
     started = time.perf_counter()
     missing = set(run_batch(seeds, command=command, count=jobs, gpus=args.gpus, launcher=args.launcher,
-                        retries=args.retries, missing=lambda seed: not (parts[seed] / 'records' / f'{seed}.json').is_file()))
+                        retries=args.retries, missing=lambda seed: not result(seed) or 'error' in result(seed)['record']))
 
     records, states, images, robot, camera = {}, {}, {}, None, None
-    for seed in (seed for seed in seeds if seed not in missing):
-        work = parts[seed]
-        result = json.loads((work / 'records' / f'{seed}.json').read_text())
-        robot, camera, records[seed] = result['robot'], result['camera'], result['record']
+    for seed in seeds:
+        work, done = parts[seed], result(seed)
+        if not done:
+            continue
+        robot, camera, records[seed] = done['robot'], done['camera'], done['record']
         if (work / 'states' / f'{seed}.hdf5').is_file():
             states.update(read_states(work / 'states' / f'{seed}.hdf5')[1])
         if (work / 'images' / f'{seed}.jpg').is_file():
@@ -232,8 +241,11 @@ def main(argv=None):
         thumbnail(images[valid[0]], root / 'asset_sources' / 'scenes' / args.scene / 'thumbnail.jpg')
     shutil.rmtree(staging, ignore_errors=True)
     print(json.dumps(summary, indent=1, default=float))
-    problems = ([f'no result: seeds {seed_range(missing)}; see {logs}'] if missing else []) + (
-        [f'seeds without a valid state: {seed_range(summary["without_state"])}'] if summary['invalid'] else [])
+    errors = {seed for seed, record in records.items() if 'error' in record}
+    without = set(summary['without_state']) - missing
+    problems = [f'{kind}: seeds {seed_range(group)} (see {logs})'
+                for kind, group in (('no result', missing - errors), ('errors', errors)) if group]
+    problems += [f'seeds without a valid state: {seed_range(without)}'] if without else []
     if problems:
         raise SystemExit('; '.join(problems))
 

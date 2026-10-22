@@ -238,6 +238,10 @@ def test_build_scene_combines_parts(tmp_path, monkeypatch):
                     Image.new('RGB', (64, 36), 'red').save(work / 'images' / f'{seed}.jpg')
                 record = {'seed': seed, 'attempt': None if seed == 1 else 0,
                           'attempts': [{'attempt': 0, 'settle': {'objects': {}, 'robot_contacts': []}}]}
+                if seed == 3 or (seed == 4 and len(rounds) == 2):
+                    # seed 3 errs every time; seed 4 errs in its first process only
+                    (work / 'states' / f'{seed}.hdf5').unlink()
+                    record.update(attempt=None, error='RuntimeError: CUDA error')
                 (work / 'records' / f'{seed}.json').write_text(
                     json.dumps({'robot': 'x1pro', 'camera': 'face_view', 'record': record}))
         return []
@@ -246,15 +250,16 @@ def test_build_scene_combines_parts(tmp_path, monkeypatch):
     root = tmp_path / 'checkout'
     output = tmp_path / 'custom'
     (output / '000000' / 'initial').mkdir(parents=True)
-    with pytest.raises(SystemExit, match='without a valid state: 1'):
+    with pytest.raises(SystemExit, match=r'errors: seeds 3 \(see .*\); seeds without a valid state: 1$'):
         build_scene.main(['000000', '--seeds', '0:5', '--gpus', '0', '1', '--grid', '2x1', '--output', str(output),
                           '--root', str(root)])
-    assert rounds == [[0, 1, 2], [3, 4], [2]]          # only the seed without a result runs again
+    assert rounds == [[0, 1, 2], [3, 4], [2, 3], [4]]  # seeds without a result or with an error run again
     directory = output / '000000'
     report = json.loads((directory / 'initial.json').read_text())
-    assert report['seeds'] == {'range': '0:5', 'count': 5} and report['without_state'] == [1]
+    assert report['seeds'] == {'range': '0:5', 'count': 5} and report['without_state'] == [1, 3]
+    assert report['records']['3']['error'] == 'RuntimeError: CUDA error'
     attrs, states = read_states(directory / 'initial_states.hdf5')
-    assert list(states) == [0, 2, 3, 4] and attrs['scene'] == '000000' and attrs['robot'] == 'x1pro'
+    assert list(states) == [0, 2, 4] and attrs['scene'] == '000000' and attrs['robot'] == 'x1pro'
     assert Image.open(directory / 'initial_states.jpg').size == (2 * build_scene.TILE_WIDTH, 216 + build_scene.CAPTION)
     assert not (directory / 'initial').exists()            # replaced, and no --images this time
     assert not (directory / 'staging').exists()            # the processes' results, removed once merged
