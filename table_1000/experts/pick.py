@@ -12,19 +12,20 @@ frame), then lifts it. It is one blocking skill on top of
    reach-out-and-down approach from the arm's shoulder, centred on the centre of
    mass) are tried per arm, the arm whose shoulder is nearer first. Every object of
    the arm's planning world is an obstacle of the candidates' hand; the ones within
-   ``SUPPORT_DISTANCE`` of the object are its supports, which the hand may touch or keeps
-   clear of by the robot's ``SUPPORT_CLEARANCE`` (closer than the planning world's padding,
-   so the fingers' planned contact with them is allowed).
-   A candidate is kept when the grasp and a pre-grasp ``APPROACH`` behind it have
-   collision-free IK solutions, the torso lift free for the grasp and held for the
+   ``SUPPORT_DISTANCE`` of the object are its supports, which the hand may touch (overlapping
+   them by at most ``-SUPPORT_CLEARANCE``; closer than the planning world's padding, so the
+   fingers' planned contact with them is allowed).
+   A candidate is kept when the grasp, a pre-grasp ``APPROACH`` behind it and the
+   grasp ``LIFT`` higher (unless the torso lift can rise that far) have collision-free
+   IK solutions, the torso lift free for the grasp and the lifted pose and held for the
    pre-grasp;
 2. **reach** -- RRTConnect to the pre-grasp, moving the torso lift with the arm,
    fingers open to the object's width plus a margin; then a straight move in,
    the only move in which the fingers may touch the object;
 3. **grasp** -- the fingers close fully (the drives squeeze the object); the
    finger gap must show the object between the pads;
-4. **lift** -- straight up by ``LIFT`` (or by raising the torso when the arm cannot);
-   the object must have risen with the hand.
+4. **lift** -- up by ``LIFT``: straight, else by raising the torso and the arm for the
+   rest (see :meth:`Picker.lift`); the object must have risen with the hand.
 
 A candidate whose motion cannot be planned is replaced by the next one; a
 grasp that misses is backed out of and the object re-observed, at most
@@ -37,7 +38,7 @@ import time
 import numpy as np
 
 from table_1000.experts.context import DT, steps
-from table_1000.experts.grasps import DEFAULT_SUPPORT_CLEARANCE, SUPPORT_CLEARANCE, Box, Cylinder, Hand, grasp_candidates, standoff, translated
+from table_1000.experts.grasps import SUPPORT_CLEARANCE, Box, Cylinder, Hand, grasp_candidates, standoff, translated
 from table_1000.experts.solver import PlanningFailed
 from table_1000.planning.world import PlanningObject
 
@@ -74,7 +75,7 @@ class Picker:
         for solver in self.solvers.values():
             if 'table' not in solver.world.objects:
                 solver.add_table()
-        self.log = []
+        self.log, self.rejected = [], {}
 
     # -- choice ------------------------------------------------------------------------
     def shoulder(self, arm):
@@ -97,13 +98,13 @@ class Picker:
             support = fcl.distance(target, body).min_distance < SUPPORT_DISTANCE
             if support:
                 supports.append(name)
-            obstacles.append((body, SUPPORT_CLEARANCE.get(self.ctx.spec.name, DEFAULT_SUPPORT_CLEARANCE)
-                                    if support else 0.))
+            obstacles.append((body, SUPPORT_CLEARANCE if support else 0.))
         return obstacles, supports
 
     def options(self, key, shape, offset, skip):
         """Feasible ``(arm, grasp, supports, q_grasp, q_pre)``, in the order tried; ``skip`` holds the
-        ids of candidates already used."""
+        ids of candidates already used. ``self.rejected`` counts the candidates dropped, by reason."""
+        self.rejected = {'grasp IK': 0, 'pre-grasp IK': 0, 'lift': 0}
         transform = self.ctx.poses()[key] @ offset
         centre = transform[:3, 3]
         arms = sorted(self.arms, key=lambda arm: np.linalg.norm((self.shoulder(arm) - centre)[:2]))
@@ -128,10 +129,19 @@ class Picker:
                 status, q_grasp = self.model.ik(arm, grasp.pose, start, world=True, lift=True, attempts=IK_ATTEMPTS)
                 solver.allow([key, *supports], False)
                 if status != 'Success':
+                    self.rejected['grasp IK'] += 1
                     continue
                 status, q_pre = self.model.ik(arm, standoff(grasp.pose, APPROACH), q_grasp, world=True,
                                               attempts=IK_ATTEMPTS)
                 if status != 'Success':
+                    self.rejected['pre-grasp IK'] += 1
+                    continue
+                # Close to the body the hand may not reach LIFT higher; then the torso must rise that far.
+                status, _ = self.model.ik(arm, translated(grasp.pose, [0., 0., LIFT]), q_grasp, world=True,
+                                          lift=True, attempts=IK_ATTEMPTS)
+                headroom = self.model.limits[self.model.lift_indices(), 1] - q_grasp[self.model.lift_indices()]
+                if status != 'Success' and np.min(headroom) < LIFT:
+                    self.rejected['lift'] += 1
                     continue
                 skip.add((arm, index))
                 yield arm, grasp, supports, q_grasp, q_pre
@@ -149,7 +159,7 @@ class Picker:
         while True:
             reached = self.reach(key, shape, offset, skip)
             if reached is None:
-                ctx.fail('no reachable grasp', candidates_tried=len(skip))
+                ctx.fail('no reachable grasp', candidates_tried=len(skip), rejected=self.rejected)
             arm, grasp, supports = reached
             solver = self.solvers[arm]
             solver.close_gripper()
@@ -166,7 +176,7 @@ class Picker:
                 ctx.fail('object not held', finger_gap=gap, width=grasp.width)
         before = ctx.poses()[key]
         solver.attach(key, before @ offset)
-        self.lift(arm)
+        self.lift(arm, supports)
         solver.allow(supports, False)
         ctx.hold(.2)
         after = ctx.poses()[key]
@@ -201,21 +211,36 @@ class Picker:
                 ctx.note('next grasp', arm=arm, cost=grasp.cost, reason=error.reason)
         return None
 
-    def lift(self, arm):
-        """Straight up by LIFT with the arm, else with the torso lift."""
+    def lift(self, arm, supports):
+        """Up by LIFT: straight with the arm; else (the arm close to the body may hit it going
+        straight up) by raising the torso, then the arm for what the lift's travel leaves, straight
+        or, the object clear of its ``supports``, along a planned path."""
         solver, ctx = self.solvers[arm], self.ctx
         try:
             solver.move_to_pose_with_screw(translated(solver.tcp(), [0., 0., LIFT]))
             return
         except PlanningFailed as error:
-            ctx.note('lift with the torso', reason=error.reason)
+            straight = error.reason
         lift = ctx.env.qpos(ctx.spec.lift)[0]
         upper = self.model.limits[self.model.lift_indices(), 1]
         target = np.minimum(lift + LIFT, upper)
+        ctx.note('lift with the torso', reason=straight, lift=lift.tolist(), target=target.tolist())
         count = steps(float(np.max(target - lift)) / ctx.spec.lift_velocity_limit)
         for k in range(1, count + 1):
             ctx.step({'lift': (lift + (target - lift) * k / count)[None]})
         ctx.hold(.3)
+        rest = LIFT - float(np.min(target - lift))
+        if rest < .005:
+            return
+        up = translated(solver.tcp(), [0., 0., rest])
+        solver.allow(supports, False)
+        for move in (solver.move_to_pose_with_screw, lambda pose: solver.move_to_pose_with_RRTConnect(pose, lift=True)):
+            try:
+                move(up)
+                return
+            except PlanningFailed as error:
+                reason = error.reason
+        ctx.note('lift short', rest=rest, reason=reason)
 
 
 def normalized(vector):

@@ -304,15 +304,19 @@ class Grasp:
 OPEN_MARGIN, PAD_SPACING, CONTACT_TOLERANCE, MIN_PAD_AREA = .03, .0015, .001, 15e-6
 # The TCP backs off from the contact centre in BACKOFF_STEP steps until the hand is clear.
 BACKOFF_STEP, MAX_BACKOFF = .002, .06
-# Clearance (m) the hand keeps from a support (the surface under the object), per robot; negative:
-# the overlap allowed, so the fingers may touch the table. Pivoting fingers (x1pro_rm001) closing on
-# the object while pressing on the table under it make the simulation blow up, so they stay clear.
-SUPPORT_CLEARANCE = {'x1pro_rm001': .003}
-DEFAULT_SUPPORT_CLEARANCE = -.0005
+# The object's widest section across the closing (where the pads squeeze it: a face of a box, a line
+# along a cylinder) must lie on the pads at least HOLD_MARGIN from their tip end over MIN_HOLD_AREA
+# (m^2; less: held by the pad's edge, pushed out of the hand by a few newtons); grasps holding it
+# over less than HOLD_AREA cost more (see grasp_candidates). Sampled every HOLD_SPACING, within
+# HOLD_TOLERANCE of the widest.
+HOLD_MARGIN, MIN_HOLD_AREA, HOLD_AREA, HOLD_SPACING, HOLD_TOLERANCE = .002, 5e-6, 60e-6, 5e-4, 5e-4
+# Clearance (m) the hand keeps from a support (the surface under the object); negative: the overlap
+# allowed, so the fingers may touch the table and grasp small objects low.
+SUPPORT_CLEARANCE = -.0005
 
 
 def grasp_candidates(shape, transform, hand, obstacles, preferred, center_of_mass=None, approach_distance=.05,
-                     step=np.radians(15), max_up=.05, cost_offset=40., cost_backoff=10.):
+                     step=np.radians(15), max_up=.05, cost_offset=40., cost_backoff=10., cost_hold=.5 / 30e-6):
     """Grasps of ``shape`` (:class:`Box` or :class:`Cylinder`) at world ``transform`` by ``hand``
     (:class:`Hand`), cheapest first, generated as they are taken.
 
@@ -321,10 +325,12 @@ def grasp_candidates(shape, transform, hand, obstacles, preferred, center_of_mas
     starts at the contact centre and backs off along the approach until the open hand is clear
     of the object and of ``obstacles`` (``[(FCL object, clearance to keep)]``), also
     ``approach_distance`` further back (the pre-grasp), and the hand closed on the object
-    touches it only with the fingers; a grasp whose pads then squeeze too little of the object is
-    dropped (see :func:`_placed`). The cost is the angle (rad) from the ``preferred`` approach
-    direction, plus ``cost_offset`` per metre between the centre of the squeezing pad area and
-    ``center_of_mass`` (default: the shape's centre) and ``cost_backoff`` per metre of back-off.
+    touches it only with the fingers; a grasp whose pads then squeeze too little of the object, or
+    hold its widest section by their edge only, is dropped (see :func:`_placed`). The cost is the
+    angle (rad) from the ``preferred`` approach direction, plus ``cost_offset`` per metre between
+    the centre of the squeezing pad area and ``center_of_mass`` (default: the shape's centre),
+    ``cost_backoff`` per metre of back-off and ``cost_hold`` per m^2 the held section falls short of
+    HOLD_AREA.
     """
     from mplib.collision_detection import fcl
     from table_1000.planning.world import geometry, pose
@@ -360,18 +366,21 @@ def grasp_candidates(shape, transform, hand, obstacles, preferred, center_of_mas
                          obstacles, approach_distance)
         if placed is None:
             continue
-        tcp, backoff, gap, contact = placed
-        cost = angle + cost_offset * float(np.linalg.norm(contact - com)) + cost_backoff * backoff
+        tcp, backoff, gap, contact, held = placed
+        cost = angle + cost_offset * float(np.linalg.norm(contact - com)) + cost_backoff * backoff \
+            + cost_hold * max(0., HOLD_AREA - held)
         heapq.heappush(placed_grasps, (cost, order, Grasp(tcp, open_gap, float(width), backoff, cost, {
-            'approach_deg': float(np.degrees(angle)), 'slide': float(np.linalg.norm(slide)), 'contact_gap': gap})))
+            'approach_deg': float(np.degrees(angle)), 'slide': float(np.linalg.norm(slide)), 'contact_gap': gap,
+            'held_mm2': held * 1e6})))
     while placed_grasps:
         yield heapq.heappop(placed_grasps)[2]
 
 
 def _placed(shape, transform, target, pose, hand, open_gap, obstacles, approach_distance):
-    """``(tcp, backoff, contact gap, contact centre)`` of the first back-off from ``pose`` (the TCP at
-    the contact centre) at which the hand is clear (see :func:`grasp_candidates`), or None when
-    the pads squeeze too little of the object before that."""
+    """``(tcp, backoff, contact gap, contact centre, held area)`` of the first back-off from ``pose``
+    (the TCP at the contact centre) at which the hand is clear (see :func:`grasp_candidates`), or
+    None when the pads squeeze too little of the object, or hold too little of its widest section,
+    there."""
     # Beyond this back-off the pads, open, no longer reach along the approach as far as the object.
     reach = max(points[pads, 0].max() for _, points, pads in hand.inner(open_gap))
     nearest = float(((shape.points() @ transform[:3, :3].T + transform[:3, 3] - pose[:3, 3]) @ pose[:3, 0]).min())
@@ -388,8 +397,28 @@ def _placed(shape, transform, target, pose, hand, open_gap, obstacles, approach_
         if _collides(hand.fcl(tcp, gap, fingers=False), target, 0.) or any(
                 _collides(hand.fcl(tcp, gap), obstacle, clearance) for obstacle, clearance in obstacles):
             continue
-        return tcp, float(backoff), gap, contact
+        held = _held_area(shape, transform, tcp, hand, gap)
+        if held < MIN_HOLD_AREA:
+            return None     # backing off further only holds less
+        return tcp, float(backoff), gap, contact, held
     return None
+
+
+def _held_area(shape, transform, tcp, hand, gap):
+    """Area (m^2, projected on the pads' plane) of the object's widest section across the closing
+    that lies on the pads at least HOLD_MARGIN from their tip end, the hand at world ``tcp`` with
+    the fingers at ``gap``."""
+    rotation, origin = transform[:3, :3], transform[:3, 3]
+    direction = rotation.T @ tcp[:3, 1]
+    widest = float(np.ptp(shape.points() @ direction))
+    pads = np.vstack([points[mask] for _, points, mask in hand.inner(gap)])
+    xs = np.arange(pads[:, 0].min(), pads[:, 0].max() - HOLD_MARGIN, HOLD_SPACING)
+    zs = np.arange(pads[:, 2].min(), pads[:, 2].max(), HOLD_SPACING)
+    if not len(xs) or not len(zs):
+        return 0.
+    x, z = (grid.reshape(-1, 1) for grid in np.meshgrid(xs, zs, indexing='ij'))
+    low, high = shape.interval((tcp[:3, 3] + x * tcp[:3, 0] + z * tcp[:3, 2] - origin) @ rotation, direction)
+    return float(np.count_nonzero(high - low >= widest - HOLD_TOLERANCE)) * HOLD_SPACING ** 2
 
 
 def _close(shape, transform, tcp, hand, open_gap, iterations=9):
