@@ -12,7 +12,7 @@ import sys
 import time
 import traceback
 
-from table_1000.scenes.batch import add_arguments, job_count, process_name, run_batch, worker_gpu
+from table_1000.common.batch import add_arguments, job_count, process_name, run_batch, worker_gpu
 
 
 def load_tests(path):

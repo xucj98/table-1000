@@ -11,8 +11,8 @@ import pytest
 
 from scripts.scenes import build_scene, render, run_expert
 from table_1000.experts.generate import PROCESS_EXITED, summarize
-from table_1000.scenes import batch as scene_batch
-from table_1000.scenes.batch import launch, parse_seeds, plan, run_jobs, seed_range, split
+from table_1000.common import batch as scene_batch
+from table_1000.common.batch import launch, parse_seeds, plan, run_jobs, seed_range, split
 from table_1000.scenes.initial import read_states, write_states
 from table_1000.scenes.recordings import merge, video_path, videos
 
@@ -44,7 +44,7 @@ def test_jobs_share_the_listed_gpus(tmp_path, monkeypatch):
 
 def test_launcher_runs_every_part_with_its_gpu(tmp_path):
     """Each part runs through the launcher prefix without --gpu and reads the GPU the launcher set."""
-    show = 'from table_1000.scenes.batch import worker_gpu; import sys; print(worker_gpu(None)); sys.exit(len(sys.argv) - 1)'
+    show = 'from table_1000.common.batch import worker_gpu; import sys; print(worker_gpu(None)); sys.exit(len(sys.argv) - 1)'
     jobs = [([sys.executable, '-c', show, *extra], tmp_path / name / 'run.log', name)
             for name, extra in (('a', []), ('b', ['fail']))]
     failed = launch(jobs, 'env CUDA_VISIBLE_DEVICES=5', 2)

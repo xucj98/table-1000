@@ -18,7 +18,7 @@ ones; ``--seeds`` (as in ``build_scene.py``) picks episodes, succeeded or failed
 seed. A run replaces the videos of its episodes and keeps the others. Every frame
 restores the recorded state of that step; nothing is simulated. The episodes are
 packed by length into ``--jobs`` processes, spread over ``--gpus`` or submitted
-through ``--launcher`` (see ``table_1000/scenes/batch.py``); episodes whose process
+through ``--launcher`` (see ``table_1000/common/batch.py``); episodes whose process
 stopped before their videos run again (``--retries``). Logs are in
 ``outputs/scenes/<scene>/<backend>/render/``; ``summary.json`` lists the seeds
 with videos.
@@ -80,7 +80,7 @@ def check_cameras(scene, robot, root, names):
 
 def worker(args):
     """Render ``args.seeds`` of the batch in this process."""
-    from table_1000.scenes.batch import worker_gpu
+    from table_1000.common.batch import worker_gpu
     from table_1000.sim.isaaclab.app import start_app
     from table_1000.sim.isaaclab.render import RT2_ARGS
     app = start_app(gpu=worker_gpu(args.gpu), workers=4, extra_args=RT2_ARGS)
@@ -89,7 +89,7 @@ def worker(args):
         from PIL import Image
         from table_1000.robots import load_spec
         from table_1000.scenes import load
-        from table_1000.scenes.batch import parse_seeds
+        from table_1000.common.batch import parse_seeds
         from table_1000.scenes.recordings import MERGED, demo_name, video_path
         from table_1000.sim import CONTROL_HZ
         from table_1000.sim.isaaclab import render, replay
@@ -144,7 +144,7 @@ def worker(args):
 
 
 def main(argv=None):
-    from table_1000.scenes.batch import add_arguments, job_count, parse_seeds, process_name, run_batch, seed_range
+    from table_1000.common.batch import add_arguments, job_count, parse_seeds, process_name, run_batch, seed_range
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('scene')
     parser.add_argument('--physics', required=True, help='the backend the batch was generated on')

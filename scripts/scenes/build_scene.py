@@ -5,7 +5,7 @@
 For each seed, makes the initial state as in ``table_1000/scenes/initial.py``
 (``scene.initialize``, penetration and settling checks, retried with sub-seeds)
 on CPU PhysX. The seeds are split into ``--jobs`` contiguous parts, one process each, spread
-over ``--gpus`` or submitted through ``--launcher`` (see ``table_1000/scenes/batch.py``); seeds
+over ``--gpus`` or submitted through ``--launcher`` (see ``table_1000/common/batch.py``); seeds
 whose process stopped before its result run again (``--retries``). Logs are in
 ``outputs/scenes/<scene>/build/``. Into ``<output>/<scene>/``
 (``<output>`` = ``assets/scenes`` by default), replacing what an earlier run wrote:
@@ -56,7 +56,7 @@ def worker(args):
     work = args.work.resolve()
     (work / 'images').mkdir(parents=True, exist_ok=True)
     render = args.images or args.first > 0
-    from table_1000.scenes.batch import worker_gpu
+    from table_1000.common.batch import worker_gpu
     from table_1000.sim.isaaclab.app import start_app
     from table_1000.sim.isaaclab.render import RT2_ARGS
     app = start_app(gpu=worker_gpu(args.gpu), workers=4, cameras=render, extra_args=RT2_ARGS if render else ())
@@ -65,7 +65,7 @@ def worker(args):
         from PIL import Image
         from table_1000.robots import load_spec
         from table_1000.scenes import load
-        from table_1000.scenes.batch import commit, parse_seeds
+        from table_1000.common.batch import commit, parse_seeds
         from table_1000.scenes.initial import InitializationFailed, initial_state, write_states
         from table_1000.sim.isaaclab.env import RobotEnv
         root, assets = args.root.resolve(), args.assets.resolve()
@@ -138,7 +138,7 @@ def thumbnail(image, path):
 
 
 def main(argv=None):
-    from table_1000.scenes.batch import add_arguments, commit, job_count, parse_seeds, process_name, run_batch, seed_range, seeds_record
+    from table_1000.common.batch import add_arguments, commit, job_count, parse_seeds, process_name, run_batch, seed_range, seeds_record
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('scene')
     parser.add_argument('--seeds', nargs='+', required=True, help='a:b (a to b - 1) and single seeds')

@@ -5,7 +5,7 @@
 Runs ``expert.py`` from every initial state of ``<input>/<scene>/initial_states.hdf5``
 (``<input>`` = ``assets/scenes``, written by ``build_scene.py``). The seeds are
 split into ``--jobs`` contiguous parts, one process each, spread over ``--gpus`` or
-submitted through ``--launcher`` (see ``table_1000/scenes/batch.py``); seeds whose
+submitted through ``--launcher`` (see ``table_1000/common/batch.py``); seeds whose
 process stopped before their episode run again (``--retries``). Logs and the parts'
 files are in ``outputs/scenes/<scene>/<backend>/``. The batch replaces
 ``<output>/<scene>/<backend>/`` (``<output>`` = ``data/scenes``), renders included:
@@ -46,14 +46,14 @@ def worker(args):
     """One part: the given seeds' episodes in this process, into ``args.work``."""
     work = args.work.resolve()
     work.mkdir(parents=True, exist_ok=True)
-    from table_1000.scenes.batch import worker_gpu
+    from table_1000.common.batch import worker_gpu
     from table_1000.sim.isaaclab.app import start_app
     app = start_app(gpu=worker_gpu(args.gpu), workers=4, cameras=False)
     failed = False
     generator = None
     try:
         from table_1000.experts.generate import Generator
-        from table_1000.scenes.batch import parse_seeds
+        from table_1000.common.batch import parse_seeds
         from table_1000.scenes.initial import read_states
         _, states = read_states(args.states)
         generator = Generator(args.scene, work, args.assets.resolve(), args.root.resolve(), physics=args.physics)
@@ -70,7 +70,7 @@ def worker(args):
 
 
 def main(argv=None):
-    from table_1000.scenes.batch import add_arguments, commit, job_count, process_name, run_batch, seed_range
+    from table_1000.common.batch import add_arguments, commit, job_count, process_name, run_batch, seed_range
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('scene')
     parser.add_argument('--physics', choices=BACKENDS, required=True, help='simulation backend')

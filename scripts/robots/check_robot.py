@@ -63,7 +63,7 @@ def parse_unit(name):
 
 def worker(args):
     """Run one process's units, each writing ``report.json`` and ``trajectory.hdf5`` to its directory."""
-    from table_1000.scenes.batch import worker_gpu
+    from table_1000.common.batch import worker_gpu
     from table_1000.sim.isaaclab.app import start_app
     from table_1000.sim.isaaclab.render import RT2_ARGS
     started = time.perf_counter()
@@ -138,7 +138,7 @@ def collect(directory, robot, ran=()):
     """Merge the case reports under ``directory`` (one robot) into ``<backend>/report.json`` and
     ``summary.json``; returns the summary. Results of units not in ``ran`` (``(backend, case, trial)``) are
     from earlier runs: listed under ``earlier`` per backend."""
-    from table_1000.scenes.batch import commit
+    from table_1000.common.batch import commit
     summary = {'robot': robot, 'commit': commit(ROOT), 'backends': {}, 'cases': {}}
     for backend in BACKENDS:
         cases = {}
@@ -174,7 +174,7 @@ def collect(directory, robot, ran=()):
 
 
 def main(argv=None):
-    from table_1000.scenes.batch import add_arguments, job_count, process_name, run_batch
+    from table_1000.common.batch import add_arguments, job_count, process_name, run_batch
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('robots', nargs='+', help='robot names (asset_sources/robots/<name>)')
     parser.add_argument('--physics', nargs='+', choices=BACKENDS, required=True, help='physics backends to run')

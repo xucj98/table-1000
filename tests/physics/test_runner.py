@@ -73,7 +73,7 @@ class CaseResultsTests(unittest.TestCase):
                         'environments': {'count': 1}, 'metrics': {},
                         'performance': {'no_render': {'RTF': 1}, 'video_end_to_end': {'RTF': 1}}}))
                 return []
-            with patch('table_1000.scenes.batch.run_jobs', side_effect=run) as jobs:
+            with patch('table_1000.common.batch.run_jobs', side_effect=run) as jobs:
                 main(['--source', temporary, '--physics', 'isaac-cpu', 'isaac-gpu', '--gpus', '1', '2'])
             self.assertEqual(jobs.call_count, 1)
             commands = jobs.call_args.args[0]
@@ -121,7 +121,7 @@ class CaseResultsTests(unittest.TestCase):
                                             'environments': {'count': 4}, 'metrics': {},
                                             'performance': {'no_render': {'RTF': 1}, 'video_end_to_end': {'RTF': 1}}}))
             # The worker dies at startup and writes nothing.
-            with patch('table_1000.scenes.batch.run_jobs', return_value=['pen/000002 isaac-gpu']):
+            with patch('table_1000.common.batch.run_jobs', return_value=['pen/000002 isaac-gpu']):
                 with self.assertRaises(SystemExit):
                     main(['--source', temporary, '--physics', 'isaac-gpu', '--tests', 'close'])
             result = json.loads((asset / 'physics_test/summary.json').read_text())
@@ -136,7 +136,7 @@ class CaseResultsTests(unittest.TestCase):
             for reference, text in (('pen/000002', "TESTS = {'drop': None}\n"), ('cabinet/000000', "raise ImportError('broken')\n")):
                 (root / reference).mkdir(parents=True)
                 (root / reference / 'physics_test.py').write_text(text)
-            with patch('table_1000.scenes.batch.run_jobs', return_value=[]) as jobs, \
+            with patch('table_1000.common.batch.run_jobs', return_value=[]) as jobs, \
                  patch('traceback.print_exc'):
                 with self.assertRaisesRegex(SystemExit, 'cabinet/000000'):
                     main(['--source', temporary, '--physics', 'isaac-cpu'])

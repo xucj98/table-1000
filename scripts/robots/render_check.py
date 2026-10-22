@@ -28,7 +28,7 @@ FIRST_FRAME_RENDERS = 4
 
 def worker(args):
     """Render this process's units."""
-    from table_1000.scenes.batch import worker_gpu
+    from table_1000.common.batch import worker_gpu
     from table_1000.sim.isaaclab.app import start_app
     from table_1000.sim.isaaclab.render import RT2_ARGS
     app = start_app(gpu=worker_gpu(args.gpu), workers=4, extra_args=RT2_ARGS)
@@ -85,7 +85,7 @@ def worker(args):
 
 
 def main(argv=None):
-    from table_1000.scenes.batch import add_arguments, job_count, process_name, run_batch
+    from table_1000.common.batch import add_arguments, job_count, process_name, run_batch
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('robots', nargs='+', help='robot names (asset_sources/robots/<name>)')
     parser.add_argument('--physics', nargs='+', choices=BACKENDS, required=True, help='backends the cases ran on')

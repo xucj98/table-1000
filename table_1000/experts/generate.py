@@ -123,7 +123,7 @@ def failure_key(report):
 def summarize(reports, seeds):
     """A batch over ``seeds`` from its episode reports: success rate of all the seeds, the failed
     seeds by ``"subtask: reason"`` (seeds without a report under :data:`PROCESS_EXITED`), means."""
-    from table_1000.scenes.batch import seeds_record
+    from table_1000.common.batch import seeds_record
     reports = {report['seed']: report for report in reports}
     succeeded = [report for report in reports.values() if report['status'] == 'success']
     failures = {}

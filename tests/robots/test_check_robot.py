@@ -3,8 +3,8 @@
 import json
 
 from scripts.robots import check_robot
-from table_1000.scenes import batch
-from table_1000.scenes.batch import pack, plan
+from table_1000.common import batch
+from table_1000.common.batch import pack, plan
 
 
 def test_pack_balances_cost():
