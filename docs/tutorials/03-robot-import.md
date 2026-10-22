@@ -54,7 +54,16 @@ uv run python scripts/robots/check_robot.py x1pro --physics gpu --gpu 0 --output
 uv run python scripts/robots/check_parallel.py x1pro --num-envs 4 --gpu 0 --output outputs/robots/x1pro-parallel
 ```
 
-依次是：资产检查、CPU 物理用例（带录像）、GPU 物理用例、单卡 4 个环境的并行检查。结果在 `report.json`，失败时退出码非零；`--video` 为外部视角和机器人每路相机各录一个视频（`wide.mp4`、`face_view.mp4` 等）。CPU 用例连同录像约 12 分钟。
+依次是：资产检查、CPU 物理用例（带录像）、GPU 物理用例、单卡 4 个环境的并行检查。结果在 `report.json`，失败时退出码非零；`--video` 为外部视角和机器人每路相机各录一个视频（`wide.mp4`、`face_view.mp4` 等）。CPU 用例连同录像约 18 分钟。
+
+夹持与推力的随机摆放试验（每个约 4 分钟）分到多个进程并行运行，每个进程跑一个试验编号：
+
+```bash
+for k in $(seq 1 12); do
+  uv run python scripts/robots/check_robot.py x1pro --cases grasp_and_push --trials $k --no-metrics \
+    --gpu 0 --output outputs/robots/x1pro-push/t$k &
+done; wait
+```
 
 **资产检查**
 
@@ -64,7 +73,7 @@ uv run python scripts/robots/check_parallel.py x1pro --num-envs 4 --gpu 0 --outp
 | `prepare.json` | 网格最大误差 0.91 mm，22 个刚体 | 每个网格误差不超过 1 mm，刚体数与 README 一致 |
 | 缩略图 | 见本章开头 | 外观无破面、塌陷；碰撞覆盖完整，刚体划分合理 |
 
-**物理用例**：本例 12 个用例在 CPU 和 GPU 上全部通过。
+**物理用例**：本例 14 个用例在 CPU 上全部通过；GPU 上原 12 个用例和两个新夹持用例全部通过。
 
 | 用例 | 结果要点 |
 | --- | --- |
@@ -76,6 +85,8 @@ uv run python scripts/robots/check_parallel.py x1pro --num-envs 4 --gpu 0 --outp
 | 躯干升入隔板 | 头顶碰到隔板后停住，穿透 0.5 mm，能降回 |
 | 自碰撞 | 右臂摆向立柱时在接触处停下，能退回 |
 | 夹持与晃动 | 方块、圆柱和直径 14 mm 的细棒晃动后相对 TCP 漂移不超过 0.2 mm |
+| 夹持与推力 | 5 种小物体抬起后受 5 N 推力，试验 0–12 全部夹住，漂移不超过 1.0 mm，穿透不超过 0.21 mm |
+| 指尖触桌闭合 | 指尖压桌 5 N、10 N 时闭合，手指不越限，方块最大速度 0.15 m/s |
 | 底盘撞墙 | 停在墙前，不推墙，能开走 |
 | 底盘连续转向 | 以 1 rad/s 原地转 1.25 圈，转角误差 0.002 rad |
 | 持物行驶 | 前进、急停、原地转后手中方块漂移 0.01 mm |

@@ -7,7 +7,7 @@ scene (a table in front of the robot and a few primitive shapes, see
 - **cases** with pass/fail criteria, each starting from a reset (:attr:`Checker.LIBRARY`):
   ``keyframes``, ``sensors``, ``arm_hits_block``, ``arm_pushes_objects``,
   ``drop_on_robot``, ``lift_into_shelf``, ``self_collision``,
-  ``grasp_and_shake``, ``grasp_and_push``, ``base_into_wall``, ``base_full_turn``, ``drive_holding``, ``joint_limits``.
+  ``grasp_and_shake``, ``grasp_and_push``, ``grasp_pressing_table``, ``base_into_wall``, ``base_full_turn``, ``drive_holding``, ``joint_limits``.
   Cases needing a part the robot lacks (cameras, a lift, a mobile base) do not
   apply to it;
 - **metrics** recorded for comparison only: model/simulator consistency, IK,
@@ -55,6 +55,16 @@ HOLD_DRIFT_LIMIT = .005      # m, held object relative to the TCP
 # A held object is pushed at its centre of mass in each world axis direction and
 # PUSH_RANDOM random ones: ramped up over PUSH_RAMP s, held PUSH_HOLD s, released.
 PUSH_FORCE, PUSH_RAMP, PUSH_HOLD, PUSH_RANDOM = 5., .2, .8, 8
+# Grasp trials (``Checker.trials``): trial 0 grasps objects placed at the work point; trial k > 0 shifts them
+# by up to GRASP_OFFSET and turns them by up to GRASP_YAW (deg), and the grasp follows the object's yaw with an
+# error of up to GRASP_YAW_ERROR (deg), drawn with seed k.
+GRASP_OFFSET, GRASP_YAW, GRASP_YAW_ERROR = .01, 10., 3.
+PUSH_REPORT_ONLY = ('disc',)  # reported, not part of the pass condition
+GRASP_PENETRATION_LIMIT = .001   # m, fingers in a held object
+# Closing on an object with the fingers pressing on the table with each of PRESS_FORCES (N; 0: just touching),
+# for approach tilts PRESS_TILTS (deg from horizontal); the hand is lowered in PRESS_STEP steps.
+PRESS_FORCES, PRESS_TILTS, PRESS_STEP = (0., 5., 10.), (90., 80.), .0005
+CALM_SPEED, CALM_SHIFT = .5, .01   # m/s, m: the object is neither flung nor pushed away
 TURN_RATE_MARGIN = 1.05      # measured yaw rate over the commanded one, through whole turns
 TURN_ERROR_LIMIT = .02       # rad, turned angle against the command; m, translation while turning
 KEYFRAME_DRIFT_LIMIT = .01   # rad, joint drift while holding a keyframe
@@ -112,7 +122,7 @@ def parked(index):
 
 
 LIBRARY = ('keyframes', 'sensors', 'arm_hits_block', 'arm_pushes_objects', 'drop_on_robot', 'lift_into_shelf',
-           'self_collision', 'grasp_and_shake', 'grasp_and_push', 'base_into_wall', 'base_full_turn', 'drive_holding', 'joint_limits')
+           'self_collision', 'grasp_and_shake', 'grasp_and_push', 'grasp_pressing_table', 'base_into_wall', 'base_full_turn', 'drive_holding', 'joint_limits')
 # Parts a case needs; it does not apply to a robot without them.
 NEEDS = {'sensors': 'cameras', 'lift_into_shelf': 'lift', 'base_into_wall': 'base', 'base_full_turn': 'base',
          'drive_holding': 'base'}
@@ -218,14 +228,16 @@ class VisualModel:
 
 
 class Checker:
-    def __init__(self, spec, settings, output, assets, root, views=None, video=False, device='cpu'):
-        """``views``: fixed views for videos; ``video`` records them and every robot camera."""
+    def __init__(self, spec, settings, output, assets, root, views=None, video=False, device='cpu', trials=(0,)):
+        """``views``: fixed views for videos; ``video`` records them and every robot camera. ``trials``: the
+        grasp trials of ``grasp_and_push`` (see ``GRASP_OFFSET``)."""
         from table_1000.robots.kinematics import RobotModel
         from table_1000.sim.isaaclab.env import RobotEnv
         from table_1000.sim.isaaclab.video import Video
         self.spec, self.settings, self.output, self.root = spec, settings, Path(output), Path(root)
         self.arm = spec.primary_arm
         self.gripper = f'{self.arm}_gripper'
+        self.trials = tuple(trials)
         self.top = settings.TABLE['height']
         self.scene = check_scene(spec, settings)
         started = time.perf_counter()
@@ -529,17 +541,19 @@ class Checker:
                         break
         raise RuntimeError('no self-collision reachable along single joints')
 
-    def _grasp(self, body, pose, height, approach=.10, clearance=.004):
-        """Top-down grasp of ``body`` resting at ``pose``; returns the closed finger gap."""
+    def _grasp(self, body, pose, height, approach=.10, clearance=.004, yaw=0.):
+        """Top-down grasp of ``body`` resting at ``pose``, the closing direction turned by ``yaw`` (deg) about
+        the vertical from world Y; returns the closed finger gap."""
         self.reset(**{body: pose})
         self.step(count=round(.5 / DT))
         center = self.pose_of(body)[:3, 3]
         # TCP at mid-height (pivoting fingers close on a wide object above the TCP), fingertips
         # ``clearance`` above the table throughout the closing.
         z = max(center[2], self.top + self.finger_reach(self.arm, .08) + clearance)
-        grasp = translation(center[0], center[1], z, down(90))
+        hand = Rotation.from_euler('z', yaw, degrees=True).as_matrix() @ down(90)
+        grasp = translation(center[0], center[1], z, hand)
         self.step({self.gripper: [[.08]]}, count=round(.6 / DT))
-        self.move_joints(self.arm, self.ik(self.arm, translation(*grasp[:3, 3] + [0., 0., approach], down(90))), 2.5)
+        self.move_joints(self.arm, self.ik(self.arm, translation(*grasp[:3, 3] + [0., 0., approach], hand)), 2.5)
         self.move_joints(self.arm, self.ik(self.arm, grasp), 1.5)
         self.step({self.gripper: [[0.]]}, count=round(.8 / DT))
         arm = self.spec.arms[self.arm]
@@ -576,42 +590,129 @@ class Checker:
                             'released': all(r['falls_when_released'] for r in results.values())}
         return self.common(result)
 
+    def grasp_offset(self, trial):
+        """``(dx, dy, object yaw, grasp yaw)`` of grasp trial ``trial`` (m, deg; see ``GRASP_OFFSET``)."""
+        if trial == 0:
+            return 0., 0., 0., 0.
+        random = np.random.default_rng(trial)
+        dx, dy = random.uniform(-GRASP_OFFSET, GRASP_OFFSET, 2)
+        yaw = random.uniform(-GRASP_YAW, GRASP_YAW)
+        return float(dx), float(dy), float(yaw), float(yaw + random.uniform(-GRASP_YAW_ERROR, GRASP_YAW_ERROR))
+
     def grasp_and_push(self):
-        """Grasp each small tabletop object, lift it and push it with PUSH_FORCE at its centre of mass in
-        every direction in turn: it stays in the hand."""
-        lying = Rotation.from_euler('y', 90, degrees=True).as_matrix()   # long axis across the closing (world Y)
-        objects = {'cube1': (self.on_work(0., 0., .01), .01), 'cube4': (self.on_work(0., 0., .04), .04),
-                   'bar': (self.work_point(0., 0., .01, lying), .02), 'rod': (self.work_point(0., 0., .01, lying), .02),
-                   'disc': (self.on_work(0., 0., .01), .01)}
+        """For each grasp trial, grasp each small tabletop object, lift it and push it with PUSH_FORCE at its
+        centre of mass in every direction in turn: it stays in the hand."""
         random = np.random.default_rng(0).normal(size=(PUSH_RANDOM, 3))
         directions = [sign * axis for axis in np.eye(3) for sign in (1., -1.)] + list(
             random / np.linalg.norm(random, axis=1, keepdims=True))
         ramp, hold = round(PUSH_RAMP / DT), round(PUSH_HOLD / DT)
-        results = {}
-        for body, (pose, height) in objects.items():
-            # Fingertips 1 mm above the table: the pads reach down the sides of a 1 cm object.
-            gap = self._grasp(body, pose, height, clearance=.001)
-            lifted = self.ik(self.arm, translation(*self.tcp()[:3, 3] + [0., 0., .08], down(90)))
-            self.move_joints(self.arm, lifted, 1.5)
-            self.step(count=round(.5 / DT))
-            relative = self.held(body)
-            drifts = []
-            for direction in directions:
-                drift = 0.
-                for k in range(1, ramp + hold + 1):
-                    self.env.push_shape(body, PUSH_FORCE * min(1., k / ramp) * direction)
-                    self.step()
-                    drift = max(drift, float(np.linalg.norm(self.held(body)[:3, 3] - relative[:3, 3])))
-                self.env.push_shape(body, np.zeros(3))
-                self.step(count=round(.3 / DT))
-                drifts.append(drift)
-                if drift > .03:    # dropped
-                    break
-            results[body] = {'finger_gap_m': gap, 'drift_m': max(drifts), 'pushes': len(drifts),
-                             'drift_by_push_m': drifts, 'penetration_m': self.penetration(sub_case=True)}
-        result = {'force_n': PUSH_FORCE, 'directions': [d.tolist() for d in directions], 'objects': results}
-        result['checks'] = {'held_without_slip': all(r['drift_m'] <= HOLD_DRIFT_LIMIT and r['pushes'] == len(directions)
-                                                     for r in results.values())}
+        trials = {}
+        for trial in self.trials:
+            dx, dy, yaw, grasp_yaw = self.grasp_offset(trial)
+            turn = Rotation.from_euler('z', yaw, degrees=True).as_matrix()
+            lying = Rotation.from_euler('y', 90, degrees=True).as_matrix()   # long axis across the closing
+            objects = {'cube1': (self.work_point(dx, dy, .005, turn), .01),
+                       'cube4': (self.work_point(dx, dy, .02, turn), .04),
+                       'bar': (self.work_point(dx, dy, .01, turn @ lying), .02),
+                       # A lying PhysX cylinder turned about the vertical rolls away by itself: not turned.
+                       'rod': (self.work_point(dx, dy, .01, lying), .02),
+                       'disc': (self.work_point(dx, dy, .005, turn), .01)}
+            results = {}
+            for body, (pose, height) in objects.items():
+                body_yaw = grasp_yaw - yaw if body == 'rod' else grasp_yaw
+                # Fingertips 1 mm above the table: the pads reach down the sides of a 1 cm object.
+                gap = self._grasp(body, pose, height, clearance=.001, yaw=body_yaw)
+                lifted = self.ik(self.arm, translation(*self.tcp()[:3, 3] + [0., 0., .08],
+                                                       Rotation.from_euler('z', body_yaw, degrees=True).as_matrix() @ down(90)))
+                self.move_joints(self.arm, lifted, 1.5)
+                self.step(count=round(.5 / DT))
+                relative = self.held(body)
+                drifts = []
+                for direction in directions:
+                    drift = 0.
+                    for k in range(1, ramp + hold + 1):
+                        self.env.push_shape(body, PUSH_FORCE * min(1., k / ramp) * direction)
+                        self.step()
+                        drift = max(drift, float(np.linalg.norm(self.held(body)[:3, 3] - relative[:3, 3])))
+                    self.env.push_shape(body, np.zeros(3))
+                    self.step(count=round(.3 / DT))
+                    drifts.append(drift)
+                    if drift > .03:    # dropped; pushing on would fling it
+                        break
+                results[body] = {'finger_gap_m': gap, 'drift_m': max(drifts), 'pushes': len(drifts),
+                                 'held': max(drifts) <= HOLD_DRIFT_LIMIT and len(drifts) == len(directions),
+                                 'drift_by_push_m': drifts, 'penetration_m': self.penetration(sub_case=True)}
+            trials[trial] = {'offset': {'dx_m': dx, 'dy_m': dy, 'object_yaw_deg': yaw, 'grasp_yaw_deg': grasp_yaw},
+                             'objects': results}
+        result = {'force_n': PUSH_FORCE, 'directions': [d.tolist() for d in directions], 'trials': trials,
+                  'report_only': list(PUSH_REPORT_ONLY)}
+        result['checks'] = {'held_without_slip': all(r['held'] for t in trials.values()
+                                                     for body, r in t['objects'].items() if body not in PUSH_REPORT_ONLY)}
+        # A dropped report-only object is still pushed off the hand: its speed is not a fling of the robot's.
+        return self.common(result, GRASP_PENETRATION_LIMIT, speed_limit=np.inf if any(
+            not r['held'] for t in trials.values() for body, r in t['objects'].items() if body in PUSH_REPORT_ONLY)
+            else OBJECT_SPEED_LIMIT)
+
+    def finger_table_force(self, steps):
+        """Mean normal force (N) between the primary arm's fingers and the table over the next ``steps`` steps,
+        stepping with the current targets."""
+        fingers = {f'robot.{link}' for link in self.spec.arms[self.arm].finger_links}
+        self.env.contacts.take_impulses()
+        self.step(count=steps)
+        impulse = sum(value for pair, value in self.env.contacts.take_impulses().items()
+                      if 'table' in pair and fingers & set(pair))
+        return impulse / (steps * DT)
+
+    def grasp_pressing_table(self):
+        """Close on a 4 cm cube with the fingers on the table, just touching or pressing with each of
+        PRESS_FORCES, for each approach tilt of PRESS_TILTS: the fingers stay within their limits and the cube
+        is neither flung nor pushed away."""
+        arm = self.spec.arms[self.arm]
+        joints = ET.parse(self.root / self.spec.urdf).getroot().findall('joint')
+        limits = {j.get('name'): (float(j.find('limit').get('lower')), float(j.find('limit').get('upper')))
+                  for j in joints if j.get('name') in arm.fingers}
+        open_gap = min(.07, arm.max_gap)
+        runs = {}
+        for tilt in PRESS_TILTS:
+            for target in PRESS_FORCES:
+                self.reset(cube4=self.on_work(0., 0., .04))
+                self.step(count=round(.5 / DT))
+                center = self.pose_of('cube4')[:3, 3]
+                touch = max(center[2], self.top + self.finger_reach(self.arm, open_gap))
+                self.step({self.gripper: [[open_gap]]}, count=round(.6 / DT))
+                self.move_joints(self.arm, self.ik(self.arm, translation(*center[:2], touch + .1, down(tilt))), 2.5)
+                # From 3 mm above the visual contact, down until the fingers touch or press with the target force.
+                depth, force = -.003, 0.
+                while depth < .02:
+                    self.move_joints(self.arm, self.ik(self.arm, translation(*center[:2], touch - depth, down(tilt))), .3)
+                    force = self.finger_table_force(5)
+                    if force > 0. and force >= target:
+                        break
+                    depth += PRESS_STEP
+                start = self.pose_of('cube4')[:3, 3].copy()
+                speed, peak, q_min, q_max = 0., 0., np.full(len(arm.fingers), np.inf), np.full(len(arm.fingers), -np.inf)
+                for _ in range(round(1. / DT)):
+                    self.env.contacts.take_impulses()
+                    self.step({self.gripper: [[0.]]})
+                    fingers = {f'robot.{link}' for link in arm.finger_links}
+                    peak = max(peak, sum(v for pair, v in self.env.contacts.take_impulses().items()
+                                         if 'table' in pair and fingers & set(pair)) / DT)
+                    speed = max(speed, float(np.linalg.norm(self.env.privileged()['velocities']['cube4'][0, :3])))
+                    q = self.q(arm.fingers)
+                    q_min, q_max = np.minimum(q_min, q), np.maximum(q_max, q)
+                within = all(limits[j][0] - .02 <= lo and hi <= limits[j][1] + .02
+                             for j, lo, hi in zip(arm.fingers, q_min, q_max))
+                runs[f'tilt{tilt:g}_{target:g}n'] = {
+                    'depth_below_visual_contact_m': depth, 'force_before_closing_n': force, 'peak_force_closing_n': peak,
+                    'max_cube_speed': speed, 'cube_shift_m': float(np.linalg.norm(self.pose_of('cube4')[:3, 3] - start)),
+                    'finger_range': [[float(lo), float(hi)] for lo, hi in zip(q_min, q_max)], 'fingers_within_limits': within,
+                    'finger_gap_m': float(arm.gap(self.q(arm.fingers)))}
+        result = {'runs': runs}
+        result['checks'] = {'pressed': all(r['force_before_closing_n'] >= f for r, f in zip(
+                                runs.values(), [f for _ in PRESS_TILTS for f in PRESS_FORCES])),
+                            'fingers_within_limits': all(r['fingers_within_limits'] for r in runs.values()),
+                            'cube_calm': all(r['max_cube_speed'] <= CALM_SPEED and r['cube_shift_m'] <= CALM_SHIFT
+                                             for r in runs.values())}
         return self.common(result)
 
     def base_into_wall(self):

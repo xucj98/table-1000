@@ -5,7 +5,8 @@ writes ``report.json`` (every case with its checks, then the metrics) and, with
 ``--video``, one video of all cases per view: ``wide.mp4`` from outside and
 ``<camera>.mp4`` for every robot camera (depth as grey, white near). The robot's settings and cases come from
 ``asset_sources/robots/<name>/robot_test.py``; ``--cases a b`` runs only those
-cases, ``--no-metrics`` skips the metrics. The exit status is 1 when a case does not pass
+cases, ``--no-metrics`` skips the metrics, ``--trials 1 2 3`` sets the grasp trials of ``grasp_and_push``
+(run separate processes on different trials in parallel). The exit status is 1 when a case does not pass
 or the run fails. See ``table_1000/robots/checks.py``.
 """
 
@@ -31,6 +32,8 @@ def main(argv=None):
     parser.add_argument('--physics', choices=('cpu', 'gpu'), default='cpu')
     parser.add_argument('--video', action='store_true')
     parser.add_argument('--cases', nargs='*')
+    parser.add_argument('--trials', type=int, nargs='+', default=[0],
+                        help='grasp trials of grasp_and_push (0: at the work point; k > 0: random placement, seed k)')
     parser.add_argument('--no-metrics', action='store_true')
     parser.add_argument('--benchmark', action='store_true', help='only the collision-cost benchmark')
     parser.add_argument('--root', type=Path, default=ROOT, help='repository root holding the robot source')
@@ -56,7 +59,8 @@ def main(argv=None):
         spec = load_spec(args.robot, root)
         # The outside view and every robot camera, one video each.
         checker = Checker(spec, load_robot_test(args.robot, root), output, args.assets.resolve(), root,
-                          views=VIEW if args.video else None, video=args.video, device=device)
+                          views=VIEW if args.video else None, video=args.video, device=device,
+                          trials=args.trials)
         report['load_s'] = checker.load_s
         if args.benchmark:
             from table_1000.robots.checks import benchmark
