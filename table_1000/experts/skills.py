@@ -65,10 +65,12 @@ surface, then :func:`release`.
 
 **make_room** -- move the base (backed off along its start heading, turned) to the
 least move from where given TCP poses are reachable with every joint a margin inside
-its limits (``move_base`` drives it straight and turns it in place).
+its limits, the free arms back at their start pose first (``move_base`` drives it
+straight and turns it in place).
 
-**retry** -- a step run again when it fails (``ATTEMPTS`` in all), the arms that hold
-nothing back at their start pose first, so that its choices start afresh.
+**retry** -- a step run again when it fails (``ATTEMPTS`` in all, within
+``RETRY_BUDGET`` s of the episode), the arms that hold nothing back at their start pose
+first, so that its choices start afresh.
 
 Each choice of another candidate is noted (``ctx.note``).
 """
@@ -96,6 +98,7 @@ SUPPORT_DISTANCE = .003 # m, planning objects this close to the grasped one supp
 PLACE_ABOVE = .08       # m, place comes down from this high above the release pose
 PLACE_CLEARANCE = .01   # m between the held object and the surface at the release
 ATTEMPTS = 3            # tries of a step under retry
+RETRY_BUDGET = 240.     # s of an episode (wall clock) after which a failed step is not tried again
 # The base drives at most BASE_SPEED (m/s) and turns at most BASE_TURN (rad/s), proportionally to the
 # error (BASE_GAIN) until within BASE_TOLERANCE (m, rad), then settles for BASE_SETTLE s. make_room
 # tries it BASE_BACKS (m) behind its start and turned by BASE_TURNS (deg), for every joint
@@ -680,6 +683,7 @@ class Skills:
         now_turn = float((yaw - yaw0 + np.pi) % (2 * np.pi) - np.pi)
         if abs(now_back - back) < BASE_TOLERANCE[0] * 2 and abs(now_turn - turn) < BASE_TOLERANCE[1] * 2:
             return
+        self.ready()        # the free arms in, so that they sweep nothing as the base turns
         self.move_base(0., -now_turn)
         self.move_base(now_back - back, turn)
 
@@ -760,14 +764,15 @@ def make_room(ctx, poses, arms=None):
     _skills(ctx).make_room(poses, arms)
 
 
-def retry(ctx, step, attempts=ATTEMPTS):
+def retry(ctx, step, attempts=ATTEMPTS, budget=RETRY_BUDGET):
     """``step()``, again up to ``attempts`` times in all when it fails (each choice of grasp, path
-    and spot starts afresh from where things are), the free arms back at their start pose first."""
+    and spot starts afresh from where things are), the free arms back at their start pose first;
+    not once the episode has run ``budget`` s (wall clock)."""
     for attempt in range(1, attempts + 1):
         try:
             return step()
         except ExpertFailed as failure:
-            if attempt == attempts:
+            if attempt == attempts or ctx.elapsed() > budget:
                 raise
             ctx.note('retry', attempt=attempt, reason=failure.reason)
             _skills(ctx).ready()

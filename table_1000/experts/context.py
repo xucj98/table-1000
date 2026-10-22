@@ -20,6 +20,7 @@ retried unless the expert does it.
 
 from contextlib import contextmanager
 from pathlib import Path
+import time
 
 import numpy as np
 from scipy.spatial.transform import Rotation
@@ -51,9 +52,14 @@ class Context:
         self.events = []        # (step, note) along the way, for the episode report
         self.origin = env.steps  # the episode starts here, after settling
         self.observers = []      # called after every step (e.g. video capture)
+        self.started = time.perf_counter()
         self.sync_model()
 
     # -- stepping ------------------------------------------------------------------
+    def elapsed(self):
+        """Wall-clock seconds since the episode started."""
+        return time.perf_counter() - self.started
+
     @property
     def steps(self):
         """Control steps since the episode started."""
