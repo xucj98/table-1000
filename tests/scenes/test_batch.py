@@ -253,7 +253,8 @@ def test_build_scene_combines_parts(tmp_path, monkeypatch):
     directory = output / '000000'
     report = json.loads((directory / 'initial.json').read_text())
     assert report['seeds'] == {'range': '0:5', 'count': 5} and report['without_state'] == [1]
-    assert list(read_states(directory / 'initial_states.hdf5')[1]) == [0, 2, 3, 4]
+    attrs, states = read_states(directory / 'initial_states.hdf5')
+    assert list(states) == [0, 2, 3, 4] and attrs['scene'] == '000000' and attrs['robot'] == 'x1pro'
     assert Image.open(directory / 'initial_states.jpg').size == (2 * build_scene.TILE_WIDTH, 216 + build_scene.CAPTION)
     assert not (directory / 'initial').exists()            # replaced, and no --images this time
     assert not (root / 'asset_sources').exists()           # a custom output keeps the thumbnail

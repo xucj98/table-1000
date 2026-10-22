@@ -246,7 +246,8 @@ def run_case(asset,name,test,output,app,startup,gpu,physics="cpu",num_envs=1,uti
 
 # Backend name -> PhysX device. Each backend writes physics_test/<name>/.
 BACKENDS={'isaac-cpu':'cpu','isaac-gpu':'gpu'}
-ENTRY=Path(__file__).resolve().parents[2]/'scripts/assets/physics_test.py'
+ROOT=Path(__file__).resolve().parents[2]
+ENTRY=ROOT/'scripts/assets/physics_test.py'
 
 
 def significant(value,digits=4):
@@ -373,7 +374,7 @@ def main(argv=None):
              for reference in references}
     if not args.scripts:
         for reference,script in scripts.items():
-            edited=ENTRY.parents[2]/'asset_sources'/'objects'/reference/'physics_test.py'
+            edited=ROOT/'asset_sources'/'objects'/reference/'physics_test.py'
             if edited.is_file() and script.is_file() and edited.read_bytes()!=script.read_bytes():
                 print(f'WARNING {reference}: {script} differs from {edited}; rebuild with build_physics.py '
                       'or test the edited one with --scripts asset_sources/objects',flush=True)
