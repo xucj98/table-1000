@@ -95,6 +95,7 @@ LIFT = .10              # m, pick's lift
 HELD_TOLERANCE = .005   # m the closed gap may fall short of the gap at which the pads touch the object
 MAX_REGRASPS = 2
 MAX_IK = 60             # candidates checked by IK per arm and choice
+CANDIDATE_PLANS = 2     # RRTConnect tries (3 s, then 6 s) per candidate before the next is taken
 MAX_PLANS = 6           # candidates whose motion is tried per grasp attempt
 IK_ATTEMPTS = 20        # IK restarts per pose
 MIN_RISE = .05          # m the object must rise in pick's lift
@@ -390,7 +391,7 @@ class Skills:
             solver = self.solvers[arm]
             try:
                 solver.open_gripper(grasp.open_gap)
-                solver.move_to_pose_with_RRTConnect(None, lift=True, goals=[q_pre])
+                solver.move_to_pose_with_RRTConnect(None, lift=True, goals=[q_pre], attempts=CANDIDATE_PLANS)
                 solver.allow([*target.names, *supports])
                 solver.move_to_pose_with_screw(grasp.pose)
                 return arm, grasp, supports
@@ -553,7 +554,7 @@ class Skills:
             touched = [name for name, obj in solver.world.objects.items() if obj.body == target.body] or target.names
             try:
                 solver.close_gripper()
-                solver.move_to_pose_with_RRTConnect(None, lift=True, goals=[q_pre])
+                solver.move_to_pose_with_RRTConnect(None, lift=True, goals=[q_pre], attempts=CANDIDATE_PLANS)
                 solver.allow(touched)
                 solver.move_to_pose_with_screw(contact)
                 break
@@ -792,7 +793,7 @@ class Skills:
                 continue
             result['planned'] += 1
             try:
-                solver.move_to_pose_with_RRTConnect(None, lift=True, goals=[q_above])
+                solver.move_to_pose_with_RRTConnect(None, lift=True, goals=[q_above], attempts=CANDIDATE_PLANS)
                 solver.move_to_pose_with_screw(release)
                 result.update(done=True, spot=spot)
                 return result
