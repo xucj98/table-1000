@@ -16,6 +16,7 @@ TOP, BOTTOM = 'drawer1', 'drawer3'
 OPENING = .16           # m a drawer is pulled out (stroke 0.173)
 OPEN_TOLERANCE = .02    # m short of OPENING still counts as open
 CLOSED = .005           # m
+PUSH_PAST = .003        # m pushed beyond the closed stop, so the drawer surely reaches it
 # Spots for the pen on the table: a grid in front of the robot (SPOT_AHEAD of its centre, within
 # the reach of a grasp from above), clear of the cabinet and of the drawers' pull-out space by
 # SPOT_MARGIN, nearest the pen first.
@@ -41,7 +42,10 @@ def pull(ctx, drawer, distance):
 def move_drawer(ctx, drawer, opening):
     """Grasp the handle, slide the drawer to ``opening``, let go."""
     move = pull(ctx, drawer, opening - ctx.joint('cabinet', slide(drawer)))
-    held = skills.grasp(ctx, 'cabinet', f'{body(drawer)}.handle', then=move)
+    # Straight at the drawer face: pivoting fingers pinching the handle's ends from above slip off
+    # in the pull.
+    inward = ctx.pose('cabinet', body(drawer))[:3, 1]
+    held = skills.grasp(ctx, 'cabinet', f'{body(drawer)}.handle', then=move, approach=inward)
     housing = ctx.pose('cabinet')[:3, 3]
     skills.move_by_displacement(ctx, held['arm'], *move, drag=('cabinet', body(drawer)))
     ctx.note('slid', drawer=drawer, opening=ctx.joint('cabinet', slide(drawer)),
@@ -58,8 +62,15 @@ def open_drawer(ctx, drawer):
 
 
 def close_drawer(ctx, drawer):
-    move_drawer(ctx, drawer, 0.)
+    """Push the drawer shut by its handle with the closed fingers: no grasp needed, and the handle
+    of an open drawer is too close to the body to grasp straight on."""
+    inward = ctx.pose('cabinet', body(drawer))[:3, 1]
+    housing = ctx.pose('cabinet')[:3, 3]
+    pushed = skills.push(ctx, 'cabinet', f'{body(drawer)}.handle', direction=inward,
+                         distance=ctx.joint('cabinet', slide(drawer)) + PUSH_PAST)
     opening = ctx.joint('cabinet', slide(drawer))
+    ctx.note('pushed', drawer=drawer, opening=opening, arm=pushed['arm'], tilt=pushed['tilt'],
+             cabinet_shift=float(np.linalg.norm(ctx.pose('cabinet')[:3, 3] - housing)))
     if opening > CLOSED:
         ctx.fail('drawer not closed', opening=opening)
 

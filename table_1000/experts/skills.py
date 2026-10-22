@@ -1,4 +1,4 @@
-"""Atomic skills for experts: grasp, pick, move by a displacement, release, place.
+"""Atomic skills for experts: grasp, pick, move by a displacement, push, release, place.
 
 Named after RoboTwin 2.0's task API (``grasp_actor``, ``move_by_displacement``,
 ``place_actor``, ``open_gripper``/``close_gripper``) but blocking like the rest of
@@ -46,12 +46,17 @@ names a body moved through a joint by the held part (a drawer pulled by its
 handle): its planning objects move with the hand and may touch the rest of their
 object and whatever rests on them.
 
+**push** -- the closed fingertips against the face of a part that ``direction``
+points into, then straight on by ``distance`` (a drawer pushed shut by its front);
+the hand comes level with the push or tilted down (``PUSH_TILTS``), and what the
+part's body carries moves with it as in a drag.
+
 **release** -- open the fingers to the grasp's opening and back out along the
 approach (or up).
 
 **place** -- put the held object down at the first of ``spots`` (world points:
 the centre of its footprint and the height of the surface under it) and turn about
-the vertical that plans: above it, straight down to ``clearance`` over the surface,
+the vertical that plans (at most ``MAX_PLACES`` tried): above it, straight down to ``clearance`` over the surface,
 then :func:`release`. The object keeps its orientation, turned to ``heading`` (the
 world direction of its body's X axis, if given) and by each of ``turns``.
 
@@ -80,8 +85,17 @@ MIN_RISE = .05          # m the object must rise in pick's lift
 SUPPORT_DISTANCE = .003 # m, planning objects this close to the grasped one support it
 PLACE_ABOVE = .08       # m, place comes down from this high above the release pose
 PLACE_CLEARANCE = .01   # m between the held object and the surface at the release
+MAX_PLACES = 16         # (spot, turn) options place tries
 RETREATS = (APPROACH, .03)   # m, back-off after releasing, tried in order
 WHY_LIMIT = 20          # rejected grasps per choice whose collisions are counted for the report
+PUSH_GAP = .03          # m, push starts with the fingertips this far in front of the face
+PUSH_TILTS = np.radians([0., 20., 40., 60.])   # push approaches, tilted down from the push direction
+
+
+def collisions(error):
+    """The collisions a :class:`PlanningFailed` reports (of its path, start or goal)."""
+    plan = error.details.get('plan', {})
+    return {key: plan[key] for key in ('collisions', 'start_collisions', 'goal_collisions') if plan.get(key)}
 
 
 def normalized(vector):
@@ -124,7 +138,12 @@ class Skills:
                 solver.add_table()
             for name in ctx.scene.OBJECTS:
                 if not any(key.startswith(name + ':') for key in solver.world.objects):
-                    solver.add_object(name, lambda body, part: (part, body))
+                    # Parts of one asset touch or overlap each other (a cap on a pen, a drawer in its
+                    # housing); only their contacts with the robot and other objects are planned.
+                    # A part that is about convex (or too thin to get into) is checked as one hull.
+                    parts = [obj.name for obj in solver.add_object(name, lambda body, part: (part, body),
+                                                                   merged=ctx.geometry[name].solid)]
+                    solver.world.allow(parts, parts)
         self.held = {}      # arm -> {'target', 'supports', 'grasp'}
         self.log, self.rejected = [], {}
 
@@ -208,7 +227,7 @@ class Skills:
                 solver.sync()
                 # The fingers touch the object and come closer to its supports than the padding.
                 solver.allow([*target.names, *supports])
-                status, q_grasp = self.model.ik(arm, grasp.pose, start, world=True, lift=True, attempts=IK_ATTEMPTS)
+                status, q_grasp = self.ik(arm, grasp.pose, start)
                 solver.allow([*target.names, *supports], False)
                 if status != 'Success':
                     self.rejected['grasp IK'] += 1
@@ -230,6 +249,14 @@ class Skills:
                         continue
                 skip.add((arm, index))
                 yield arm, grasp, supports, q_grasp, q_pre
+
+    def ik(self, arm, pose, start):
+        """IK of world ``pose`` keeping the torso lift where it is, else moving it too (a far lift
+        counts little among the arm's angles, and a raised torso makes later plans longer)."""
+        status, q = self.model.ik(arm, pose, start, world=True, attempts=IK_ATTEMPTS)
+        if status == 'Success':
+            return status, q
+        return self.model.ik(arm, pose, start, world=True, lift=True, attempts=IK_ATTEMPTS)
 
     def why(self, arm, pose, start, allowed):
         """Count, in ``self.rejected['collisions']``, what an IK solution of ``pose`` that ignores
@@ -302,7 +329,7 @@ class Skills:
                 return arm, grasp, supports
             except PlanningFailed as error:
                 solver.allow([*target.names, *supports], False)
-                ctx.note('next grasp', arm=arm, cost=grasp.cost, reason=error.reason)
+                ctx.note('next grasp', arm=arm, cost=grasp.cost, reason=error.reason, **collisions(error))
         return None
 
     def pick(self, target, arm=None, point=None, approach=None, height=LIFT):
@@ -328,21 +355,25 @@ class Skills:
         displacement = np.asarray(displacement, dtype=float)
         held = self.held.get(arm)
         supports = held['supports'] if held else []
-        dragged, contacts = self.dragged(arm, drag) if drag else ([], [])
+        dragged, riders, contacts = self.dragged(arm, drag) if drag else ([], [], [])
         if dragged:
-            solver.carry(dragged, contacts)
+            solver.carry(dragged, contacts + riders)
+            solver.carry(riders, contacts)
         try:
             self.straight(arm, displacement)
         finally:
             if dragged:
-                solver.release(dragged, contacts)
+                solver.release(riders, contacts)
+                solver.release(dragged, contacts + riders)
             if held:
                 solver.allow(supports, False)
                 held['supports'] = []
 
     def dragged(self, arm, drag):
-        """Planning objects of body ``drag`` (``(object, body)``) not yet held, and what they may
-        touch: the rest of their object and the objects within ``SUPPORT_DISTANCE`` of them."""
+        """``(own, riders, contacts)``: the planning objects of body ``drag`` (``(object, body)``) not
+        yet held, every part of the other objects resting on or against it (a pen in a drawer rides
+        along), and what they may touch besides each other and the rest of their objects: the
+        objects within ``SUPPORT_DISTANCE`` of them."""
         from mplib.collision_detection import fcl
         solver = self.solvers[arm]
         solver.sync()
@@ -350,15 +381,19 @@ class Skills:
         attached = world.planner.planning_world.is_object_attached
         names = [name for name, obj in world.objects.items() if obj.body == key and not attached(name)]
         bodies = [world.objects[name].fcl(world.poses[name]) for name in names]
-        # The dragged parts touch each other and the held part they hang on.
-        contacts = list(names) + [name for name in world.objects if attached(name)]
-        for name, obj in world.objects.items():
-            if name in names or attached(name):
-                continue
-            if name.startswith(drag[0] + ':') or any(
-                    fcl.distance(body, obj.fcl(world.poses[name])).min_distance < SUPPORT_DISTANCE for body in bodies):
-                contacts.append(name)
-        return names, contacts
+        def touching(names, bodies, skip):
+            return [name for name, obj in world.objects.items()
+                    if name not in names and not attached(name) and not name.startswith(skip) and any(
+                        fcl.distance(body, obj.fcl(world.poses[name])).min_distance < SUPPORT_DISTANCE
+                        for body in bodies)]
+
+        objects = {name.split(':')[0] for name in touching(names, bodies, drag[0] + ':') if ':' in name}
+        riders = [name for name in world.objects
+                  if ':' in name and name.split(':')[0] in objects and not attached(name)]
+        carried = names + riders
+        bodies = [world.objects[name].fcl(world.poses[name]) for name in carried]
+        return names, riders, [name for name in touching(carried, bodies, drag[0] + ':')
+                               if name.split(':')[0] not in objects]
 
     def straight(self, arm, displacement):
         """Straight by ``displacement``; straight up out of the arm's reach (it may hit the body
@@ -396,8 +431,60 @@ class Skills:
                 reason, collisions = error.reason, error.details.get('plan', {}).get('collisions')
         ctx.note('rise short', rest=rest, reason=reason, collisions=collisions)
 
+    def push(self, target, direction, distance, arm=None):
+        """Push ``target`` (:class:`Target`) by ``distance`` along world ``direction``; see the
+        module docstring. Returns ``{'arm', 'tilt', 'moved'}`` (how far its body went)."""
+        ctx = self.ctx
+        direction = normalized(np.asarray(direction, dtype=float))
+        transform = ctx.poses()[target.body] @ target.offset
+        face = transform[:3, 3] + direction * float((target.shape.points() @ transform[:3, :3].T @ direction).min())
+        level = normalized(direction - [0., 0., direction[2]])
+        side = normalized(np.cross([0., 0., 1.], level))
+        arms = [arm] if arm else [a for a in self.arms if a not in self.held]
+        options = []
+        for candidate in sorted(arms, key=lambda a: np.linalg.norm((self.shoulder(a) - face)[:2])):
+            tip = self.hands[candidate].tip()
+            for tilt in PUSH_TILTS:
+                approach = normalized(level * np.cos(tilt) - np.array([0., 0., 1.]) * np.sin(tilt))
+                for closing in (side, normalized(np.cross(approach, side))):
+                    pose = np.eye(4)
+                    pose[:3, :3] = np.c_[approach, closing, np.cross(approach, closing)]
+                    pose[:3, 3] = face - approach * tip
+                    options.append((candidate, tilt, pose))
+        before = ctx.poses()[target.body][:3, 3]
+        for candidate, tilt, contact in options:
+            solver = self.solvers[candidate]
+            start = self.model.vector(ctx.spec.arms[candidate].finger_targets(0.))
+            status, q_pre = self.ik(candidate, translated(contact, -direction * PUSH_GAP), start)
+            if status != 'Success':
+                continue
+            status, _ = self.model.ik(candidate, translated(contact, direction * distance), q_pre, world=True,
+                                      attempts=IK_ATTEMPTS, check_collision=False)
+            if status != 'Success':
+                continue
+            try:
+                solver.close_gripper()
+                solver.move_to_pose_with_RRTConnect(None, lift=True, goals=[q_pre])
+                solver.allow(target.names)
+                solver.move_to_pose_with_screw(contact)
+                break
+            except PlanningFailed as error:
+                solver.allow(target.names, False)
+                ctx.note('next push', arm=candidate, tilt=float(tilt), reason=error.reason, **collisions(error))
+        else:
+            ctx.fail('no reachable push', target=target.names)
+        try:
+            self.move_by_displacement(candidate, direction * distance, drag=(target.obj, target.body.split(':', 1)[1]))
+        finally:
+            solver.allow(target.names, False)
+        moved = float((ctx.poses()[target.body][:3, 3] - before) @ direction)
+        solver.first_reachable([translated(solver.tcp(), -direction * d) for d in RETREATS]
+                               + [translated(solver.tcp(), [0., 0., d]) for d in RETREATS])
+        return {'arm': candidate, 'tilt': float(tilt), 'moved': moved}
+
     def release(self, arm):
-        """Open the fingers to the grasp's opening and back out along the approach, or up."""
+        """Open the fingers to the grasp's opening and back out along the approach (straight, else
+        planned), or up."""
         held = self.held.pop(arm)
         solver = self.solvers[arm]
         solver.open_gripper(held['grasp']['open_gap'])
@@ -405,8 +492,12 @@ class Skills:
             solver.detach(name)
         solver.sync()
         tcp = solver.tcp()
+        # Straight out, else out along a planned path, else straight up.
+        moves = [lambda d=d: solver.move_to_pose_with_screw(standoff(tcp, d)) for d in RETREATS]
+        moves.append(lambda: solver.move_to_pose_with_RRTConnect(standoff(tcp, RETREATS[0]), lift=True))
+        moves += [lambda d=d: solver.move_to_pose_with_screw(translated(tcp, [0., 0., d])) for d in RETREATS]
         try:
-            solver.first_reachable([standoff(tcp, d) for d in RETREATS] + [translated(tcp, [0., 0., d]) for d in RETREATS])
+            solver.first_reachable(moves, lambda move: move())
         finally:
             solver.allow([*held['target'].names, *held['supports']], False)
 
@@ -425,7 +516,7 @@ class Skills:
         if heading is not None:
             axis = current[:3, 0]
             delta = float(np.arctan2(heading[1], heading[0]) - np.arctan2(axis[1], axis[0]))
-        options = [(np.asarray(spot, dtype=float), turn) for spot in spots for turn in turns]
+        options = [(np.asarray(spot, dtype=float), turn) for spot in spots for turn in turns][:MAX_PLACES]
         for index, (spot, turn) in enumerate(options):
             rotation = Rotation.from_euler('z', delta + turn).as_matrix() @ current[:3, :3]
             points = target.points @ rotation.T
@@ -435,13 +526,21 @@ class Skills:
             placed[2, 3] = spot[2] + clearance - points[:, 2].min()
             release = placed @ np.linalg.inv(tcp_object)
             try:
-                solver.move_to_pose_with_RRTConnect(translated(release, [0., 0., above]), lift=True)
+                status, q_above = self.ik(arm, translated(release, [0., 0., above]), self.model.q)
+                if status != 'Success':
+                    raise PlanningFailed(ctx.current, status)
+                solver.move_to_pose_with_RRTConnect(None, lift=True, goals=[q_above])
                 solver.move_to_pose_with_screw(release)
                 break
             except PlanningFailed as error:
+                details = collisions(error)
+                if error.reason.startswith('IK'):
+                    self.rejected = {'collisions': {}}
+                    self.why(arm, translated(release, [0., 0., above]), self.model.q, [])
+                    details['collisions'] = self.rejected['collisions']
                 if index == len(options) - 1:
-                    raise
-                ctx.note('next placement', arm=arm, spot=spot.tolist(), turn=float(turn), reason=error.reason)
+                    ctx.fail('no placement', arm=arm, last=error.reason, **details)
+                ctx.note('next placement', arm=arm, spot=spot.tolist(), turn=float(turn), reason=error.reason, **details)
         self.release(arm)
         ctx.hold(.3)
         return {'arm': arm, 'spot': spot.tolist(), 'turn': float(turn), 'object': ctx.poses()[target.body].tolist()}
@@ -466,6 +565,12 @@ def pick(ctx, obj, part=None, *, arm=None, shape=None, offset=None, body=None, p
 def move_by_displacement(ctx, arm, x=0., y=0., z=0., drag=None):
     """Move ``arm``'s TCP straight by ``(x, y, z)`` (world); ``drag``: ``(object, body)`` moved by the held part."""
     _skills(ctx).move_by_displacement(arm, (x, y, z), drag)
+
+
+def push(ctx, obj, part=None, *, direction, distance, arm=None, shape=None, offset=None, body=None):
+    """See :meth:`Skills.push`; the target as for :func:`grasp`."""
+    skills = _skills(ctx)
+    return skills.push(skills.target(obj, part, shape, offset, body), direction, distance, arm)
 
 
 def release(ctx, arm):

@@ -201,8 +201,14 @@ class RobotModel:
         result = planner.plan_qpos(list(goals), start, time_step=time_step, planning_time=planning_time,
                                    fixed_joint_indices=[] if lift else list(range(len(self.spec.lift))))
         planner.robot.set_qpos(self.q, True)
+        if result['status'] == 'Success' and not len(result['position']):
+            # Already at the goal: a path of the start alone.
+            row = start[planner.move_group_joint_indices][None]
+            result.update(position=row, velocity=np.zeros_like(row), acceleration=np.zeros_like(row), duration=0.)
         if result['status'] != 'Success':
-            result['reason'] = result['status']
+            # Most often the start or a goal is in collision already.
+            result.update(reason=result['status'], start_collisions=self.collisions(arm, start),
+                          goal_collisions=self.collisions(arm, np.asarray(list(goals)[0])))
         result.update(ik_s=ik_s, rrt_s=time.perf_counter() - started - ik_s)
         return self._arm_path(arm, result, lift)
 

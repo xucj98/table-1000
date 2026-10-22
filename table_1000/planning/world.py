@@ -74,6 +74,28 @@ def grow(vertices, padding):
     return centre + (vertices - centre) * (half + padding) / half
 
 
+# Collision checks cost about linearly in hull vertices; a planning hull keeps at most this many.
+HULL_VERTICES = 64
+
+
+def simplify_hull(vertices, limit=HULL_VERTICES):
+    """Vertices of a convex hull of at most ``limit`` of ``vertices`` (greedily the farthest outside
+    the hull so far), grown to cover the ones left out."""
+    from scipy.spatial import ConvexHull
+    vertices = np.unique(np.asarray(vertices, dtype=float), axis=0)
+    if len(vertices) <= limit:
+        return vertices
+    directions = np.array([[x, y, z] for x in (-1, 0, 1) for y in (-1, 0, 1) for z in (-1, 0, 1) if x or y or z])
+    chosen = sorted(set(np.argmax(vertices @ directions.T, axis=0).tolist()))
+    while True:
+        planes = ConvexHull(vertices[chosen]).equations
+        outside = (vertices @ planes[:, :3].T + planes[:, 3]).max(1)
+        if len(chosen) >= limit or outside.max() <= 1e-4:
+            break
+        chosen.append(int(np.argmax(outside)))
+    return grow(vertices[chosen], max(float(outside.max()), 0.))
+
+
 def geometry(kind, data, padding=0.):
     """FCL shape grown by ``padding`` on every side.
 
@@ -87,7 +109,7 @@ def geometry(kind, data, padding=0.):
         return fcl.Box(*(np.asarray(data) + 2 * padding))
     if kind == 'cylinder':    # (radius, length) along the shape frame's Z
         return fcl.Cylinder(data[0] + padding, data[1] + 2 * padding)
-    hull = trimesh.Trimesh(data).convex_hull
+    hull = trimesh.Trimesh(simplify_hull(data)).convex_hull
     vertices = grow(hull.vertices, padding) if padding else np.asarray(hull.vertices, dtype=float)
     return fcl.Convex(vertices, np.asarray(hull.faces, dtype=np.int32))
 

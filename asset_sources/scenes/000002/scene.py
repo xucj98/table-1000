@@ -48,8 +48,13 @@ VIEWS = {
 CABINET_AHEAD, CABINET_SIDE = (.80, .86), .35
 CABINET_TURN = math.radians(15)
 # Pen in the top drawer (drawer frame = cabinet frame while closed): its centre over this region
-# of the drawer floor, turned from the drawer's width by up to PEN_TURN, either way round.
-TOP_FLOOR, PEN_REGION, PEN_TURN = 'cabinet.drawer1.bottom', ((-.03, -.09), (.03, -.05)), math.radians(15)
+# of the drawer floor, turned from the drawer's width by up to PEN_TURN, either way round. The
+# region is the middle of the part that comes out, so a hand closing across the pen fits between
+# the drawer's front wall and the housing.
+# Released this far above the floor: exactly touching, a thin barrel against the floor can read as
+# a deep penetration.
+DROP = .001
+TOP_FLOOR, PEN_REGION, PEN_TURN = 'cabinet.drawer1.bottom', ((-.03, -.06), (.03, -.035)), math.radians(10)
 
 
 def initialize(layout):
@@ -68,5 +73,5 @@ def initialize(layout):
     pen[:3, :3] = layout.geometry['pen'].stable_rotation(pen[:3, :3])
     centre = layout.geometry['pen'].points() @ pen[:3, :3].T
     pen[:2, 3] -= (centre[:, :2].min(0) + centre[:, :2].max(0)) / 2   # the pen's middle, not its origin
-    pen[2, 3] = cabinet[2, 3] + floor - layout.geometry['pen'].lowest(pen[:3, :3])
+    pen[2, 3] = cabinet[2, 3] + floor + DROP - layout.geometry['pen'].lowest(pen[:3, :3])
     layout.set_pose('pen', pen, on='cabinet')

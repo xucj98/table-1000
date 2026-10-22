@@ -81,6 +81,23 @@ class AssetGeometry:
                 best = (error, turned)
         return best[1]
 
+    def solid(self, part, tolerance=1.2, narrow=.02):
+        """Whether ``part``'s collision shapes may be replaced by their common convex hull for
+        planning: together they are about convex (the hull at most ``tolerance`` times their summed
+        volume), or too thin for anything to get into their hollows (narrower than ``narrow``, as a
+        ring or a tube of a pen cap)."""
+        import trimesh
+        shapes, volumes = [], []
+        for body, _, transform, kind, data in self._selected(part):
+            local = data if kind == 'convex' else np.vstack([np.eye(3) * data, -np.eye(3) * data])
+            points = transform_points(self.rest[body] @ transform, local)
+            shapes.append(points)
+            volumes.append(4 / 3 * np.pi * data ** 3 if kind == 'sphere' else trimesh.convex.convex_hull(points).volume)
+        if len(shapes) == 1:
+            return True
+        hull = trimesh.convex.convex_hull(np.vstack(shapes))
+        return hull.volume <= tolerance * sum(volumes) or min(hull.bounding_box_oriented.primitive.extents) < narrow
+
     def lowest(self, rotation):
         """Lowest collision point (z, asset frame origin at 0) of the asset turned by ``rotation`` (3x3)."""
         return float((self.points() @ np.asarray(rotation).T)[:, 2].min())

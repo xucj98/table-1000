@@ -115,12 +115,18 @@ class MotionSolver:
     def _plan(self, kind, function):
         self.world.set_padding(PADDING if kind == 'rrt' else 0.)
         self.sync()
+        # A hand starting closer to an object than the padding (just let go of it) plans unpadded.
+        closer = self.model.collisions(self.arm.name, self.model.q) if kind == 'rrt' else []
+        if closer:
+            self.world.set_padding(0.)
         started = time.perf_counter()
         result = function()
         elapsed = time.perf_counter() - started
         self.timings['planning_s'] += elapsed
         entry = {'subtask': self.ctx.current, 'step': self.ctx.steps, 'kind': kind, 'status': result['status'],
                  'planning_s': elapsed}
+        if closer:
+            entry['unpadded'] = closer
         self.log.append(entry)
         if result['status'] != 'Success':
             entry.update({key: value for key, value in result.items()

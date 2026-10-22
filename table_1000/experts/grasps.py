@@ -220,6 +220,12 @@ class Hand:
             self.cache[key] = {link: tcp @ self.model.fk(link, q) for link in self.shapes}
         return self.cache[key]
 
+    def tip(self, gap=0.):
+        """How far ahead of the TCP (along +X) the fingers reach at ``gap``."""
+        frames = self.frames(gap)
+        return max(float((_vertices(shape) @ frames[link][:3, :3].T + frames[link][:3, 3])[:, 0].max())
+                   for link in self.side.finger_links for shape in self.shapes[link])
+
     def inner(self, gap):
         """``[(opening sign, [N, 3] inner surface points in the TCP frame, pad mask)]`` per finger at ``gap``."""
         frames = self.frames(gap)
