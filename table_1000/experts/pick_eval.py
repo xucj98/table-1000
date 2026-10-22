@@ -4,7 +4,9 @@ The scene (:func:`scene`): a 1.4 x 0.8 m table 0.75 m high, the robot ``gap`` m
 from the middle of its long edge, facing it, base fixed, arms folded (zero pose),
 torso lift at ``lift`` and head pitched down. The test objects are primitive
 shapes of plastic (1000 kg/m^3) or steel (:data:`OBJECTS`); one at a time stands on the table
-in one of its resting poses, the others parked on the floor.
+in one of its resting poses, the others parked on the floor. A scenario
+(:data:`SCENARIOS`) may surround it with fixed obstacles: an open box it stands
+in, or walls beside or behind it (seen from the robot).
 
 A trial (:meth:`Evaluator.trial`) settles the object, runs ``pick`` and, when it
 succeeds, holds the object while a force of ``FORCE`` N pushes its centre of mass
@@ -75,12 +77,107 @@ OBJECTS = {
 }
 
 
-def scene(gap=.12, lift=.6, objects=OBJECTS, robot='x1pro'):
+OBSTACLE_COLOR = (.55, .5, .45)
+REGION = ((-.45, .45), (-.3, .2))   # m, x and y range of the obstacle scenarios' objects on the table
+WALL = (.2, .02, .15)               # m: length, thickness, height of a wall
+BOX = {'inner': (.24, .18), 'wall': .01, 'height': .06, 'floor': .005}   # m, an open box
+GAPS = (.01, .08)                   # m, range of the space between the object and a wall
+BOX_MARGIN = .005                   # m, least space between the object and the box walls
+
+
+@dataclass(frozen=True)
+class Scenario:
+    """Fixed obstacles (kinematic boxes, ``{name: size}``) around the object; ``place(rng, name, pose,
+    yaw)`` returns ``(x, y, support height, {obstacle: world pose}, clearance)``, the clearance being the
+    least horizontal space between the object's bounding box and a wall (see :func:`sample`)."""
+    obstacles: dict
+    place: object
+
+
+def _aabb(name, pose, yaw):
+    """Horizontal half extents of object ``name`` resting in ``pose``, turned by ``yaw``."""
+    rotation = Rotation.from_euler('z', yaw).as_matrix() @ OBJECTS[name].rest(pose)[0]
+    return np.abs(OBJECTS[name].shape.points() @ rotation.T)[:, :2].max(axis=0)
+
+
+def _box_pose(size, x, y, z, yaw=0.):
+    """World pose of a box of ``size`` at ``(x, y)`` turned by ``yaw``, its bottom at height ``z``."""
+    transform = np.eye(4)
+    transform[:3, :3] = Rotation.from_euler('z', yaw).as_matrix()
+    transform[:3, 3] = [x, y, z + size[2] / 2]
+    return transform
+
+
+def _free(rng, name, pose, yaw):
+    half = _aabb(name, pose, yaw)
+    (x0, x1), (y0, y1) = REGION
+    return float(rng.uniform(x0 + half[0], x1 - half[0])), float(rng.uniform(y0 + half[1], y1 - half[1])), half
+
+
+def _walls(sides):
+    """A scenario of walls on ``sides`` of the object (``'side'``: left or right, ``'back'``: away from
+    the robot), each ``GAPS`` from the object."""
+    def place(rng, name, pose, yaw):
+        x, y, half = _free(rng, name, pose, yaw)
+        obstacles, gaps = {}, []
+        for side in sides:
+            gaps.append(float(rng.uniform(*GAPS)))
+            offset = gaps[-1] + WALL[1] / 2
+            if side == 'side':
+                sign = rng.choice((-1., 1.))
+                obstacles['wall_side'] = _box_pose(WALL, x + sign * (half[0] + offset), y, TABLE['height'], math.pi / 2)
+            else:
+                obstacles['wall_back'] = _box_pose(WALL, x, y + half[1] + offset, TABLE['height'])
+        return x, y, TABLE['height'], obstacles, min(gaps)
+    return Scenario({f'wall_{side}': WALL for side in sides}, place)
+
+
+def _box():
+    """The object anywhere in an open box (``BOX``) turned at random."""
+    inner, wall, height, floor = (np.asarray(BOX['inner']), BOX['wall'], BOX['height'], BOX['floor'])
+    outer = inner + 2 * wall
+    sizes = {'box_floor': (*outer, floor), 'box_left': (wall, inner[1], height), 'box_right': (wall, inner[1], height),
+             'box_front': (outer[0], wall, height), 'box_back': (outer[0], wall, height)}
+    offsets = {'box_floor': (0., 0.), 'box_left': (-(inner[0] + wall) / 2, 0.), 'box_right': ((inner[0] + wall) / 2, 0.),
+               'box_front': (0., -(inner[1] + wall) / 2), 'box_back': (0., (inner[1] + wall) / 2)}
+
+    def place(rng, name, pose, yaw):
+        turn = float(rng.uniform(-math.pi, math.pi))
+        half = _aabb(name, pose, yaw - turn)   # in the box frame
+        room = inner / 2 - BOX_MARGIN - half
+        if np.any(room < 0):
+            raise ValueError(f'{name} {pose} does not fit in the box')
+        local = rng.uniform(-room, room)
+        radius = np.linalg.norm(outer) / 2
+        (x0, x1), (y0, y1) = REGION
+        centre = np.array([rng.uniform(x0 + radius, x1 - radius), rng.uniform(y0 + radius, y1 - radius)])
+        rotation = Rotation.from_euler('z', turn).as_matrix()[:2, :2]
+        obstacles = {}
+        for part, size in sizes.items():
+            bottom = TABLE['height'] + (0. if part == 'box_floor' else floor)
+            x, y = centre + rotation @ offsets[part]
+            obstacles[part] = _box_pose(size, x, y, bottom, turn)
+        x, y = centre + rotation @ local
+        clearance = float(np.min(room - np.abs(local))) + BOX_MARGIN
+        return float(x), float(y), TABLE['height'] + floor, obstacles, clearance
+    return Scenario(sizes, place)
+
+
+SCENARIOS = {'open': Scenario({}, None), 'box': _box(), 'side': _walls(('side',)), 'back': _walls(('back',)),
+             'corner': _walls(('side', 'back'))}
+
+
+def scene(gap=.12, lift=.6, objects=OBJECTS, robot='x1pro', scenario='open'):
     """Scene source of the evaluation: robot ``robot`` with its base ``gap`` m from the table's near
-    edge (world -Y), torso lift ``lift`` m; ``scene.placement(**poses)`` parks the objects not given."""
+    edge (world -Y), torso lift ``lift`` m, the obstacles of ``scenario``; ``scene.placement(**poses)``
+    parks the objects and obstacles not given."""
     width, depth = TABLE['size']
+    obstacles = SCENARIOS[scenario].obstacles
+    primitives = {name: obj.primitive() for name, obj in objects.items()}
+    primitives.update({name: {'shape': 'box', 'size': tuple(size), 'mass': None, 'color': OBSTACLE_COLOR}
+                       for name, size in obstacles.items()})
     source = types.SimpleNamespace(
-        TABLE=TABLE, OBJECTS={}, PRIMITIVES={name: obj.primitive() for name, obj in objects.items()},
+        TABLE=TABLE, OBJECTS={}, PRIMITIVES=primitives, OBSTACLES=dict(obstacles), scenario=scenario,
         ROBOT={'name': robot, 'asset': f'robots/{robot}', 'position': (0., -depth / 2 - gap, 0.), 'yaw': math.pi / 2,
                'joints': {'lift_joint': lift, 'head_pitch_joint': .3}})
 
@@ -90,28 +187,39 @@ def scene(gap=.12, lift=.6, objects=OBJECTS, robot='x1pro'):
             parked = np.eye(4)
             parked[:3, 3] = [-3., -2. + .5 * index, obj.rest(obj.poses[0])[1]]
             layout[name] = poses.get(name, parked)
+        for index, (name, size) in enumerate(obstacles.items()):
+            parked = np.eye(4)
+            parked[:3, 3] = [3., -2. + .5 * index, size[2] / 2]
+            layout[name] = poses.get(name, parked)
         return layout
 
     source.placement = placement
     return source
 
 
-def table_pose(name, x, y, yaw, pose, objects=OBJECTS):
-    """World pose of object ``name`` resting on the table top at ``(x, y)``, turned by ``yaw``."""
+def table_pose(name, x, y, yaw, pose, objects=OBJECTS, support=TABLE['height']):
+    """World pose of object ``name`` resting at ``(x, y)`` on a surface ``support`` m high (the table
+    top), turned by ``yaw``."""
     rotation, height = objects[name].rest(pose)
     transform = np.eye(4)
     transform[:3, :3] = Rotation.from_euler('z', yaw).as_matrix() @ rotation
-    transform[:3, 3] = [x, y, TABLE['height'] + height]
+    transform[:3, 3] = [x, y, support + height]
     return transform
 
 
-def sample(rng, name, objects=OBJECTS, margin=.005):
-    """A random resting pose of ``name`` anywhere on the table: ``{'x', 'y', 'yaw', 'pose'}``."""
+def sample(rng, name, objects=OBJECTS, margin=.005, scenario='open'):
+    """A random resting pose of ``name``: ``{'x', 'y', 'yaw', 'pose'}``, anywhere on the table; in an
+    obstacle scenario within :data:`REGION`, with ``'support'`` (height it stands on) and
+    ``'obstacles'`` (``{name: world pose as nested lists}``) and ``'clearance'`` (see :class:`Scenario`)."""
     width, depth = TABLE['size']
+    yaw, pose = float(rng.uniform(-math.pi, math.pi)), str(rng.choice(objects[name].poses))
+    if scenario != 'open':
+        x, y, support, obstacles, clearance = SCENARIOS[scenario].place(rng, name, pose, yaw)
+        return {'x': x, 'y': y, 'yaw': yaw, 'pose': pose, 'support': support, 'clearance': clearance,
+                'obstacles': {key: value.tolist() for key, value in obstacles.items()}}
     edge = objects[name].footprint() + margin
     return {'x': float(rng.uniform(-width / 2 + edge, width / 2 - edge)),
-            'y': float(rng.uniform(-depth / 2 + edge, depth / 2 - edge)),
-            'yaw': float(rng.uniform(-math.pi, math.pi)), 'pose': str(rng.choice(objects[name].poses))}
+            'y': float(rng.uniform(-depth / 2 + edge, depth / 2 - edge)), 'yaw': yaw, 'pose': pose}
 
 
 def push_directions(rng, count=RANDOM_PUSHES):
@@ -144,10 +252,15 @@ class Evaluator:
         from table_1000.experts.context import Context, ExpertFailed
         from table_1000.experts.pick import Picker
         started = time.perf_counter()
-        pose = table_pose(name, placement['x'], placement['y'], placement['yaw'], placement['pose'])
-        self.env.reset(self.scene.placement(**{name: pose}))
+        pose = table_pose(name, placement['x'], placement['y'], placement['yaw'], placement['pose'],
+                          support=placement.get('support', TABLE['height']))
+        obstacles = {key: np.asarray(value) for key, value in placement.get('obstacles', {}).items()}
+        self.env.reset(self.scene.placement(**{name: pose}, **obstacles))
         mplib.pymp.set_global_seed(seed + 1)
         ctx = Context(self.env, self.model, self.scene, self.assets, np.random.default_rng([seed, 1]))
+        for arm in self.spec.arms:   # the obstacles in the planning worlds, as a scene expert adds them
+            for key, transform in obstacles.items():
+                ctx.solver(arm).add_box(key, self.scene.OBSTACLES[key], transform)
         report = {'object': name, 'seed': seed, **placement}
         phase = {'text': 'settle'}
         if video is not None:

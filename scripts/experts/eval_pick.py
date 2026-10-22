@@ -4,7 +4,8 @@
 ``uv run python scripts/experts/eval_pick.py --case cube1 0.62 0.37 0 standing --video --output ...``
 
 Random trials cycle through the test objects (``table_1000/experts/pick_eval.py``),
-each placed by its seed anywhere on the table. ``--case NAME X Y YAW POSE`` (world
+each placed by its seed anywhere on the table, or with ``--scenario`` among obstacles
+(``box``: in an open box, ``side``/``back``/``corner``: walls beside and behind it). ``--case NAME X Y YAW POSE`` (world
 frame: table centre at the origin, robot on the -Y side) runs given placements.
 Each part writes ``reports.jsonl``; the batch writes ``summary.json`` (success by
 object and failure reasons) and ``trials.jsonl`` into ``--output``. ``--video``
@@ -39,10 +40,13 @@ def tasks(args):
     import numpy as np
     from table_1000.experts.pick_eval import OBJECTS, sample
     if args.case:
+        if args.scenario != 'open':
+            raise SystemExit('--case places objects in the open scenario only')
         return [(index, name, {'x': float(x), 'y': float(y), 'yaw': float(yaw), 'pose': pose})
                 for index, (name, x, y, yaw, pose) in enumerate(args.case)]
     names = args.objects or list(OBJECTS)
-    return [(index, names[index % len(names)], sample(np.random.default_rng([args.seed, index]), names[index % len(names)]))
+    return [(index, names[index % len(names)], sample(np.random.default_rng([args.seed, index]), names[index % len(names)],
+                                                         scenario=args.scenario))
             for index in range(args.trials)]
 
 
@@ -60,7 +64,7 @@ def worker(args):
         from table_1000.experts.pick_eval import Evaluator, scene
         from table_1000.sim.isaaclab.video import Video
         views = {'wide': WIDE, 'close': CLOSE} if args.video else {}
-        evaluator = Evaluator(scene(args.gap, args.lift, robot=args.robot), args.assets, work, ROOT, views,
+        evaluator = Evaluator(scene(args.gap, args.lift, robot=args.robot, scenario=args.scenario), args.assets, work, ROOT, views,
                               args.random_pushes)
         selected = set(args.indices)
         with open(work / 'reports.jsonl', 'a') as out:
@@ -154,6 +158,8 @@ def main(argv=None):
     parser.add_argument('--objects', nargs='+', help='test objects of the random trials (default: all)')
     parser.add_argument('--case', nargs=5, action='append', metavar=('NAME', 'X', 'Y', 'YAW', 'POSE'))
     parser.add_argument('--seed', type=int, default=0)
+    parser.add_argument('--scenario', default='open', choices=('open', 'box', 'side', 'back', 'corner'),
+                        help='obstacles around the object')
     parser.add_argument('--gap', type=float, default=.12, help='robot base to table edge (m)')
     parser.add_argument('--lift', type=float, default=.6, help='starting torso lift (m)')
     parser.add_argument('--video', action='store_true')
@@ -182,7 +188,7 @@ def main(argv=None):
         parser.error('give --trials or --case')
     shutil.rmtree(args.output, ignore_errors=True)
     args.output.mkdir(parents=True)
-    passthrough = ['--seed', str(args.seed), '--gap', str(args.gap), '--lift', str(args.lift),
+    passthrough = ['--seed', str(args.seed), '--scenario', args.scenario, '--gap', str(args.gap), '--lift', str(args.lift),
                    '--output', str(args.output), '--robot', args.robot, '--assets', str(args.assets.resolve())]
     if args.trials:
         passthrough += ['--trials', str(args.trials)]
@@ -213,7 +219,7 @@ def main(argv=None):
     with open(args.output / 'trials.jsonl', 'w') as out:
         for report in reports:
             out.write(json.dumps(report, default=float) + '\n')
-    summary = {'gap': args.gap, 'lift': args.lift, 'seed': args.seed, 'robot': args.robot,
+    summary = {'gap': args.gap, 'lift': args.lift, 'seed': args.seed, 'robot': args.robot, 'scenario': args.scenario,
                **summarize(reports),
                'total_s': time.perf_counter() - started}
     (args.output / 'summary.json').write_text(json.dumps(summary, indent=1, default=float) + '\n')
