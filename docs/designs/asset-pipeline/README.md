@@ -15,6 +15,8 @@ README 说明每个文件放在哪里、由哪份规范约定。各文件的字�
 | `data/` | 生成的数据：专家轨迹（HDF5）及其录像 | 忽略 |
 | `outputs/` | 日志和临时实验 | 忽略 |
 
+`assets/isaac/` 是 Isaac Sim 5.1 运行时取用的在线资产（地面等）的本地镜像，由 `scripts/assets/download_isaac_assets.py` 从 NVIDIA 资产服务器下载，许可同 Isaac Sim；目录存在时仿真从这里加载，不再联网。
+
 同一资产在 `asset_sources/` 与 `assets/` 下使用相同的相对路径：对象 `objects/<category>/<六位编号>`、机器人 `robots/<名称>`、场景 `scenes/<六位编号>`；编号从 `000000` 开始。下面按资产类型列出每个文件，括号内为规范文档。
 
 **对象**
