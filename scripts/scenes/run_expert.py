@@ -70,7 +70,7 @@ def worker(args):
 
 
 def main(argv=None):
-    from table_1000.scenes.batch import add_arguments, commit, job_count, run_batch, seed_range
+    from table_1000.scenes.batch import add_arguments, commit, job_count, process_name, run_batch, seed_range
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('scene')
     parser.add_argument('--physics', choices=BACKENDS, required=True, help='simulation backend')
@@ -114,7 +114,7 @@ def main(argv=None):
     works = {}
 
     def command(part, index, attempt):
-        name = f'part{index}' + (f'-retry{attempt}' if attempt else '')
+        name = process_name(f'part{index}', attempt)
         works.update(dict.fromkeys(part, staging / name))
         argv = [sys.executable, str(Path(__file__).resolve()), args.scene, '--worker', '--physics', args.physics,
                 '--seeds', *seed_range(part).split(), '--states', str(states), '--work', str(staging / name),
@@ -127,7 +127,9 @@ def main(argv=None):
     parts = sorted(staging.glob('part*/'))
     (directory / 'episodes').mkdir(parents=True)
     for name in ('trajectories', 'trajectories_failed'):
-        merge([part / f'{name}.hdf5' for part in parts], directory / f'{name}.hdf5')
+        # A stopped process may have recorded an episode without its report, which its rerun records again.
+        merge([part / f'{name}.hdf5' for part in parts], directory / f'{name}.hdf5',
+              keep=lambda source, seed: (source.parent / 'episodes' / f'{seed}.json').is_file())
         for part in parts:
             (part / f'{name}.hdf5').unlink(missing_ok=True)
     reports = []

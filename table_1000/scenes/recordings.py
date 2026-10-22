@@ -13,19 +13,23 @@ import json
 from pathlib import Path
 
 
-def merge(sources, target):
-    """Copy every episode of the Isaac Lab trajectory files ``sources`` into ``target``, in seed order;
-    returns the number of episodes. ``data`` keeps the attributes of the first file with an episode
-    (Isaac Lab completes ``env_args`` at the first export; a process that stopped before it left
-    only ``env_name`` and ``type``), with the summed ``total``."""
+def merge(sources, target, keep=lambda source, seed: True):
+    """Copy the episodes of the Isaac Lab trajectory files ``sources`` into ``target``, in seed order,
+    those for which ``keep(source, seed)``; returns the number of episodes. ``data`` keeps the attributes
+    of the first file with an episode (Isaac Lab completes ``env_args`` at the first export; a process
+    that stopped before it left only ``env_name`` and ``type``), with the summed ``total``."""
     import h5py
     episodes, attrs = [], {}
-    files = [h5py.File(path, 'r') for path in sources if Path(path).is_file()]
+    sources = [Path(path) for path in sources if Path(path).is_file()]
+    files = [h5py.File(path, 'r') for path in sources]
     try:
-        for file in files:
+        for source, file in zip(sources, files):
             if not attrs and len(file['data']):
                 attrs = dict(file['data'].attrs)
-            episodes += [(int(name.split('_')[1]), file, name) for name in file['data']]
+            for name in file['data']:
+                seed = int(name.split('_')[1])
+                if keep(source, seed):
+                    episodes.append((seed, file, name))
         attrs = attrs or (dict(files[0]['data'].attrs) if files else {})
         with h5py.File(target, 'w') as out:
             data = out.create_group('data')

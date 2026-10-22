@@ -174,7 +174,7 @@ def collect(directory, robot, ran=()):
 
 
 def main(argv=None):
-    from table_1000.scenes.batch import add_arguments, job_count, run_batch
+    from table_1000.scenes.batch import add_arguments, job_count, process_name, run_batch
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('robots', nargs='+', help='robot names (asset_sources/robots/<name>)')
     parser.add_argument('--physics', nargs='+', choices=BACKENDS, required=True, help='physics backends to run')
@@ -220,7 +220,7 @@ def main(argv=None):
 
     def command(group, index, attempt):
         robot, backend = group[0][:2]
-        name = f'part{index}' + (f'-retry{attempt}' if attempt else '')
+        name = process_name(f'part{index}', attempt)
         log = directories[robot] / backend / 'logs' / name / 'run.log'
         argv = [sys.executable, str(Path(__file__).resolve()), robot, '--worker', '--physics', backend,
                 '--dir', str(directories[robot] / backend), '--units', *(unit_name(*unit[2:]) for unit in group),

@@ -99,8 +99,10 @@ def worker(args):
         directory, work = args.batch.resolve(), args.work.resolve()
         file, episodes = replay.episodes(directory / 'trajectories.hdf5')
         meta = replay.env_args(file)
+        failures = {}
         if (directory / 'trajectories_failed.hdf5').is_file():
-            episodes.update(replay.episodes(directory / 'trajectories_failed.hdf5')[1])
+            failures = replay.episodes(directory / 'trajectories_failed.hdf5')[1]
+            episodes.update(failures)
         scene = load(meta['scene'], 'scene', args.root)
         spec = load_spec(meta['robot'], args.root)
         cameras, views = camera_sets(scene, spec, args.cameras)
@@ -129,7 +131,7 @@ def worker(args):
                     image = tile([images[c] for c in args.cameras], cell_height) if output == MERGED else images[output]
                     save_frame(caption(image, left, right) if args.captions else image, frames / output / f'{t:05d}.jpg')
             for output in outputs:
-                target = video_path(directory, seed, None if output == MERGED else output, failed=bool(failure))
+                target = video_path(directory, seed, None if output == MERGED else output, failed=name in failures)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(encode(frames / output, CONTROL_HZ, frames / f'{output}.mp4'), target)
             shutil.rmtree(frames)
@@ -142,7 +144,7 @@ def worker(args):
 
 
 def main(argv=None):
-    from table_1000.scenes.batch import add_arguments, job_count, parse_seeds, run_batch, seed_range
+    from table_1000.scenes.batch import add_arguments, job_count, parse_seeds, process_name, run_batch, seed_range
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('scene')
     parser.add_argument('--physics', required=True, help='the backend the batch was generated on')
@@ -208,7 +210,7 @@ def main(argv=None):
         path.unlink(missing_ok=True)
 
     def command(part, index, attempt):
-        name = f'part{index}' + (f'-retry{attempt}' if attempt else '')
+        name = process_name(f'part{index}', attempt)
         argv = [sys.executable, str(Path(__file__).resolve()), args.scene, '--worker', '--physics', args.physics,
                 '--cameras', *args.cameras, '--seeds', *seed_range(part).split(), '--batch', str(directory),
                 '--work', str(staging / name), '--root', str(root), '--assets', str(args.assets.resolve())]

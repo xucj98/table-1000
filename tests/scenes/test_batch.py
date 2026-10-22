@@ -185,9 +185,11 @@ def test_run_expert_merges_parts(tmp_path, monkeypatch):
         for command, _, _ in commands:
             work = tmp_path / command[command.index('--work') + 1]
             seeds = parse_seeds(command[command.index('--seeds') + 1:command.index('--states')])
-            if 2 in seeds:
-                continue       # the process stopped before writing anything, with seed 2 in every attempt
             (work / 'episodes').mkdir(parents=True)
+            # Seed 2 kills its process in every attempt, after its episode is recorded, before its report.
+            trajectory_file(work / 'trajectories.hdf5', [seed for seed in seeds if seed <= 2])
+            if 2 in seeds:
+                continue
             trajectory_file(work / 'trajectories.hdf5', seeds)
             for seed in seeds:
                 (work / 'episodes' / f'{seed}.json').write_text(json.dumps(

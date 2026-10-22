@@ -206,6 +206,11 @@ def run_batch(items, *, command, missing, count, gpus, launcher=None, retries=1,
     return pending
 
 
+def process_name(stem, attempt):
+    """Name of a process (its log, its work directory) in round ``attempt`` of :func:`run_batch`."""
+    return stem + (f'-retry{attempt}' if attempt else '')
+
+
 def worker_gpu(gpu):
     """The physical GPU of a worker process: ``gpu`` when given (``--gpu``), else the one a launcher made visible."""
     if gpu is not None:

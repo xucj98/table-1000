@@ -12,7 +12,7 @@ import sys
 import time
 import traceback
 
-from table_1000.scenes.batch import add_arguments, job_count, run_batch, worker_gpu
+from table_1000.scenes.batch import add_arguments, job_count, process_name, run_batch, worker_gpu
 
 
 def load_tests(path):
@@ -399,6 +399,7 @@ def main(argv=None):
         for backend in args.physics:
             selected[reference,backend]=args.tests or names[reference]
             for name in selected[reference,backend]:clear(source/reference/'physics_test'/backend,name)
+            for log in (source/reference/'physics_test'/backend).glob('run-retry*.log'):log.unlink()
 
     def results(unit):
         output=source/unit[0]/'physics_test'/unit[1]
@@ -413,7 +414,7 @@ def main(argv=None):
         if remaining:command+=['--tests',*remaining]
         if args.num_envs:command+=['--num-envs',str(args.num_envs)]
         if args.benchmark:command.append('--benchmark')
-        log=source/reference/'physics_test'/backend/(f'run-retry{attempt}.log' if attempt else 'run.log')
+        log=source/reference/'physics_test'/backend/f"{process_name('run',attempt)}.log"
         return command,log,f'{reference} {backend}'
 
     # One process per asset and backend: Kit's close ends it.

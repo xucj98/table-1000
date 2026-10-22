@@ -141,6 +141,7 @@ physics_test/
   summary.json        各后端的状态、关键指标与 RTF
   isaac-cpu/
     run.log           该后端的运行输出
+    run-retry<N>.log  第 N 次重跑的运行输出（有重跑时）
     pull.mp4          完整视频
     pull/
       plots.jpg       关注曲线

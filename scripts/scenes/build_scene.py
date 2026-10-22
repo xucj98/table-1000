@@ -138,7 +138,7 @@ def thumbnail(image, path):
 
 
 def main(argv=None):
-    from table_1000.scenes.batch import add_arguments, commit, job_count, parse_seeds, run_batch, seed_range, seeds_record
+    from table_1000.scenes.batch import add_arguments, commit, job_count, parse_seeds, process_name, run_batch, seed_range, seeds_record
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('scene')
     parser.add_argument('--seeds', nargs='+', required=True, help='a:b (a to b - 1) and single seeds')
@@ -170,7 +170,7 @@ def main(argv=None):
     parts = {}
 
     def command(part, index, attempt):
-        name = f'part{index}' + (f'-retry{attempt}' if attempt else '')
+        name = process_name(f'part{index}', attempt)
         parts.update(dict.fromkeys(part, staging / name))
         argv = [sys.executable, str(Path(__file__).resolve()), args.scene, '--worker', '--seeds', *seed_range(part).split(),
                 '--work', str(staging / name), '--first', str(first), '--root', str(root), '--assets', str(args.assets.resolve())]
@@ -183,7 +183,7 @@ def main(argv=None):
     missing = run_batch(seeds, command=command, missing=lambda seed: not (parts[seed] / 'report.json').is_file(),
                         count=jobs, gpus=args.gpus, launcher=args.launcher, retries=args.retries)
 
-    records, states, attrs, robot, camera = {}, {}, {}, None, None
+    records, states, images, attrs, robot, camera = {}, {}, {}, {}, None, None
     for work in sorted(staging.glob('part*/')):
         if not (work / 'report.json').is_file():
             continue
@@ -193,6 +193,7 @@ def main(argv=None):
         part_attrs, part_states = read_states(work / 'states.hdf5')
         attrs = attrs or part_attrs
         states.update(part_states)
+        images.update({int(path.stem): path for path in (work / 'images').glob('*.jpg')})
     for seed in seeds:
         records.setdefault(seed, {'seed': seed, 'attempt': None, 'attempts': [], 'problems': ['process exited']})
     output.mkdir(parents=True, exist_ok=True)
@@ -209,7 +210,6 @@ def main(argv=None):
                'total_s': time.perf_counter() - started}
     (output / 'initial.json').write_text(json.dumps({**summary, 'records': dict(sorted(records.items()))},
                                                     indent=1, default=float) + '\n')
-    images = {int(path.stem): path for path in staging.glob('part*/images/*.jpg')}
     valid = sorted(seed for seed in images if records[seed]['attempt'] is not None)
     if args.grid and valid:
         shown = valid[:first]
