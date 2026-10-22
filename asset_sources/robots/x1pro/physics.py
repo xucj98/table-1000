@@ -18,8 +18,8 @@ DRIVES = {
     '_arm_joint': (1000., 60.),
     # The left finger is driven; the right one follows it (MIMIC_FINGERS). The
     # drive reaches the URDF's 20 N force limit once the target is 4 mm past the
-    # held object, so a 1 cm cube is squeezed as hard as a 4 cm one (at 1500 N/m
-    # the drive gave a 1 cm cube 7.5 N). The pair splits it: each pad presses with 10 N.
+    # held object, so a 1 cm cube is squeezed as hard as a 4 cm one. The pair
+    # splits it: each pad presses with 10 N.
     '_arm_gripper_left_joint': (5000., 60.),
     '_arm_gripper_right_joint': (0., 0.),
     '_wheel_joint': (0., 1.),
@@ -29,8 +29,8 @@ DRIVES = {
     'base_y_joint': (1e5, 6000.),
     'base_yaw_joint': (8000., 500.),
 }
-# (position, velocity). At 16 position iterations a 1 cm steel cube held by the
-# pads slips under a 5 N push (grasp_and_push); 32 holds it.
+# (position, velocity). 32 position iterations hold a 1 cm steel cube in the
+# pads under a 5 N push (grasp_and_push).
 SOLVER_ITERATIONS = (32, 4)
 # One motor moves both fingers of the real gripper through a rack. Two
 # independently driven fingers, both at their force limit on a held object,
