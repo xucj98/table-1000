@@ -33,7 +33,6 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 WIDE = {'position': (1.5, -1.45, 1.6), 'target': (0., -.1, .8), 'focal_length_mm': 18, 'resolution': (960, 720)}
-LAUNCHED_JOBS = 16
 SCENARIOS = ('open', 'box', 'side', 'back', 'corner')
 CLOSE = {'position': (.5, .6, 1.2), 'target': (0., 0., .8), 'focal_length_mm': 24, 'resolution': (960, 720)}
 
@@ -79,7 +78,7 @@ def trial_path(directory, index):
 def worker(args):
     """Run units ``args.units`` (``<seed>:<index>``) of robot ``args.robot`` in scenario ``args.scenario``,
     each writing its report (and with ``--video`` a video) into its group."""
-    from table_1000.scenes.batch import worker_gpu
+    from table_1000.common.batch import worker_gpu
     from table_1000.sim.isaaclab.app import start_app
     app = start_app(gpu=worker_gpu(args.gpu), workers=4, cameras=args.video)
     failed = False
@@ -168,6 +167,7 @@ def summarize(reports):
 
 
 def main(argv=None):
+    from table_1000.common.batch import add_arguments, commit, job_count, run_batch
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--robots', nargs='+', default=['x1pro'], help='robot names (asset_sources/robots/<name>)')
     parser.add_argument('--scenarios', nargs='+', default=['open'], choices=SCENARIOS, help='obstacles around the object')
@@ -182,30 +182,21 @@ def main(argv=None):
     parser.add_argument('--random-pushes', type=int, default=8,
                         help='random push directions after the six axes (0: a quicker run)')
     parser.add_argument('--assets', type=Path, default=ROOT / 'assets', help='asset root holding robots/<name>')
-    parser.add_argument('--jobs', type=int,
-                        help=f'processes at once (default: one per --gpus; {LAUNCHED_JOBS} with --launcher)')
-    parser.add_argument('--gpus', type=int, nargs='+', help='local GPUs (default 0); not with --launcher')
-    parser.add_argument('--launcher', help='command prefix of a job scheduler that runs a process on a free GPU '
-                        'it sets CUDA_VISIBLE_DEVICES to; instead of --gpus')
-    parser.add_argument('--retries', type=int, default=1, help='reruns of trials whose process died before their report')
+    add_arguments(parser)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--robot', help=argparse.SUPPRESS)
     parser.add_argument('--scenario', help=argparse.SUPPRESS)
     parser.add_argument('--units', nargs='+', help=argparse.SUPPRESS)
     parser.add_argument('--work', type=Path, help=argparse.SUPPRESS)
-    parser.add_argument('--gpu', type=int, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     args.output = args.output.resolve()
     if args.worker:
         worker(args)
         return
-    if args.launcher and args.gpus:
-        parser.error('--gpus runs locally; with --launcher the scheduler picks the GPUs')
     if args.case and (args.scenarios != ['open'] or len(args.seeds) > 1):
         parser.error('--case places objects in the open scenario, once')
-    args.gpus = args.gpus or [0]
-    from table_1000.scenes.batch import commit, run_batch
+    jobs = job_count(parser, args)
     units = [(robot, scenario, seed, index) for robot in args.robots for scenario in args.scenarios
              for seed in args.seeds for index, _, _ in tasks(args, scenario, seed)
              if args.select is None or index in args.select]
@@ -236,8 +227,7 @@ def main(argv=None):
         return argv, args.output / 'parts' / f'{name}.log', f'{name} {robot} {scenario}'
 
     started = time.perf_counter()
-    missing = run_batch(units, key=lambda unit: unit[:2], cost=lambda unit: 1., count=args.jobs or (
-                            LAUNCHED_JOBS if args.launcher else len(args.gpus)),
+    missing = run_batch(units, key=lambda unit: unit[:2], cost=lambda unit: 1., count=jobs,
                         command=command, missing=lambda unit: not trial_path(directory(unit), unit[3]).exists(),
                         gpus=args.gpus, launcher=args.launcher, retries=args.retries)
     groups = {}
