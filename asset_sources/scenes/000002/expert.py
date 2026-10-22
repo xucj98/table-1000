@@ -35,7 +35,6 @@ SPOT_MARGIN = .10
 # toward the robot: put down along the drawer's width it then leans away from the drawers above.
 PICK_TILT = np.radians(35.)
 PICK_ANGLES = np.radians([15., 180.])  # how far the grasp may turn from that, the first that reaches
-APPROACH_HEIGHT = .05   # m above a spot, the hand pose the base is placed to reach
 
 
 def slide(drawer):
@@ -66,11 +65,6 @@ def handle_poses(ctx, drawer, opening):
     grasp = tcp_pose(box[:3, 3], frame[:3, 1], frame[:3, 0])
     move = pull(ctx, drawer, opening - ctx.joint('cabinet', slide(drawer)))
     return [grasp, translated(grasp, move / 2), translated(grasp, move)]
-
-
-def above(position, across):
-    """Hand pose straight down at ``position`` (lifted by APPROACH_HEIGHT), the fingers closing ``across``."""
-    return tcp_pose(np.asarray(position, dtype=float) + [0., 0., APPROACH_HEIGHT], [0., 0., -1.], across)
 
 
 def grasp_handle(ctx, drawer, move, inward):
@@ -200,8 +194,6 @@ def still_open(ctx, drawer):
 
 def take_out(ctx):
     still_open(ctx, TOP)
-    pen = ctx.pose('pen', 'body')
-    skills.make_room(ctx, [above(pen[:3, 3], np.cross([0., 0., 1.], pen[:3, 0]))])
     skills.pick(ctx, 'pen')
 
 

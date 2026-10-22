@@ -24,7 +24,7 @@ frame, also for a scene primitive that is not an asset). Every asset of the scen
 is in each arm's planning world, one planning object per part (``<object>:<part>``);
 the table too.
 
-**grasp** -- candidates of the shape at its live pose
+**grasp** -- (where none is in reach, the base first moves to reach the first ones) candidates of the shape at its live pose
 (:func:`~table_1000.experts.grasps.grasp_candidates`, cheapest first: close to the
 ``approach`` direction, default reaching out and down from the arm's shoulder;
 centred on ``point``, default the shape's centre) are tried per arm, the arm whose
@@ -114,7 +114,7 @@ BASE_TURNS = (0., 10., -10., 20., -20.)
 BASE_MARGIN = .25
 MAX_PLACES = 8          # placements whose motion place plans
 MAX_PLACE_IK = 200      # placements place checks by IK
-ROOM_PLACES = 10        # first placements the base moves to reach when none is in reach
+ROOM_PLACES = 10        # first placements (grasps, per arm) the base moves to reach when none is in reach
 PLACE_STEP = .02        # m between the positions place samples in its region
 PLACE_TURN_STEP = 15.   # deg between the turns place samples
 PLACE_TURNS = 8         # turns place tries per position, the least first
@@ -316,9 +316,17 @@ class Skills:
         Returns ``{'arm', 'grasp', 'supports', 'finger_gap', 'regrasps', 'choice_s', 'tcp_object'}``."""
         ctx = self.ctx
         arms = [arm] if arm else [a for a in self.arms if a not in self.held]
-        skip, regrasps, started = set(), 0, time.perf_counter()
+        skip, regrasps, started, roomed = set(), 0, time.perf_counter(), False
         while True:
             reached = self.reach(target, arms, skip, point, approach, then, max_angle)
+            if reached is None and not roomed and ctx.spec.base:
+                # None in reach from here: the base moves to reach the first candidates, then again.
+                roomed = True
+                paths = self.grasp_paths(target, arms, point, approach, then, max_angle)
+                if paths:
+                    self.make_room(paths, arms, need=1)
+                    skip = set()
+                    reached = self.reach(target, arms, skip, point, approach, then, max_angle)
             if reached is None:
                 ctx.fail('no reachable grasp', target=target.names, candidates_tried=len(skip), rejected=self.rejected)
             arm, grasp, supports = reached
@@ -348,6 +356,28 @@ class Skills:
                   'tcp_object': (np.linalg.inv(solver.tcp()) @ poses[target.body]).tolist()}
         self.log.append(result)
         return result
+
+    def grasp_paths(self, target, arms, point=None, approach=None, then=None, max_angle=None):
+        """The world TCP poses of the first ``ROOM_PLACES`` grasp candidates per arm, each with its
+        pre-grasp before it (and the ``then`` move after it): what the base moves to reach."""
+        transform = self.ctx.poses()[target.body] @ target.offset
+        centre = transform[:3, 3]
+        paths = []
+        for arm in arms:
+            preferred = approach if approach is not None else normalized(centre - self.shoulder(arm)) + [0., 0., -1.]
+            obstacles, _ = self.obstacles(arm, target, transform)
+            candidates = grasp_candidates(target.shape, transform, self.hands[arm], obstacles, preferred,
+                                          center_of_mass=point, approach_distance=APPROACH)
+            for count, grasp in enumerate(candidates):
+                if count >= ROOM_PLACES:
+                    break
+                if max_angle is not None and grasp.info['approach_deg'] > np.degrees(max_angle) + 1e-6:
+                    break
+                path = [standoff(grasp.pose, APPROACH), grasp.pose]
+                if then is not None:
+                    path.append(translated(grasp.pose, then))
+                paths.append(path)
+        return paths
 
     def reach(self, target, arms, skip, point, approach, then, max_angle=None):
         """Move to the first grasp of :meth:`options` whose motion plans, fingers open around the
