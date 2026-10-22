@@ -16,6 +16,9 @@ files are in ``outputs/scenes/<scene>/<backend>/``. The batch replaces
 - ``summary.json``: commit, seeds, success rate, failed seeds by ``"subtask: reason"``
   (``-: process exited`` for seeds a stopped process left without a result), mean durations.
 
+``--stage <name>`` checks one step of the expert alone from every initial state
+(``expert.STAGES``, see ``table_1000/experts/generate.py``); give it its own ``--output``.
+
 Failed episodes are part of the result; the exit status is non-zero only when a
 seed has no episode. See ``table_1000/experts/generate.py``.
 """
@@ -56,7 +59,8 @@ def worker(args):
         from table_1000.common.batch import parse_seeds
         from table_1000.scenes.initial import read_states
         _, states = read_states(args.states)
-        generator = Generator(args.scene, work, args.assets.resolve(), args.root.resolve(), physics=args.physics)
+        generator = Generator(args.scene, work, args.assets.resolve(), args.root.resolve(), physics=args.physics,
+                              stage=args.stage)
         for seed in parse_seeds(args.seeds):
             report = generator.run(seed, *states[seed])
             print(seed, report['status'], report.get('failure', {}).get('reason', ''), f'{report["wall_s"]:.0f} s',
@@ -81,6 +85,7 @@ def main(argv=None):
                         help='the batch goes to <output>/<scene>/<backend>/ (replaced)')
     parser.add_argument('--root', type=Path, default=ROOT, help='repository root holding the scene and robot sources')
     parser.add_argument('--assets', type=Path, default=ROOT / 'assets')
+    parser.add_argument('--stage', help="check one step of the expert alone: expert.STAGES[<stage>] (see generate.py)")
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--seeds', nargs='+', help=argparse.SUPPRESS)
     parser.add_argument('--states', type=Path, help=argparse.SUPPRESS)
@@ -118,7 +123,7 @@ def main(argv=None):
         works.update(dict.fromkeys(part, staging / name))
         argv = [sys.executable, str(Path(__file__).resolve()), args.scene, '--worker', '--physics', args.physics,
                 '--seeds', *seed_range(part).split(), '--states', str(states), '--work', str(staging / name),
-                '--root', str(root), '--assets', str(args.assets.resolve())]
+                '--root', str(root), '--assets', str(args.assets.resolve()), *(['--stage', args.stage] if args.stage else [])]
         return argv, staging / f'{name}.log', f'{args.scene} {args.physics} {name} seeds {seed_range(part)}'
 
     started = time.perf_counter()
@@ -136,7 +141,7 @@ def main(argv=None):
     for path in sorted(staging.glob('part*/episodes/*.json')):
         reports.append(json.loads(path.read_text()))
         shutil.move(path, directory / 'episodes' / path.name)
-    summary = {'scene': args.scene, 'robot': robot, 'physics': args.physics, 'commit': checkout,
+    summary = {'scene': args.scene, 'stage': args.stage, 'robot': robot, 'physics': args.physics, 'commit': checkout,
                **summarize(reports, seeds), 'total_s': time.perf_counter() - started, 'videos': {}, 'fails': {}}
     (directory / 'summary.json').write_text(json.dumps(summary, indent=1, ensure_ascii=False, default=float) + '\n')
     print('SUMMARY', directory / 'summary.json',

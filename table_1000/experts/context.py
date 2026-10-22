@@ -112,6 +112,21 @@ class Context:
             self.current = None
             self.env.contacts.phase = None
 
+    def arrange(self, poses=None, joints=None, settle=.5):
+        """Set the scene where a step starts (checking that step alone): objects at world ``poses``
+        (``{object: 4x4}`` of its asset frame) and their ``joints`` (``{object: {joint: value}}``);
+        the rest stays, the robot too. Then ``settle`` s of holding still."""
+        layout = {name: self.pose(name) for name in self.scene.OBJECTS}
+        layout.update(poses or {})
+        values = {name: {joint: float(value[0]) for joint, value in items.items()}
+                  for name, items in self.env.privileged()['joints'].items()}
+        for name, items in (joints or {}).items():
+            values.setdefault(name, {}).update(items)
+        self.env.reset(layout, dict(zip(self.env.joints, map(float, self.env.obs['agent']['qpos'][0]))), values)
+        self.origin = self.env.steps
+        self.sync_model()
+        self.hold(settle)
+
     def note(self, text, **values):
         self.events.append({'step': self.steps, 'subtask': self.current, 'note': text, **values})
 

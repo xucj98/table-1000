@@ -10,6 +10,7 @@ the hand reaches with room (make_room); on the table it stands where it started.
 """
 
 import numpy as np
+from scipy.spatial.transform import Rotation
 
 from table_1000.experts import skills
 from table_1000.experts.context import ExpertFailed
@@ -203,3 +204,51 @@ def solve(ctx):
         put_in_drawer(ctx, BOTTOM)
     with ctx.subtask('close the bottom drawer'):
         skills.retry(ctx, lambda: close_drawer(ctx, BOTTOM))
+
+
+# -- each step alone (run_expert.py --stage <name>) -------------------------------------------------
+def pen_on_table(ctx):
+    """World pose of the pen lying on the table on the far side of the robot from the cabinet, at a
+    random heading."""
+    base, cabinet = ctx.base_transform(), ctx.pose('cabinet')[:3, 3]
+    side = -np.sign((np.linalg.inv(base) @ np.r_[cabinet, 1.])[1]) or 1.
+    spot = base @ [.5, .25 * side, 0., 1.]
+    pose = np.eye(4)
+    pose[:3, :3] = Rotation.from_euler('z', ctx.rng.uniform(-np.pi, np.pi)).as_matrix()
+    low, _ = ctx.geometry['pen'].bounds()
+    pose[:3, 3] = [spot[0], spot[1], ctx.scene.TABLE['height'] - low[2] + .002]
+    return pose
+
+
+def opened(drawer):
+    return {'cabinet': {slide(drawer): OPENING}}
+
+
+def staged(steps):
+    """``{name: stage(ctx)}``, each running its step as one subtask."""
+    def stage(name, step):
+        def run(ctx):
+            with ctx.subtask(name):
+                step(ctx)
+        return run
+    return {name: stage(name, step) for name, step in steps.items()}
+
+
+STAGES = staged({
+    'open the top drawer': lambda ctx: skills.retry(ctx, lambda: open_drawer(ctx, TOP)),
+    'take the pen out': lambda ctx: (ctx.arrange(joints=opened(TOP)), skills.retry(ctx, lambda: take_out(ctx))),
+    'take the pen out and put it on the table': lambda ctx: (
+        ctx.arrange(joints=opened(TOP)), skills.retry(ctx, lambda: take_out(ctx)),
+        skills.retry(ctx, lambda: put_on_table(ctx))),
+    'close the top drawer': lambda ctx: (
+        ctx.arrange({'pen': pen_on_table(ctx)}, opened(TOP)), skills.retry(ctx, lambda: close_drawer(ctx, TOP))),
+    'open the bottom drawer': lambda ctx: (
+        ctx.arrange({'pen': pen_on_table(ctx)}), skills.retry(ctx, lambda: open_drawer(ctx, BOTTOM))),
+    'pick the pen up from the table and put it into the bottom drawer': lambda ctx: (
+        ctx.arrange({'pen': pen_on_table(ctx)}, opened(BOTTOM)),
+        skills.make_room(ctx, []),
+        skills.retry(ctx, lambda: skills.pick(ctx, 'pen', approach=pick_from_above(ctx))),
+        put_in_drawer(ctx, BOTTOM)),
+    'close the bottom drawer': lambda ctx: (
+        ctx.arrange({'pen': pen_on_table(ctx)}, opened(BOTTOM)), skills.retry(ctx, lambda: close_drawer(ctx, BOTTOM))),
+})
