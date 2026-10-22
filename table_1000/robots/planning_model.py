@@ -96,6 +96,48 @@ def _merge_convex(link, directory, output, tolerance=1.2):
     collision.find('geometry/mesh').set('filename', name.as_posix())
 
 
+def _merge_finger(link, directory, output, groups=4):
+    """Replace a finger's mesh collisions by ``groups`` hulls along its contact part (the pieces
+    beside its ``*pad*`` collisions, each pad with the piece it overlaps most, in order along the
+    finger) and one hull of the rest, which does not touch objects."""
+    collisions = link.findall('collision')
+    meshes = [collision.find('geometry/mesh') for collision in collisions]
+    if any(mesh is None or mesh.get('scale') for mesh in meshes):
+        return
+    points = []
+    for collision, mesh in zip(collisions, meshes):
+        transform = _transform(collision)
+        hull = trimesh.load(directory / mesh.get('filename'), force='mesh').convex_hull
+        points.append(hull.vertices @ transform[:3, :3].T + transform[:3, 3])
+    pads = [i for i, collision in enumerate(collisions) if 'pad' in (collision.get('name') or '')]
+    if not pads or len(collisions) - len(pads) <= groups:
+        return
+    axis = np.argmax(np.ptp(np.vstack(points), axis=0))
+    span = [(p[:, axis].min(), p[:, axis].max()) for p in points]
+
+    def overlap(i, j):
+        return min(span[i][1], span[j][1]) - max(span[i][0], span[j][0])
+
+    pieces = [i for i in range(len(collisions)) if i not in pads]
+    front = sorted((i for i in pieces if any(overlap(i, pad) > 1e-3 for pad in pads)), key=lambda i: span[i][0])
+    if len(front) < groups:
+        return
+    members = {i: [i] for i in front}
+    for pad in pads:
+        members[max(front, key=lambda i: overlap(i, pad))].append(pad)
+    merged = [[k for i in chunk for k in members[i]] for chunk in np.array_split(front, groups)]
+    rest = [i for i in pieces if i not in front]
+    if rest:
+        merged.append(rest)
+    for collision in collisions:
+        link.remove(collision)
+    for index, group in enumerate(merged):
+        name = Path('merged') / f'{link.get("name")}_{index}.stl'
+        (output / name).parent.mkdir(parents=True, exist_ok=True)
+        trimesh.convex.convex_hull(np.vstack([points[i] for i in group])).export(output / name)
+        ET.SubElement(ET.SubElement(ET.SubElement(link, 'collision'), 'geometry'), 'mesh', filename=name.as_posix())
+
+
 def write_planning_urdf(source, output, active, frozen, tcp, padding=0., unpadded=()):
     """Write ``output`` and return it.
 
@@ -105,7 +147,8 @@ def write_planning_urdf(source, output, active, frozen, tcp, padding=0., unpadde
     The convex hulls, boxes, cylinders and spheres are grown by ``padding`` on
     every side, except those of the ``unpadded`` links (meshes shared with
     padded links are not allowed); the other links' near-convex mesh sets are
-    merged (:func:`_merge_convex`).
+    merged (:func:`_merge_convex`), and the fingers' to a few hulls
+    (:func:`_merge_finger`).
     """
     source, output = Path(source), Path(output)
     root = ET.parse(source).getroot()
@@ -114,8 +157,10 @@ def write_planning_urdf(source, output, active, frozen, tcp, padding=0., unpadde
         for visual in link.findall('visual'):
             link.remove(visual)
     for link in root.findall('link'):
-        # The unpadded links touch objects (fingers): they keep their exact shapes.
-        if link.get('name') not in unpadded:
+        # The unpadded links touch objects (fingers): only their parts away from the pads merge.
+        if link.get('name') in unpadded:
+            _merge_finger(link, source.parent, output.parent)
+        else:
             _merge_convex(link, source.parent, output.parent)
     grown = {}
     for link in root.findall('link'):
