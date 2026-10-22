@@ -113,7 +113,8 @@ def author_effort_limits(urdf, output):
             axis = 'linear'
         else:
             continue
-        UsdPhysics.DriveAPI.Apply(prim, axis).CreateMaxForceAttr(efforts[prim.GetName()])
+        if prim.GetName() in efforts:     # a joint without a URDF effort keeps the importer's limit
+            UsdPhysics.DriveAPI.Apply(prim, axis).CreateMaxForceAttr(efforts[prim.GetName()])
     stage.GetRootLayer().Save()
 
 

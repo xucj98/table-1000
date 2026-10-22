@@ -45,7 +45,7 @@
 
 ```bash
 uv run python scripts/robots/build_robot.py x1pro --gpu 0
-uv run python scripts/robots/check_robot.py x1pro --output outputs/robots/x1pro-check --gpu 0
+uv run python scripts/robots/check_robot.py x1pro --physics isaac-cpu --gpus 0
 uv run python scripts/robots/teleop.py x1pro --output outputs/robots/x1pro-teleop --gpu 0 --port 8765
 ```
 

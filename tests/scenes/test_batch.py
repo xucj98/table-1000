@@ -1,6 +1,7 @@
 """The three scene steps without a simulator: seeds, initial-state files, merged batches, the choice of renders."""
 
 import json
+import sys
 
 import h5py
 import numpy as np
@@ -10,7 +11,7 @@ import pytest
 from scripts.scenes import build_scene, render, run_expert
 from table_1000.experts.generate import PROCESS_EXITED, summarize
 from table_1000.physics import test as physics_test
-from table_1000.scenes.batch import parse_seeds, seed_range, split
+from table_1000.scenes.batch import parse_seeds, run_parts, seed_range, split
 from table_1000.scenes.initial import read_states, write_states
 from table_1000.scenes.recordings import merge, video_path, videos
 
@@ -24,6 +25,16 @@ def test_seeds_are_ranges_and_single_seeds():
     assert parse_seeds(seed_range([3, 4, 9]).split()) == [3, 4, 9]
     assert split(list(range(10)), 3) == [[0, 1, 2, 3], [4, 5, 6], [7, 8, 9]]
     assert split([5, 6], 8) == [[5], [6]]
+
+
+def test_launcher_runs_every_part_with_its_gpu(tmp_path):
+    """Each part runs through the launcher prefix without --gpu and reads the GPU the launcher set."""
+    show = 'from table_1000.scenes.batch import worker_gpu; import sys; print(worker_gpu(None)); sys.exit(len(sys.argv) - 1)'
+    jobs = [([sys.executable, '-c', show, *extra], tmp_path / name / 'run.log', name)
+            for name, extra in (('a', []), ('b', ['fail']))]
+    failed = run_parts(jobs, [0], 1, launcher='env CUDA_VISIBLE_DEVICES=5')
+    assert failed == ['b']
+    assert (tmp_path / 'a' / 'run.log').read_text().strip() == '5'
 
 
 def test_initial_states_round_trip(tmp_path):

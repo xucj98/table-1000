@@ -40,7 +40,7 @@ articulation 求解迭代为 16/4（x1pro 为 32/4：32 次位置迭代下，RM0
 
 ```bash
 uv run python scripts/robots/build_robot.py x1pro_rm001 --gpu 0
-uv run python scripts/robots/check_robot.py x1pro_rm001 --output outputs/robots/x1pro_rm001-check --gpu 0
+uv run python scripts/robots/check_robot.py x1pro_rm001 --physics isaac-cpu --gpus 0
 ```
 
 从厂商包重新生成源码：

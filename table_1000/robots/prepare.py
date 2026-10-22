@@ -231,6 +231,8 @@ def base_meshes(source, spec, raw):
     used = raw_meshes(ET.parse(raw / load_prepare(base).URDF).getroot())
     pieces = {}
     for collision in ET.parse(base / 'robot.urdf').getroot().iter('collision'):
+        if collision.find('geometry/mesh') is None:   # a primitive added by the base robot's edit (a pad)
+            continue
         mesh = collision.find('geometry/mesh').get('filename')
         pieces.setdefault(Path(mesh).stem.rsplit('_', 1)[0], set()).add(f'../{name}/{mesh}')
     return {mesh: (f'../{name}/meshes/visual/{Path(mesh).stem}.ply', sorted(pieces.get(Path(mesh).stem, ())))

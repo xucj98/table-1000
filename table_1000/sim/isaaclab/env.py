@@ -337,17 +337,22 @@ class RobotEnv:
         # Lab resets the action terms before writing the state; they hold the joints written.
         for term in self.terms.values():
             term.reset()
-        origins = self.env.scene.env_origins
-        for name in self.shapes:
-            shape = self.env.scene[name]
-            if kinematic(shape):
-                pose = to_tensors(state)['rigid_object'][name]['root_pose'].clone()
-                pose[:, :3] += origins
-                place(self.env, shape, pose, list(range(self.num_envs)))
+        self.place_kinematic(to_tensors(state))
         self.env.sim.forward()
         self.steps = 0
         self.contacts.clear()
         return self.observe()
+
+    def place_kinematic(self, state):
+        """Pose the kinematic shapes as in ``state`` (tensors on the device): ``InteractiveScene.reset_to``
+        leaves their kinematic targets and USD transforms."""
+        rows = next(iter(state['rigid_object'].values()))['root_pose'].shape[0] if state['rigid_object'] else 0
+        for name in self.shapes:
+            shape = self.env.scene[name]
+            if kinematic(shape):
+                pose = state['rigid_object'][name]['root_pose'].clone()
+                pose[:, :3] += self.env.scene.env_origins[:rows]
+                place(self.env, shape, pose, list(range(rows)))
 
     def observe(self):
         obs = self.env.observation_manager.compute()
@@ -536,5 +541,8 @@ class RobotEnv:
         self.markers = max(count, len(points))
 
     def close(self):
+        """Close the environment and empty the stage, so the process can build another one."""
+        import omni.usd
         self.contacts.close()
         self.env.close()
+        omni.usd.get_context().new_stage()

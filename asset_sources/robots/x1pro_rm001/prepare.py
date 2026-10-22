@@ -41,6 +41,9 @@ def add_pads(root):
         return trimesh.convex.convex_hull(np.unique(np.round(points, 6), axis=0))
 
     source = Path(__file__).parent
+    # The lining is cut from slabs 3 to 7 of the 8 along x (the first three cover the pivot and shaft).
+    if any(value != (0, 8) for value in SLABS.values()):
+        raise ValueError('add_pads cuts the lining from 8 slabs along x: update it with SLABS')
     for finger, sign in (('left', 1), ('right', -1)):
         stem = f'gripper_{finger}_link'
         hulls = slabs(trimesh.load(source / f'meshes/visual/{stem}.ply'), 0, 8)
