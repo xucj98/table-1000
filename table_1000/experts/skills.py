@@ -69,6 +69,9 @@ least move from where given TCP poses are reachable with every joint a margin in
 its limits, the free arms back at their start pose first (``move_base`` drives it
 straight and turns it in place).
 
+**ready** -- the arms that hold nothing back at their start pose (each step then starts
+alike, out of the way of the other arm).
+
 **retry** -- a step run again when it fails (``ATTEMPTS`` in all, within
 ``RETRY_BUDGET`` s of the episode), the arms that hold nothing back at their start pose
 first, so that its choices start afresh.
@@ -813,6 +816,11 @@ def _skills(ctx):
 def make_room(ctx, poses, arms=None, path=False):
     """Move the base to where the world TCP ``poses`` are reachable with a margin (see :meth:`Skills.make_room`)."""
     _skills(ctx).make_room(poses, arms, path=path)
+
+
+def ready(ctx):
+    """The arms that hold nothing back at their start pose (see :meth:`Skills.ready`)."""
+    _skills(ctx).ready()
 
 
 def retry(ctx, step, attempts=ATTEMPTS, budget=RETRY_BUDGET):

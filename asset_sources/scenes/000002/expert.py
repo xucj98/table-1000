@@ -221,24 +221,21 @@ def put_on_table(ctx):
 
 
 def solve(ctx):
-    # Each step is tried again when it fails (skills.retry), from where things are.
-    with ctx.subtask('open the top drawer of the cabinet'):
-        skills.retry(ctx, lambda: open_drawer(ctx, TOP))
-    with ctx.subtask('take the pen out of the top drawer'):
-        skills.retry(ctx, lambda: take_out(ctx))
-    with ctx.subtask('put the pen on the table'):
-        skills.retry(ctx, lambda: put_on_table(ctx))
-    with ctx.subtask('close the top drawer'):
-        skills.retry(ctx, lambda: close_drawer(ctx, TOP))
-    with ctx.subtask('open the bottom drawer of the cabinet'):
-        skills.retry(ctx, lambda: open_drawer(ctx, BOTTOM))
-    with ctx.subtask('pick up the pen from the table'):
-        skills.make_room(ctx, [])
-        skills.retry(ctx, lambda: pick_up(ctx))
-    with ctx.subtask('put the pen into the bottom drawer'):
-        put_in_drawer(ctx, BOTTOM)
-    with ctx.subtask('close the bottom drawer'):
-        skills.retry(ctx, lambda: close_drawer(ctx, BOTTOM))
+    # Each step starts with the free arms back at their start pose (out of the way of the other) and
+    # is tried again when it fails (skills.retry), from where things are.
+    def step(instruction, action):
+        with ctx.subtask(instruction):
+            skills.ready(ctx)
+            action()
+
+    step('open the top drawer of the cabinet', lambda: skills.retry(ctx, lambda: open_drawer(ctx, TOP)))
+    step('take the pen out of the top drawer', lambda: skills.retry(ctx, lambda: take_out(ctx)))
+    step('put the pen on the table', lambda: skills.retry(ctx, lambda: put_on_table(ctx)))
+    step('close the top drawer', lambda: skills.retry(ctx, lambda: close_drawer(ctx, TOP)))
+    step('open the bottom drawer of the cabinet', lambda: skills.retry(ctx, lambda: open_drawer(ctx, BOTTOM)))
+    step('pick up the pen from the table', lambda: (skills.make_room(ctx, []), skills.retry(ctx, lambda: pick_up(ctx))))
+    step('put the pen into the bottom drawer', lambda: put_in_drawer(ctx, BOTTOM))
+    step('close the bottom drawer', lambda: skills.retry(ctx, lambda: close_drawer(ctx, BOTTOM)))
 
 
 # -- each step alone (run_expert.py --stage <name>) -------------------------------------------------
