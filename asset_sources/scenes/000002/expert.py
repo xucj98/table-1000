@@ -17,6 +17,7 @@ OPENING = .16           # m a drawer is pulled out (stroke 0.173)
 OPEN_TOLERANCE = .02    # m short of OPENING still counts as open
 CLOSED = .005           # m
 PUSH_PAST = .003        # m pushed beyond the closed stop, so the drawer surely reaches it
+HANDLE_ANGLE = np.radians(10.)  # the most a handle grasp may turn from straight at the drawer
 PULLS, PULL_LEAST = 3, .25  # grasps a drawer is slid open with at most; the least part of the rest one slides
 # Spots for the pen on the table: a grid in front of the robot (SPOT_AHEAD of its centre, within
 # the reach of a grasp from above), clear of the cabinet and of the drawers' pull-out space by
@@ -54,10 +55,11 @@ def move_drawer(ctx, drawer, opening):
     part way, grasps again and goes on."""
     for _ in range(PULLS):
         move = pull(ctx, drawer, opening - ctx.joint('cabinet', slide(drawer)))
-        # Straight at the drawer face: pivoting fingers pinching the handle's ends from above slip
-        # off in the pull.
+        # Straight at the drawer face: pivoting fingers pinching the handle's ends from above (even
+        # 15 degrees) slip off.
         inward = ctx.pose('cabinet', body(drawer))[:3, 1]
-        held = skills.grasp(ctx, 'cabinet', f'{body(drawer)}.handle', then=move, approach=inward)
+        held = skills.grasp(ctx, 'cabinet', f'{body(drawer)}.handle', then=move, approach=inward,
+                            max_angle=HANDLE_ANGLE)
         housing = ctx.pose('cabinet')[:3, 3]
         moved = skills.move_by_displacement(ctx, held['arm'], *move, drag=('cabinet', body(drawer)), least=PULL_LEAST)
         ctx.note('slid', drawer=drawer, opening=ctx.joint('cabinet', slide(drawer)), moved=moved,

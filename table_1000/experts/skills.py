@@ -205,7 +205,7 @@ class Skills:
             obstacles.append((body, SUPPORT_CLEARANCE if support else 0.))
         return obstacles, supports
 
-    def options(self, target, arms, skip, point=None, approach=None, then=None):
+    def options(self, target, arms, skip, point=None, approach=None, then=None, max_angle=None):
         """Feasible ``(arm, grasp, supports, q_grasp, q_pre)``, in the order tried; ``skip`` holds the
         ids of candidates already used. ``self.rejected`` counts the candidates dropped, by reason."""
         self.rejected = {'grasp IK': 0, 'pre-grasp IK': 0, 'then': 0, 'collisions': {}}
@@ -223,7 +223,7 @@ class Skills:
             for index, grasp in enumerate(candidates):
                 if (arm, index) in skip:
                     continue
-                if checked >= MAX_IK:
+                if checked >= MAX_IK or (max_angle is not None and grasp.info['approach_deg'] > np.degrees(max_angle) + 1e-6):
                     break
                 checked += 1
                 start = self.model.vector(side.finger_targets(grasp.open_gap))
@@ -277,14 +277,14 @@ class Skills:
             counts[key] = counts.get(key, 0) + 1
 
     # -- skills --------------------------------------------------------------------------
-    def grasp(self, target, arm=None, point=None, approach=None, then=None):
+    def grasp(self, target, arm=None, point=None, approach=None, then=None, max_angle=None):
         """Grasp ``target`` (:class:`Target`) with ``arm`` (default either); see the module docstring.
         Returns ``{'arm', 'grasp', 'supports', 'finger_gap', 'regrasps', 'choice_s', 'tcp_object'}``."""
         ctx = self.ctx
         arms = [arm] if arm else [a for a in self.arms if a not in self.held]
         skip, regrasps, started = set(), 0, time.perf_counter()
         while True:
-            reached = self.reach(target, arms, skip, point, approach, then)
+            reached = self.reach(target, arms, skip, point, approach, then, max_angle)
             if reached is None:
                 ctx.fail('no reachable grasp', target=target.names, candidates_tried=len(skip), rejected=self.rejected)
             arm, grasp, supports = reached
@@ -315,12 +315,12 @@ class Skills:
         self.log.append(result)
         return result
 
-    def reach(self, target, arms, skip, point, approach, then):
+    def reach(self, target, arms, skip, point, approach, then, max_angle=None):
         """Move to the first grasp of :meth:`options` whose motion plans, fingers open around the
         object; ``(arm, grasp, supports)``, or None when no candidate is left."""
         ctx = self.ctx
         for tried, (arm, grasp, supports, q_grasp, q_pre) in enumerate(
-                self.options(target, arms, skip, point, approach, then)):
+                self.options(target, arms, skip, point, approach, then, max_angle)):
             if tried >= MAX_PLANS:
                 return None
             solver = self.solvers[arm]
@@ -578,10 +578,12 @@ def _skills(ctx):
     return ctx.skills()
 
 
-def grasp(ctx, obj, part=None, *, arm=None, shape=None, offset=None, body=None, point=None, approach=None, then=None):
-    """Grasp scene object ``obj`` (or its ``part``); see the module docstring."""
+def grasp(ctx, obj, part=None, *, arm=None, shape=None, offset=None, body=None, point=None, approach=None, then=None,
+          max_angle=None):
+    """Grasp scene object ``obj`` (or its ``part``); see the module docstring. ``max_angle`` (rad): only
+    grasps approaching within it of ``approach``."""
     skills = _skills(ctx)
-    return skills.grasp(skills.target(obj, part, shape, offset, body), arm, point, approach, then)
+    return skills.grasp(skills.target(obj, part, shape, offset, body), arm, point, approach, then, max_angle)
 
 
 def pick(ctx, obj, part=None, *, arm=None, shape=None, offset=None, body=None, point=None, approach=None, height=LIFT):
