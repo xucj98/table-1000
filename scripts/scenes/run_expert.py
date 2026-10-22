@@ -7,7 +7,7 @@ Runs ``expert.py`` from every initial state of ``<input>/<scene>/initial_states.
 split into ``--jobs`` contiguous parts, one process each, spread over ``--gpus`` or
 submitted through ``--launcher`` (see ``table_1000/common/batch.py``); seeds whose
 process stopped before their episode run again (``--retries``). Logs and the parts'
-files are in ``outputs/scenes/<scene>/<backend>/``. The batch replaces
+files are in ``outputs/scenes/<scene>/<backend>/`` (``stages/<stage>/`` below it for a stage). The batch replaces
 ``<output>/<scene>/<backend>/`` (``<output>`` = ``data/scenes``), renders included:
 
 - ``trajectories.hdf5``, ``trajectories_failed.hdf5``: succeeded and failed episodes,
@@ -113,6 +113,8 @@ def main(argv=None):
         parser.error(f'{states} holds no initial states')
     directory = (args.output / args.scene / args.physics).resolve()
     staging = root / 'outputs' / 'scenes' / args.scene / args.physics
+    if args.stage:
+        staging = staging / 'stages' / args.stage.replace(' ', '_')
     shutil.rmtree(directory, ignore_errors=True)
     shutil.rmtree(staging, ignore_errors=True)
     checkout = commit(root)
