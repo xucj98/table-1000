@@ -3,7 +3,7 @@
 import json
 
 from scripts.robots import check_robot
-from table_1000.physics import test as physics_test
+from table_1000.scenes import batch
 from table_1000.scenes.batch import pack, plan
 
 
@@ -38,7 +38,7 @@ def test_units_retries_and_summary(tmp_path, monkeypatch):
                                          {'attempt': attempt, 'result': result})
         return []
 
-    monkeypatch.setattr(physics_test, 'run_jobs', run_jobs)
+    monkeypatch.setattr(batch, 'run_jobs', run_jobs)
     try:
         check_robot.main(['x1pro', '--physics', 'isaac-cpu', '--cases', 'keyframes', 'joint_limits',
                           'grasp_and_push', 'parallel', '--trials', '0', '1', '2', '--gpus', '0', '1',

@@ -12,6 +12,8 @@ import sys
 import time
 import traceback
 
+from table_1000.scenes.batch import add_arguments, job_count, run_batch, worker_gpu
+
 
 def load_tests(path):
     spec = importlib.util.spec_from_file_location('table1000_asset_tests',path)
@@ -345,48 +347,24 @@ def run_backend(asset,backend,*,gpu,script,tests=None,num_envs=None,benchmark=Fa
         app.close(exit_code=int(failed))
 
 
-def run_jobs(jobs,gpus):
-    """Run (command, log) jobs, one at a time per listed GPU; returns failed jobs."""
-    from concurrent.futures import ThreadPoolExecutor
-    import queue
-    free=queue.Queue()
-    for gpu in gpus:free.put(gpu)
-    def run(job):
-        command,log,label=job
-        gpu=free.get()
-        try:
-            print('START',label,'GPU',gpu,flush=True)
-            log.parent.mkdir(parents=True,exist_ok=True)
-            with log.open('w') as stream:
-                code=subprocess.run([*command,'--gpu',str(gpu)],stdout=stream,stderr=subprocess.STDOUT).returncode
-            print('DONE' if code==0 else 'FAILED',label,log,flush=True)
-            return code
-        finally:
-            free.put(gpu)
-    with ThreadPoolExecutor(len(gpus)) as pool:
-        codes=list(pool.map(run,jobs))
-    return [job[2] for job,code in zip(jobs,codes) if code]
-
-
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source',type=Path,default=Path('assets/objects'),help='built assets root')
     parser.add_argument('--assets',nargs='+',help='asset directories relative to --source; default all with physics_test.py')
     parser.add_argument('--physics',nargs='+',choices=tuple(BACKENDS),required=True,help='physics backends to run')
-    parser.add_argument('--gpus',type=int,nargs='+',default=[0],help='physical GPUs; one asset-backend run at a time on each')
     parser.add_argument('--tests',nargs='+',help='only these tests')
     parser.add_argument('--scripts',type=Path,help='read physics_test.py from this root (e.g. asset_sources/objects) instead of the build snapshot')
     parser.add_argument('--num-envs',type=int,help='parallel copies of each experiment; default 1 on CPU, 4 on GPU')
     parser.add_argument('--benchmark',action='store_true',help='standard RTF measurement: warmup and three timed rounds before the video run')
     parser.add_argument('--plots-only',action='store_true')
+    add_arguments(parser)
     parser.add_argument('--worker',type=Path,help=argparse.SUPPRESS)
-    parser.add_argument('--gpu',type=int,help=argparse.SUPPRESS)
     parser.add_argument('--script',type=Path,help=argparse.SUPPRESS)
     args=parser.parse_args(argv)
     if args.num_envs is not None and args.num_envs<1:parser.error('--num-envs must be positive')
     source=args.source.resolve()
     if args.worker:
-        run_backend(entry(args.worker),args.physics[0],gpu=args.gpu,script=args.script,tests=args.tests,
+        run_backend(entry(args.worker),args.physics[0],gpu=worker_gpu(args.gpu),script=args.script,tests=args.tests,
                     num_envs=args.num_envs,benchmark=args.benchmark)
         return
     references=([Path(reference) for reference in args.assets] if args.assets is not None
@@ -415,27 +393,44 @@ def main(argv=None):
         if broken:
             raise SystemExit('failed: '+', '.join(f'{reference} (physics_test.py)' for reference in broken))
         return
-    jobs,selected=[],{}
+    count=job_count(parser,args)
+    selected={}
     for reference in names:
         for backend in args.physics:
-            output=source/reference/'physics_test'/backend
             selected[reference,backend]=args.tests or names[reference]
-            for name in selected[reference,backend]:clear(output,name)
-            command=[sys.executable,str(ENTRY),'--worker',str(source/reference),'--physics',backend,
-                     '--script',str(scripts[reference])]
-            if args.tests:command+=['--tests',*args.tests]
-            if args.num_envs:command+=['--num-envs',str(args.num_envs)]
-            if args.benchmark:command.append('--benchmark')
-            jobs.append((command,source/reference/'physics_test'/backend/'run.log',f'{reference} {backend}'))
-    failed=run_jobs(jobs,args.gpus)
+            for name in selected[reference,backend]:clear(source/reference/'physics_test'/backend,name)
+
+    def results(unit):
+        output=source/unit[0]/'physics_test'/unit[1]
+        return {name:output/name/'result.json' for name in selected[unit]}
+
+    def command(group,index,attempt):
+        (reference,backend),=group
+        command=[sys.executable,str(ENTRY),'--worker',str(source/reference),'--physics',backend,
+                 '--script',str(scripts[reference])]
+        # A rerun runs only the tests its stopped process left without a result.
+        remaining=[name for name,path in results(group[0]).items() if not path.exists()]
+        if remaining:command+=['--tests',*remaining]
+        if args.num_envs:command+=['--num-envs',str(args.num_envs)]
+        if args.benchmark:command.append('--benchmark')
+        log=source/reference/'physics_test'/backend/(f'run-retry{attempt}.log' if attempt else 'run.log')
+        return command,log,f'{reference} {backend}'
+
+    # One process per asset and backend: Kit's close ends it.
+    run_batch(list(selected),key=lambda unit:unit,command=command,
+              missing=lambda unit:not all(path.exists() for path in results(unit).values()),
+              count=count,gpus=args.gpus,launcher=args.launcher,retries=args.retries)
+    failed=[]
     for (reference,backend),tests in selected.items():
         output=source/reference/'physics_test'/backend
         for name in tests:
-            # The worker exited before reaching this test, e.g. at startup.
+            # The worker exited before reaching this test, e.g. at startup, in every attempt.
             if not (output/name/'result.json').exists():
                 (output/name).mkdir(parents=True,exist_ok=True)
                 (output/name/'result.json').write_text(json.dumps({'test':name,'execution_status':'failed',
-                    'error':f'not run: the {backend} process exited before this test; see {output/"run.log"}'},indent=2)+'\n')
+                    'error':f'not run: the {backend} process exited before this test; see {output}/run*.log'},indent=2)+'\n')
+        if any(json.loads(path.read_text())['execution_status']!='completed' for path in results((reference,backend)).values()):
+            failed.append(f'{reference} {backend}')
     for reference in references:
         print('SUMMARY',write_summary(source/reference,names.get(reference,[]),broken.get(reference)),flush=True)
     failed+=[f'{reference} (physics_test.py)' for reference in broken]

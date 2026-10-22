@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from table_1000.physics.test import main, run_case, run_jobs, summary
+from table_1000.physics.test import main, run_case, summary
 
 
 class CaseResultsTests(unittest.TestCase):
@@ -58,24 +58,24 @@ class CaseResultsTests(unittest.TestCase):
             measure.assert_not_called()
             self.assertIsNone(render.call_args.args[6])
 
-    def test_jobs_share_the_listed_gpus(self):
-        def fake(command, **kwargs):
-            return Mock(returncode=int(command[0] == 'bad'))
-        with tempfile.TemporaryDirectory() as temporary, \
-             patch('table_1000.physics.test.subprocess.run', side_effect=fake) as run:
-            jobs = [([name], Path(temporary) / name / 'run.log', name) for name in ('a', 'bad', 'c')]
-            self.assertEqual(run_jobs(jobs, [4, 5]), ['bad'])
-        self.assertEqual({call.args[0][-1] for call in run.call_args_list} <= {'4', '5'}, True)
-        self.assertEqual(len(run.call_args_list), 3)
-
     def test_batch_runs_every_asset_backend_and_writes_summaries(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             for reference in ('pen/000002', 'cabinet/000000'):
                 (root / reference).mkdir(parents=True)
                 (root / reference / 'physics_test.py').write_text("TESTS = {'drop': None}\n")
-            with patch('table_1000.physics.test.run_jobs', return_value=[]) as jobs:
+            def run(jobs, gpus):
+                for command, _, _ in jobs:
+                    output = Path(command[command.index('--worker') + 1]) / 'physics_test' / command[command.index('--physics') + 1]
+                    (output / 'drop').mkdir(parents=True)
+                    (output / 'drop' / 'result.json').write_text(json.dumps({
+                        'execution_status': 'completed', 'conditions': {'isaac_version': ['5.1.0']},
+                        'environments': {'count': 1}, 'metrics': {},
+                        'performance': {'no_render': {'RTF': 1}, 'video_end_to_end': {'RTF': 1}}}))
+                return []
+            with patch('table_1000.scenes.batch.run_jobs', side_effect=run) as jobs:
                 main(['--source', temporary, '--physics', 'isaac-cpu', 'isaac-gpu', '--gpus', '1', '2'])
+            self.assertEqual(jobs.call_count, 1)
             commands = jobs.call_args.args[0]
             self.assertEqual(jobs.call_args.args[1], [1, 2])
             self.assertEqual(sorted(label for _, _, label in commands),
@@ -121,7 +121,7 @@ class CaseResultsTests(unittest.TestCase):
                                             'environments': {'count': 4}, 'metrics': {},
                                             'performance': {'no_render': {'RTF': 1}, 'video_end_to_end': {'RTF': 1}}}))
             # The worker dies at startup and writes nothing.
-            with patch('table_1000.physics.test.run_jobs', return_value=['pen/000002 isaac-gpu']):
+            with patch('table_1000.scenes.batch.run_jobs', return_value=['pen/000002 isaac-gpu']):
                 with self.assertRaises(SystemExit):
                     main(['--source', temporary, '--physics', 'isaac-gpu', '--tests', 'close'])
             result = json.loads((asset / 'physics_test/summary.json').read_text())
@@ -136,7 +136,7 @@ class CaseResultsTests(unittest.TestCase):
             for reference, text in (('pen/000002', "TESTS = {'drop': None}\n"), ('cabinet/000000', "raise ImportError('broken')\n")):
                 (root / reference).mkdir(parents=True)
                 (root / reference / 'physics_test.py').write_text(text)
-            with patch('table_1000.physics.test.run_jobs', return_value=[]) as jobs, \
+            with patch('table_1000.scenes.batch.run_jobs', return_value=[]) as jobs, \
                  patch('traceback.print_exc'):
                 with self.assertRaisesRegex(SystemExit, 'cabinet/000000'):
                     main(['--source', temporary, '--physics', 'isaac-cpu'])

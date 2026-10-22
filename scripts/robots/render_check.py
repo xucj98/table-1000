@@ -7,7 +7,7 @@ trials) of each robot and backend, reads ``<backend>/<case>/trajectory.hdf5`` fr
 of ``check_robot.py`` (same ``--output``) and writes one video per view next to it, ``<view>.mp4``:
 ``--views`` names fixed views of the check scene (``wide``, the default) and RGB robot cameras. Frame t
 restores the recorded state before step t (25 fps, the case's name and time above it); nothing is
-simulated. Processes as in ``check_robot.py``: ``--jobs`` over ``--gpus`` or through ``--launcher``.
+simulated. Processes as in ``check_robot.py``: ``--jobs`` over ``--gpus`` or through ``--launcher``, ``--retries``.
 """
 
 import argparse
@@ -20,7 +20,7 @@ import traceback
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from scripts.robots.check_robot import BACKENDS, LAUNCHED_JOBS, parse_unit, unit_dir, unit_name  # noqa: E402
+from scripts.robots.check_robot import BACKENDS, parse_unit, unit_dir, unit_name  # noqa: E402
 
 # Renders of the first frame (RT2 denoises over time), as scripts/scenes/render.py.
 FIRST_FRAME_RENDERS = 4
@@ -85,33 +85,28 @@ def worker(args):
 
 
 def main(argv=None):
+    from table_1000.scenes.batch import add_arguments, job_count, run_batch
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('robots', nargs='+', help='robot names (asset_sources/robots/<name>)')
     parser.add_argument('--physics', nargs='+', choices=BACKENDS, required=True, help='backends the cases ran on')
     parser.add_argument('--cases', nargs='+', help='only these cases (default: every case with a trajectory)')
     parser.add_argument('--trials', type=int, nargs='+', help='only these grasp_and_push trials')
     parser.add_argument('--views', nargs='+', default=['wide'], help='fixed views (wide) and RGB robot cameras')
-    parser.add_argument('--jobs', type=int, help=f'processes at once (default: one per --gpus; {LAUNCHED_JOBS} with --launcher)')
-    parser.add_argument('--gpus', type=int, nargs='+', help='local GPUs (default 0); not with --launcher')
-    parser.add_argument('--launcher', help='command prefix of a job scheduler (see check_robot.py)')
+    add_arguments(parser)
     parser.add_argument('--output', type=Path, help='results in <output>/<robot>/ (default <assets>/robots/<robot>/check/)')
     parser.add_argument('--root', type=Path, default=ROOT, help='repository root holding the robot sources')
     parser.add_argument('--assets', type=Path, default=ROOT / 'assets', help='asset root holding the built robots')
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--dir', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--units', nargs='+', help=argparse.SUPPRESS)
-    parser.add_argument('--gpu', type=int, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.worker:
         worker(args)
         return
-    if args.launcher and args.gpus:
-        parser.error('--gpus runs locally; with --launcher the scheduler picks the GPUs')
-    args.gpus = args.gpus or [0]
+    jobs = job_count(parser, args)
     import h5py
     from table_1000.robots import load_spec
     from table_1000.robots.checks import VIEWS
-    from table_1000.scenes.batch import run_batch
     root, assets = args.root.resolve(), args.assets.resolve()
     directories, units, lengths = {}, [], {}
     for robot in args.robots:
@@ -152,10 +147,9 @@ def main(argv=None):
         for view in args.views:
             video(unit).with_name(f'{view}.mp4').unlink(missing_ok=True)
     started = time.perf_counter()
-    jobs = args.jobs or (LAUNCHED_JOBS if args.launcher else len(args.gpus))
     missing = run_batch(units, key=lambda unit: unit[:2], cost=lambda unit: lengths[unit], count=jobs,
                         command=command, missing=lambda unit: not video(unit).exists(), gpus=args.gpus,
-                        launcher=args.launcher, retries=1)
+                        launcher=args.launcher, retries=args.retries)
     for unit in units:
         if unit not in missing:
             print(*unit[:3], *([] if unit[3] is None else [unit[3]]), video(unit).parent, flush=True)

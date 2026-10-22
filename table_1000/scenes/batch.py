@@ -1,16 +1,42 @@
-"""Batch runs of the scene scripts: seeds, the split into processes and the commit they ran from.
+"""Batch runs of the scripts: work units packed into processes, seeds and the commit they ran from.
 
-Seeds are written as in ``--seeds``: ``a:b`` (``a`` to ``b - 1``) and single seeds,
-e.g. ``0:100`` or ``20 64``. A batch is split into ``len(gpus) × jobs_per_gpu``
-contiguous parts, one process each; a part that fails does not stop the others.
-With a launcher (a job scheduler's command prefix such as ``srun --gres=gpu:1``), every
-part is submitted at once through it instead, and the scheduler picks each part's GPU.
+A batch script's work units (seeds, cases, asset backends) are packed into ``--jobs`` processes
+(:func:`plan`) that run at once: spread evenly over the local ``--gpus``, or each submitted through
+``--launcher``, a job scheduler's command prefix such as ``srun --gres=gpu:1`` that picks the GPU.
+Units whose process stopped before writing their result run again (``--retries``); see
+:func:`run_batch`. Seeds are written as in ``--seeds``: ``a:b`` (``a`` to ``b - 1``) and single
+seeds, e.g. ``0:100`` or ``20 64``.
 """
 
+import argparse
 import os
 import shlex
 import subprocess
 import sys
+
+# Processes at once through a launcher, unless --jobs says otherwise.
+LAUNCHED_JOBS = 16
+
+
+def add_arguments(parser):
+    """``--jobs``, ``--gpus``, ``--launcher`` and ``--retries`` of a batch script, and its workers' ``--gpu``."""
+    parser.add_argument('--jobs', type=int, help=f'processes at once (default: one per --gpus; {LAUNCHED_JOBS} with --launcher)')
+    parser.add_argument('--gpus', type=int, nargs='+', help='local GPUs the processes are spread over (default 0); '
+                        'not with --launcher')
+    parser.add_argument('--launcher', help='command prefix of a job scheduler that runs a process on a free GPU it sets '
+                        'CUDA_VISIBLE_DEVICES to; instead of --gpus')
+    parser.add_argument('--retries', type=int, default=1, help='reruns of work whose process stopped before its result')
+    parser.add_argument('--gpu', type=int, help=argparse.SUPPRESS)
+
+
+def job_count(parser, args):
+    """The processes at once of :func:`add_arguments`' options; sets the default ``args.gpus``."""
+    if args.launcher and args.gpus:
+        parser.error('--gpus runs locally; with --launcher the scheduler picks the GPUs')
+    if args.jobs is not None and args.jobs < 1:
+        parser.error('--jobs must be positive')
+    args.gpus = args.gpus or [0]
+    return args.jobs or (LAUNCHED_JOBS if args.launcher else len(args.gpus))
 
 
 def parse_seeds(values):
@@ -54,16 +80,37 @@ def split(values, count):
     return parts
 
 
-def run_parts(jobs, gpus, jobs_per_gpu, launcher=None, limit=None):
-    """Run ``(command, log, label)`` jobs; returns the failed labels.
+def run_jobs(jobs, gpus):
+    """Run ``(command, log, label)`` jobs, one at a time per entry of ``gpus`` (a GPU listed twice runs two),
+    each command given ``--gpu``; returns the failed labels."""
+    from concurrent.futures import ThreadPoolExecutor
+    import queue
+    free = queue.Queue()
+    for gpu in gpus:
+        free.put(gpu)
 
-    Without ``launcher``: ``jobs_per_gpu`` at a time on each of ``gpus``, each command given ``--gpu``.
-    With ``launcher``: ``limit`` at a time (default all), each as ``<launcher> bash -c '<command> > <log> 2>&1'``. The launcher
-    waits for a free GPU, sets ``CUDA_VISIBLE_DEVICES`` to it and returns the command's status; the command
-    gets no ``--gpu`` and reads its GPU with :func:`worker_gpu`."""
-    if not launcher:
-        from table_1000.physics.test import run_jobs
-        return run_jobs(jobs, [gpu for _ in range(jobs_per_gpu) for gpu in gpus])
+    def run(job):
+        command, log, label = job
+        gpu = free.get()
+        try:
+            print('START', label, 'GPU', gpu, flush=True)
+            log.parent.mkdir(parents=True, exist_ok=True)
+            with log.open('w') as stream:
+                code = subprocess.run([*command, '--gpu', str(gpu)], stdout=stream, stderr=subprocess.STDOUT).returncode
+            print('DONE' if code == 0 else 'FAILED', label, log, flush=True)
+            return code
+        finally:
+            free.put(gpu)
+
+    with ThreadPoolExecutor(len(gpus)) as pool:
+        codes = list(pool.map(run, jobs))
+    return [job[2] for job, code in zip(jobs, codes) if code]
+
+
+def launch(jobs, launcher, limit):
+    """Run ``(command, log, label)`` jobs, ``limit`` at a time, each as ``<launcher> bash -c '<command> > <log> 2>&1'``;
+    returns the failed labels. The launcher waits for a free GPU, sets ``CUDA_VISIBLE_DEVICES`` to it and returns
+    the command's status; the command gets no ``--gpu`` and reads its GPU with :func:`worker_gpu`."""
     from concurrent.futures import ThreadPoolExecutor
     import signal
     import threading
@@ -84,7 +131,7 @@ def run_parts(jobs, gpus, jobs_per_gpu, launcher=None, limit=None):
     # Stopping the batch (Ctrl-C, SIGTERM) stops the launcher clients too, which cancel what they started;
     # the pool is shut down only after that, as its threads wait for the clients.
     previous = signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
-    pool = ThreadPoolExecutor(min(limit or len(jobs), len(jobs)))
+    pool = ThreadPoolExecutor(min(limit, len(jobs)))
     try:
         codes = list(pool.map(run, jobs))
     except BaseException:
@@ -114,13 +161,15 @@ def pack(items, cost, count):
 
 def plan(items, key, cost, count):
     """Groups of ``items`` for ``count`` processes: items of one ``key(item)`` share a process kind (e.g. one
-    robot and physics backend) and are packed by :func:`pack`; each key gets processes in proportion to its
-    total cost, at least one and at most one per item. With more keys than ``count``, there are more groups
-    than ``count``: :func:`run_batch` runs ``count`` of them at a time."""
+    robot and physics backend) and are packed by :func:`pack`, or without ``cost`` (all alike) split into
+    contiguous runs; each key gets processes in proportion to its total cost, at least one and at most one
+    per item. With more keys than ``count``, there are more groups than ``count``: :func:`run_batch` runs
+    ``count`` of them at a time."""
+    weight = cost or (lambda item: 1)
     by_key = {}
     for item in items:
         by_key.setdefault(key(item), []).append(item)
-    totals = {k: sum(map(cost, values)) for k, values in by_key.items()}
+    totals = {k: sum(map(weight, values)) for k, values in by_key.items()}
     counts = {k: max(1, round(count * total / sum(totals.values()))) for k, total in totals.items()}
     while sum(counts.values()) > count and any(c > 1 for c in counts.values()):
         k = min((k for k in counts if counts[k] > 1), key=lambda k: totals[k] / counts[k])
@@ -131,17 +180,17 @@ def plan(items, key, cost, count):
         if not open_keys:
             break
         counts[max(open_keys, key=lambda k: totals[k] / counts[k])] += 1
-    return [group for k, values in by_key.items() for group in pack(values, cost, counts[k])]
+    return [group for k, values in by_key.items()
+            for group in (pack(values, cost, counts[k]) if cost else split(values, counts[k]))]
 
 
-def run_batch(items, *, key, cost, count, command, missing, gpus, launcher=None, retries=1):
+def run_batch(items, *, command, missing, count, gpus, launcher=None, retries=1, key=lambda item: None, cost=None):
     """Run ``items`` (work units) as processes (:func:`plan`), at most ``count`` at a time, on ``gpus``
-    (spread evenly) or each through ``launcher`` (see :func:`run_parts`). ``command(group, index, attempt)`` gives a
-    process's ``(argv, log, label)``. Items still ``missing(item)`` after a round (their process died, was
-    killed or failed to start before writing them) run again, up to ``retries`` more rounds, in as many
-    processes as before at most; items that wrote a result, even a failing one, do not. Returns the items
-    still missing."""
-    from table_1000.physics.test import run_jobs
+    (spread evenly, see :func:`run_jobs`) or each through ``launcher`` (see :func:`launch`).
+    ``command(group, index, attempt)`` gives a process's ``(argv, log, label)``. Items still ``missing(item)``
+    after a round (their process died, was killed or failed to start before writing them) run again, up to
+    ``retries`` more rounds, in as many processes as before at most; items that wrote a result, even a failing
+    one, do not. Returns the items still missing."""
     pending = list(items)
     for attempt in range(retries + 1):
         if not pending:
@@ -150,7 +199,7 @@ def run_batch(items, *, key, cost, count, command, missing, gpus, launcher=None,
             print(f'RETRY {len(pending)} missing (attempt {attempt})', flush=True)
         jobs = [command(group, index, attempt) for index, group in enumerate(plan(pending, key, cost, count))]
         if launcher:
-            run_parts(jobs, gpus, 1, launcher, limit=count)
+            launch(jobs, launcher, count)
         else:
             run_jobs(jobs, [gpus[index % len(gpus)] for index in range(min(count, len(jobs)))])
         pending = [item for item in pending if missing(item)]
@@ -158,7 +207,7 @@ def run_batch(items, *, key, cost, count, command, missing, gpus, launcher=None,
 
 
 def worker_gpu(gpu):
-    """The physical GPU of a part: ``gpu`` when given (``--gpu``), else the one a launcher made visible."""
+    """The physical GPU of a worker process: ``gpu`` when given (``--gpu``), else the one a launcher made visible."""
     if gpu is not None:
         return gpu
     visible = os.environ.get('CUDA_VISIBLE_DEVICES', '0').split(',')[0]

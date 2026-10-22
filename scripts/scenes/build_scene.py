@@ -1,11 +1,13 @@
 """Initial states of a scene: sampled and checked per seed, stored for the expert to start from.
 
-``uv run python scripts/scenes/build_scene.py 000000 --seeds 0:100 --gpus 0 1 2 3 [--jobs-per-gpu 1] [--grid 5x5] [--images] [--camera NAME] [--output DIR]``
+``uv run python scripts/scenes/build_scene.py 000000 --seeds 0:100 --gpus 0 1 2 3 [--jobs N] [--grid 5x5] [--images] [--camera NAME] [--output DIR]``
 
 For each seed, makes the initial state as in ``table_1000/scenes/initial.py``
 (``scene.initialize``, penetration and settling checks, retried with sub-seeds)
-on CPU PhysX. The seeds are split into ``len(gpus) × jobs-per-gpu`` parts, one
-process each (logs in ``outputs/scenes/<scene>/build/``). Into ``<output>/<scene>/``
+on CPU PhysX. The seeds are split into ``--jobs`` contiguous parts, one process each, spread
+over ``--gpus`` or submitted through ``--launcher`` (see ``table_1000/scenes/batch.py``); seeds
+whose process stopped before its result run again (``--retries``). Logs are in
+``outputs/scenes/<scene>/build/``. Into ``<output>/<scene>/``
 (``<output>`` = ``assets/scenes`` by default), replacing what an earlier run wrote:
 
 - ``initial_states.hdf5``: the settled state of every seed with one, its ``seed`` and ``attempt``;
@@ -17,7 +19,7 @@ process each (logs in ``outputs/scenes/<scene>/build/``). Into ``<output>/<scene
 Images come from ``--camera`` (default: the robot's first RGB camera; or a fixed
 view of the scene). When images are rendered into the default output, the
 smallest valid seed's image also becomes ``asset_sources/scenes/<scene>/thumbnail.jpg``
-(480 px wide). The exit status is non-zero when a part fails or a seed has no valid state.
+(480 px wide). The exit status is non-zero when a seed has no result or no valid state.
 """
 
 import argparse
@@ -54,9 +56,10 @@ def worker(args):
     work = args.work.resolve()
     (work / 'images').mkdir(parents=True, exist_ok=True)
     render = args.images or args.first > 0
+    from table_1000.scenes.batch import worker_gpu
     from table_1000.sim.isaaclab.app import start_app
     from table_1000.sim.isaaclab.render import RT2_ARGS
-    app = start_app(gpu=args.gpu, workers=4, cameras=render, extra_args=RT2_ARGS if render else ())
+    app = start_app(gpu=worker_gpu(args.gpu), workers=4, cameras=render, extra_args=RT2_ARGS if render else ())
     failed = False
     try:
         from PIL import Image
@@ -135,11 +138,11 @@ def thumbnail(image, path):
 
 
 def main(argv=None):
+    from table_1000.scenes.batch import add_arguments, commit, job_count, parse_seeds, run_batch, seed_range, seeds_record
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('scene')
     parser.add_argument('--seeds', nargs='+', required=True, help='a:b (a to b - 1) and single seeds')
-    parser.add_argument('--gpus', type=int, nargs='+', default=[0], help='physical GPUs')
-    parser.add_argument('--jobs-per-gpu', type=int, default=1, help='processes at a time on each GPU')
+    add_arguments(parser)
     parser.add_argument('--grid', type=grid_size, help='NxM: the first N x M valid states in N columns')
     parser.add_argument('--images', action='store_true', help='one image per valid state')
     parser.add_argument('--camera', help="a robot camera or a view of the scene (default: the robot's first RGB camera)")
@@ -149,15 +152,12 @@ def main(argv=None):
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--work', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--first', type=int, default=0, help=argparse.SUPPRESS)
-    parser.add_argument('--gpu', type=int, default=0, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.worker:
         worker(args)
         return
-    from table_1000.scenes.batch import commit, parse_seeds, run_parts, seed_range, seeds_record, split
     from table_1000.scenes.initial import read_states, summarize, write_states
-    if args.jobs_per_gpu < 1:
-        parser.error('--jobs-per-gpu must be positive')
+    jobs = job_count(parser, args)
     seeds = parse_seeds(args.seeds)
     if not seeds:
         parser.error('no seeds')
@@ -167,19 +167,24 @@ def main(argv=None):
     shutil.rmtree(staging, ignore_errors=True)
     checkout = commit(root)
     first = args.grid[0] * args.grid[1] if args.grid else 0
-    jobs = []
-    for index, part in enumerate(split(seeds, len(args.gpus) * args.jobs_per_gpu)):
-        work = staging / f'part{index}'
-        command = [sys.executable, str(Path(__file__).resolve()), args.scene, '--worker', '--seeds', *seed_range(part).split(),
-                   '--work', str(work), '--first', str(first), '--root', str(root), '--assets', str(args.assets.resolve())]
-        command += ['--images'] if args.images else []
-        command += ['--camera', args.camera] if args.camera else []
-        jobs.append((command, staging / f'part{index}.log', f'{args.scene} part{index} seeds {seed_range(part)}'))
+    parts = {}
+
+    def command(part, index, attempt):
+        name = f'part{index}' + (f'-retry{attempt}' if attempt else '')
+        parts.update(dict.fromkeys(part, staging / name))
+        argv = [sys.executable, str(Path(__file__).resolve()), args.scene, '--worker', '--seeds', *seed_range(part).split(),
+                '--work', str(staging / name), '--first', str(first), '--root', str(root), '--assets', str(args.assets.resolve())]
+        argv += ['--images'] if args.images else []
+        argv += ['--camera', args.camera] if args.camera else []
+        return argv, staging / f'{name}.log', f'{args.scene} {name} seeds {seed_range(part)}'
+
     started = time.perf_counter()
-    failed = run_parts(jobs, args.gpus, args.jobs_per_gpu)
+    # A part writes its seeds' report at the end.
+    missing = run_batch(seeds, command=command, missing=lambda seed: not (parts[seed] / 'report.json').is_file(),
+                        count=jobs, gpus=args.gpus, launcher=args.launcher, retries=args.retries)
 
     records, states, attrs, robot, camera = {}, {}, {}, None, None
-    for work in sorted(staging.glob('part*/'), key=lambda path: int(path.name[4:])):
+    for work in sorted(staging.glob('part*/')):
         if not (work / 'report.json').is_file():
             continue
         report = json.loads((work / 'report.json').read_text())
@@ -217,7 +222,7 @@ def main(argv=None):
     if valid and args.output is None:
         thumbnail(images[valid[0]], root / 'asset_sources' / 'scenes' / args.scene / 'thumbnail.jpg')
     print(json.dumps(summary, indent=1, default=float))
-    problems = ([f'failed: {", ".join(failed)}'] if failed else []) + (
+    problems = ([f'no result: seeds {seed_range(missing)}; see {staging}'] if missing else []) + (
         [f'seeds without a valid state: {seed_range(summary["without_state"])}'] if summary['invalid'] else [])
     if problems:
         raise SystemExit('; '.join(problems))

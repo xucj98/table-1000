@@ -1,4 +1,5 @@
-"""The three scene steps without a simulator: seeds, initial-state files, merged batches, the choice of renders."""
+"""Batch runs and the three scene steps without a simulator: processes, seeds, initial-state files, merged batches,
+the choice of renders."""
 
 import json
 import sys
@@ -10,8 +11,8 @@ import pytest
 
 from scripts.scenes import build_scene, render, run_expert
 from table_1000.experts.generate import PROCESS_EXITED, summarize
-from table_1000.physics import test as physics_test
-from table_1000.scenes.batch import parse_seeds, run_parts, seed_range, split
+from table_1000.scenes import batch as scene_batch
+from table_1000.scenes.batch import launch, parse_seeds, plan, run_jobs, seed_range, split
 from table_1000.scenes.initial import read_states, write_states
 from table_1000.scenes.recordings import merge, video_path, videos
 
@@ -25,6 +26,20 @@ def test_seeds_are_ranges_and_single_seeds():
     assert parse_seeds(seed_range([3, 4, 9]).split()) == [3, 4, 9]
     assert split(list(range(10)), 3) == [[0, 1, 2, 3], [4, 5, 6], [7, 8, 9]]
     assert split([5, 6], 8) == [[5], [6]]
+    assert plan(list(range(10)), lambda seed: None, None, 3) == [[0, 1, 2, 3], [4, 5, 6], [7, 8, 9]]
+
+
+def test_jobs_share_the_listed_gpus(tmp_path, monkeypatch):
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command[-1])
+        return type('Done', (), {'returncode': int(command[0] == 'bad')})
+
+    monkeypatch.setattr(scene_batch.subprocess, 'run', run)
+    jobs = [([name], tmp_path / name / 'run.log', name) for name in ('a', 'bad', 'c')]
+    assert run_jobs(jobs, [4, 5]) == ['bad']
+    assert len(calls) == 3 and set(calls) <= {'4', '5'}
 
 
 def test_launcher_runs_every_part_with_its_gpu(tmp_path):
@@ -32,7 +47,7 @@ def test_launcher_runs_every_part_with_its_gpu(tmp_path):
     show = 'from table_1000.scenes.batch import worker_gpu; import sys; print(worker_gpu(None)); sys.exit(len(sys.argv) - 1)'
     jobs = [([sys.executable, '-c', show, *extra], tmp_path / name / 'run.log', name)
             for name, extra in (('a', []), ('b', ['fail']))]
-    failed = run_parts(jobs, [0], 1, launcher='env CUDA_VISIBLE_DEVICES=5')
+    failed = launch(jobs, 'env CUDA_VISIBLE_DEVICES=5', 2)
     assert failed == ['b']
     assert (tmp_path / 'a' / 'run.log').read_text().strip() == '5'
 
@@ -132,7 +147,7 @@ def test_render_keeps_other_videos(batch, tmp_path, monkeypatch):
     chosen = []
 
     def jobs(commands, gpus):
-        assert gpus == [0, 1, 0, 1]
+        assert gpus == [0, 1, 0, 1][:len(commands)]
         for command, _, _ in commands:
             seeds = parse_seeds(command[command.index('--seeds') + 1:command.index('--batch')])
             chosen.append(seeds)
@@ -143,9 +158,9 @@ def test_render_keeps_other_videos(batch, tmp_path, monkeypatch):
                 target.write_bytes(b'new')
         return []
 
-    monkeypatch.setattr(physics_test, 'run_jobs', jobs)
+    monkeypatch.setattr(scene_batch, 'run_jobs', jobs)
     monkeypatch.setattr(render, 'check_cameras', lambda *args: None)
-    common = ['000000', '--physics', 'isaac-cpu', '--gpus', '0', '1', '--jobs-per-gpu', '2',
+    common = ['000000', '--physics', 'isaac-cpu', '--gpus', '0', '1', '--jobs', '4',
               '--input', str(tmp_path / 'data'), '--root', str(tmp_path)]
     render.main([*common, '--cameras', 'wide', '--count', '2'])
     render.main([*common, '--cameras', 'wide', 'face_view', '--merge', '--failed'])
@@ -163,31 +178,35 @@ def test_run_expert_merges_parts(tmp_path, monkeypatch):
     write_states(initial / 'initial_states.hdf5', {seed: (0, STATE) for seed in range(4)},
                  {'scene': '000000', 'robot': 'x1pro'})
 
+    rounds = []
+
     def jobs(commands, gpus):
+        rounds.append(len(commands))
         for command, _, _ in commands:
             work = tmp_path / command[command.index('--work') + 1]
             seeds = parse_seeds(command[command.index('--seeds') + 1:command.index('--states')])
-            if seeds == [2, 3]:
-                continue       # the process stopped before writing anything
+            if 2 in seeds:
+                continue       # the process stopped before writing anything, with seed 2 in every attempt
             (work / 'episodes').mkdir(parents=True)
             trajectory_file(work / 'trajectories.hdf5', seeds)
             for seed in seeds:
                 (work / 'episodes' / f'{seed}.json').write_text(json.dumps(
                     {'seed': seed, 'status': 'success', 'duration_s': 1., 'wall_s': 2.}))
-        return ['part1']
+        return []
 
-    monkeypatch.setattr(physics_test, 'run_jobs', jobs)
+    monkeypatch.setattr(scene_batch, 'run_jobs', jobs)
     monkeypatch.setattr(run_expert, 'scene_robot', lambda scene, root: 'x1pro')
     output = tmp_path / 'data'
-    with pytest.raises(SystemExit, match='part1'):
+    with pytest.raises(SystemExit, match='no episode: seeds 2;'):
         run_expert.main(['000000', '--physics', 'isaac-cpu', '--gpus', '0', '1', '--input', str(tmp_path / 'assets/scenes'),
                          '--output', str(output), '--root', str(tmp_path / 'checkout')])
+    assert rounds == [2, 2]          # seeds 2 and 3 once more
     directory = output / '000000' / 'isaac-cpu'
     summary = json.loads((directory / 'summary.json').read_text())
-    assert summary['failures'] == {PROCESS_EXITED: [2, 3]} and summary['succeeded'] == 2
-    assert sorted(path.name for path in (directory / 'episodes').iterdir()) == ['0.json', '1.json']
+    assert summary['failures'] == {PROCESS_EXITED: [2]} and summary['succeeded'] == 3
+    assert sorted(path.name for path in (directory / 'episodes').iterdir()) == ['0.json', '1.json', '3.json']
     with h5py.File(directory / 'trajectories.hdf5', 'r') as file:
-        assert sorted(file['data']) == ['demo_0', 'demo_1']
+        assert sorted(file['data']) == ['demo_0', 'demo_1', 'demo_3']
 
 
 def test_run_expert_rejects_another_robot(tmp_path, monkeypatch):
@@ -216,7 +235,7 @@ def test_build_scene_combines_parts(tmp_path, monkeypatch):
             (work / 'report.json').write_text(json.dumps({'robot': 'x1pro', 'camera': 'face_view', 'records': records}))
         return []
 
-    monkeypatch.setattr(physics_test, 'run_jobs', jobs)
+    monkeypatch.setattr(scene_batch, 'run_jobs', jobs)
     root = tmp_path / 'checkout'
     output = tmp_path / 'custom'
     (output / '000000' / 'initial').mkdir(parents=True)
