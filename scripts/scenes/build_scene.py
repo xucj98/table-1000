@@ -8,8 +8,8 @@ on CPU PhysX. The seeds are split into ``--jobs`` contiguous parts, one process 
 over ``--gpus`` or submitted through ``--launcher`` (see ``table_1000/common/batch.py``); each
 seed's result is written when it is done, and seeds whose process stopped before theirs run
 again (``--retries``). An error on a seed fails that seed and stops its process; the seeds after
-it run again. Logs are in
-``outputs/scenes/<scene>/build/``. Into ``<output>/<scene>/``
+it run again. Logs are in ``outputs/scenes/<scene>/build/``; the processes' results go to
+``<output>/<scene>/staging/``, removed once merged. Into ``<output>/<scene>/``
 (``<output>`` = ``assets/scenes`` by default), replacing what an earlier run wrote:
 
 - ``initial_states.hdf5``: the settled state of every seed with one, its ``seed`` and ``attempt``;
@@ -174,8 +174,9 @@ def main(argv=None):
         parser.error('no seeds')
     root = args.root.resolve()
     output = ((args.output or args.assets / 'scenes') / args.scene).resolve()
-    staging = root / 'outputs' / 'scenes' / args.scene / 'build'
+    staging, logs = output / 'staging', root / 'outputs' / 'scenes' / args.scene / 'build'
     shutil.rmtree(staging, ignore_errors=True)
+    shutil.rmtree(logs, ignore_errors=True)
     checkout = commit(root)
     first = args.grid[0] * args.grid[1] if args.grid else 0
     parts = {}
@@ -187,7 +188,7 @@ def main(argv=None):
                 '--work', str(staging / name), '--first', str(first), '--root', str(root), '--assets', str(args.assets.resolve())]
         argv += ['--images'] if args.images else []
         argv += ['--camera', args.camera] if args.camera else []
-        return argv, staging / f'{name}.log', f'{args.scene} {name} seeds {seed_range(part)}'
+        return argv, logs / f'{name}.log', f'{args.scene} {name} seeds {seed_range(part)}'
 
     started = time.perf_counter()
     missing = set(run_batch(seeds, command=command, count=jobs, gpus=args.gpus, launcher=args.launcher,
@@ -229,8 +230,9 @@ def main(argv=None):
             shutil.copy(images[seed], output / 'initial' / f'{seed}.jpg')
     if valid and args.output is None:
         thumbnail(images[valid[0]], root / 'asset_sources' / 'scenes' / args.scene / 'thumbnail.jpg')
+    shutil.rmtree(staging, ignore_errors=True)
     print(json.dumps(summary, indent=1, default=float))
-    problems = ([f'no result: seeds {seed_range(missing)}; see {staging}'] if missing else []) + (
+    problems = ([f'no result: seeds {seed_range(missing)}; see {logs}'] if missing else []) + (
         [f'seeds without a valid state: {seed_range(summary["without_state"])}'] if summary['invalid'] else [])
     if problems:
         raise SystemExit('; '.join(problems))

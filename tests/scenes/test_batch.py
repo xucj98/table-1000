@@ -257,4 +257,5 @@ def test_build_scene_combines_parts(tmp_path, monkeypatch):
     assert list(states) == [0, 2, 3, 4] and attrs['scene'] == '000000' and attrs['robot'] == 'x1pro'
     assert Image.open(directory / 'initial_states.jpg').size == (2 * build_scene.TILE_WIDTH, 216 + build_scene.CAPTION)
     assert not (directory / 'initial').exists()            # replaced, and no --images this time
+    assert not (directory / 'staging').exists()            # the processes' results, removed once merged
     assert not (root / 'asset_sources').exists()           # a custom output keeps the thumbnail

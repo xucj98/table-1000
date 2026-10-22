@@ -38,6 +38,7 @@ uv run python scripts/scenes/build_scene.py 000000 --seeds 0:100 --gpus 0 1 2 3 
 - `--camera` 指定拍照的相机，默认是机器人的主相机（`robot.py` 中第一个 RGB 相机，X1Pro 为头部相机 `face_view`）；也可以写场景的固定视角，如 `wide`。
 - 渲染图片时，用本次最小的有效 seed 更新 `asset_sources/scenes/<编号>/thumbnail.jpg`。
 - `--output DIR` 指定输出根目录（默认 `assets/scenes`），结果写到 `DIR/<编号>/`；自定义输出时不更新缩略图。
+- 各进程的结果先写到输出目录下的 `staging/`，合并完成后删除；日志在 `outputs/scenes/<编号>/build/`。
 - 每次运行整体替换输出目录中的初态。代码不变时同一 seed 的摆放相同，静置后的状态可能有微小差异；已生成的轨迹各自记录了起点，不受影响。换相机重新出图也是重跑这一步。
 
 不渲染时 GPU 几乎不参与计算，每个进程约占 0.5 GB 显存和 5 个 CPU 核，`--jobs` 可以是显卡数的几倍；渲染时显存占用大，每张卡宜少。本例 100 个 seed，带 `--grid 5x5` 在 4 张卡上约 3 分钟：每个进程都会渲染本段的前 25 个有效初态，本例每段正好 25 个，所以全部渲染了。
