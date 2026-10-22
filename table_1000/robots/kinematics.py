@@ -291,13 +291,15 @@ class RobotModel:
         finally:
             self.planners[arm].robot.set_qpos(self.q, True)
 
-    def plan_screw(self, arm, target, q=None, *, world=False, time_step=.04):
-        """Straight screw motion of the TCP from its pose at ``q`` to ``target``."""
+    def plan_screw(self, arm, target, q=None, *, world=False, time_step=.04, lift=False):
+        """Straight screw motion of the TCP from its pose at ``q`` to ``target``; ``lift`` moves
+        the torso lift as well (its path is then ``result['lift']``)."""
         planner = self.planners[arm]
         target = np.linalg.inv(self.base) @ target if world else np.asarray(target)
         start = self.q if q is None else q
-        locked = [i for i in range(len(self.joints)) if i not in self.arm_indices(arm)]
+        moving = self.arm_indices(arm) + (self.lift_indices() if lift else [])
+        locked = [i for i in range(len(self.joints)) if i not in moving]
         result = plan_screw(planner, pose(target), np.array(start, dtype=float), time_step=time_step,
                             wrt_world=False, locked=locked)
         planner.robot.set_qpos(self.q, True)
-        return self._arm_path(arm, result)
+        return self._arm_path(arm, result, lift)

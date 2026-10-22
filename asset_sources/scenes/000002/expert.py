@@ -22,8 +22,11 @@ PUSH_PAST = .003        # m pushed beyond the closed stop, so the drawer surely 
 # SPOT_MARGIN, nearest the pen first.
 SPOT_AHEAD, SPOT_SIDE, SPOT_STEP = (.38, .62), .45, .04
 SPOT_MARGIN = .10
-# The pen goes into a drawer along its width, either way round, or turned a little.
+# The pen goes into a drawer along its width, either way round, or turned a little; on the table it
+# may lie any way.
 DRAWER_TURNS = np.radians([0., 180., 20., -20., 160., 200.])
+TABLE_TURNS = np.radians([0., 180., 90., -90.])
+DOWN = (0., 0., -1.)    # the pen is picked up from the table from above, to go down into the drawer
 
 
 def slide(drawer):
@@ -116,13 +119,13 @@ def solve(ctx):
     with ctx.subtask('take the pen out of the top drawer'):
         skills.pick(ctx, 'pen')
     with ctx.subtask('put the pen on the table'):
-        skills.place(ctx, 'pen', table_spots(ctx))
+        skills.place(ctx, 'pen', table_spots(ctx), turns=TABLE_TURNS)
     with ctx.subtask('close the top drawer'):
         close_drawer(ctx, TOP)
     with ctx.subtask('open the bottom drawer of the cabinet'):
         open_drawer(ctx, BOTTOM)
     with ctx.subtask('pick up the pen from the table'):
-        skills.pick(ctx, 'pen')
+        skills.pick(ctx, 'pen', approach=DOWN)
     with ctx.subtask('put the pen into the bottom drawer'):
         frame, (x0, y0), (x1, y1), floor, rear = drawer_box(ctx, BOTTOM)
         spot = frame @ [(x0 + x1) / 2, (y0 + y1) / 2, floor, 1.]

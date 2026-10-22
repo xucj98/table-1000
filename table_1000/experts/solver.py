@@ -160,22 +160,24 @@ class MotionSolver:
     def move_to_pose_with_RRTConnect(self, target, planning_time=3., attempts=3, lift=False, goals=None):
         """Plan to an IK goal of world TCP pose ``target`` (or to ``goals``, full configurations of
         the planning model) with RRTConnect and follow it; an approximate or colliding path is
-        re-planned up to ``attempts`` times. ``lift`` moves the torso lift as well."""
+        re-planned up to ``attempts`` times, each with twice the time of the one before. ``lift``
+        moves the torso lift as well."""
         for attempt in range(attempts):
             try:
                 result = self._plan('rrt', lambda: self._validated(self.model.plan_rrt(
-                    self.arm.name, target, world=True, time_step=DT, planning_time=planning_time, lift=lift,
-                    goals=goals)))
+                    self.arm.name, target, world=True, time_step=DT, planning_time=planning_time * 2 ** attempt,
+                    lift=lift, goals=goals)))
                 break
             except PlanningFailed as error:
                 if not error.reason.startswith(('RRTConnect', 'path collision')) or attempt == attempts - 1:
                     raise
         self.follow(result)
 
-    def move_to_pose_with_screw(self, target):
-        """Move the TCP along a straight screw path to world pose ``target``."""
+    def move_to_pose_with_screw(self, target, lift=False):
+        """Move the TCP along a straight screw path to world pose ``target``; ``lift`` moves the
+        torso lift as well."""
         self.follow(self._plan('screw', lambda: self.model.plan_screw(self.arm.name, target, world=True,
-                                                                      time_step=DT)))
+                                                                      time_step=DT, lift=lift)))
 
     def first_reachable(self, targets, move=None):
         """Move to the first of ``targets`` that plans (``move``: default the screw move); a plan

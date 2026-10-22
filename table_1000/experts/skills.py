@@ -85,8 +85,9 @@ MIN_RISE = .05          # m the object must rise in pick's lift
 SUPPORT_DISTANCE = .003 # m, planning objects this close to the grasped one support it
 PLACE_ABOVE = .08       # m, place comes down from this high above the release pose
 PLACE_CLEARANCE = .01   # m between the held object and the surface at the release
-MAX_PLACES = 16         # (spot, turn) options place tries
+MAX_PLACES = 24         # (spot, turn) options place tries
 RETREATS = (APPROACH, .03)   # m, back-off after releasing, tried in order
+SHORT_RETREAT = .02     # m back along the approach that takes the fingers off what they held
 WHY_LIMIT = 20          # rejected grasps per choice whose collisions are counted for the report
 PUSH_GAP = .03          # m, push starts with the fingertips this far in front of the face
 PUSH_TILTS = np.radians([0., 20., 40., 60.])   # push approaches, tilted down from the push direction
@@ -396,17 +397,27 @@ class Skills:
                                if name.split(':')[0] not in objects]
 
     def straight(self, arm, displacement):
-        """Straight by ``displacement``; straight up out of the arm's reach (it may hit the body
-        close to it), the torso lift rises, then the arm does the rest, straight or along a
-        planned path."""
+        """Straight by ``displacement`` with the arm, else with the arm and the torso lift; straight
+        up out of their reach (the arm may hit the body close to it), the torso lift rises, then
+        the arm does the rest, straight or along a planned path."""
         solver, ctx = self.solvers[arm], self.ctx
+        target = translated(solver.tcp(), displacement)
         try:
-            solver.move_to_pose_with_screw(translated(solver.tcp(), displacement))
+            solver.move_to_pose_with_screw(target)
             return
         except PlanningFailed as error:
+            # Six arm joints alone may run into a limit along the line; the lift adds one more.
+            if error.reason not in ('joint_limit', 'no_progress', 'iteration_limit'):
+                failed = error
+            else:
+                try:
+                    solver.move_to_pose_with_screw(target, lift=True)
+                    return
+                except PlanningFailed as again:
+                    failed = again
             if np.linalg.norm(displacement[:2]) > 1e-9 or displacement[2] <= 0.:
-                raise
-            straight = {'reason': error.reason, 'collisions': error.details.get('plan', {}).get('collisions')}
+                raise failed
+            straight = {'reason': failed.reason, 'collisions': failed.details.get('plan', {}).get('collisions')}
         rise = float(displacement[2])
         lift = ctx.env.qpos(ctx.spec.lift)[0]
         upper = self.model.limits[self.model.lift_indices(), 1]
@@ -492,9 +503,16 @@ class Skills:
             solver.detach(name)
         solver.sync()
         tcp = solver.tcp()
-        # Straight out, else out along a planned path, else straight up.
-        moves = [lambda d=d: solver.move_to_pose_with_screw(standoff(tcp, d)) for d in RETREATS]
+        # Straight out (with the torso lift too, if the arm alone runs into a limit or the body),
+        # else out along a planned path, else out just clear of the fingers' grip and up, else up.
+        def out_and_up():
+            solver.move_to_pose_with_screw(standoff(tcp, SHORT_RETREAT))
+            solver.first_reachable([translated(solver.tcp(), [0., 0., d]) for d in RETREATS])
+
+        moves = [lambda d=d, lift=lift: solver.move_to_pose_with_screw(standoff(tcp, d), lift=lift)
+                 for d in RETREATS for lift in (False, True)]
         moves.append(lambda: solver.move_to_pose_with_RRTConnect(standoff(tcp, RETREATS[0]), lift=True))
+        moves.append(out_and_up)
         moves += [lambda d=d: solver.move_to_pose_with_screw(translated(tcp, [0., 0., d])) for d in RETREATS]
         try:
             solver.first_reachable(moves, lambda move: move())
