@@ -469,7 +469,11 @@ class RobotEnv:
     def push_shape(self, name, force):
         """Push a shape's centre of mass with the world ``force`` (N, every environment) until changed."""
         force = torch.as_tensor(force, dtype=torch.float32, device=self.device).repeat(self.num_envs, 1, 1)
-        self.env.scene[name].set_external_force_and_torque(force, torch.zeros_like(force), is_global=True)
+        composer = self.env.scene[name].permanent_wrench_composer
+        # The composer keeps the force in the body frame, converted with the orientation it read on its first
+        # call after a reset: resetting first converts with the current orientation.
+        composer.reset()
+        composer.set_forces_and_torques(forces=force, torques=torch.zeros_like(force), is_global=True)
 
     def link_pose(self, link):
         """``[N, 4, 4]`` world pose of a robot body as simulated."""

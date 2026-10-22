@@ -481,10 +481,12 @@ class Checker:
                     continue
                 half = PRIMITIVES[body]['size'] if body == 'ball' else PRIMITIVES[body]['size'][2] / 2
                 self.env.set_shape_pose(body, translation(point[0], point[1], surface + .25 + half))
-                fastest, self.trace['object_speed'] = self.trace['object_speed'], 0.
+                speeds, self.trace['object_speeds'] = self.trace['object_speeds'], {}
                 self.step(count=round(2.5 / DT))
-                speed_of_drop = self.trace['object_speed']
-                self.trace['object_speed'] = max(fastest, speed_of_drop)
+                speed_of_drop = max(self.trace['object_speeds'].values(), default=0.)
+                for shape, speed in self.trace['object_speeds'].items():
+                    speeds[shape] = max(speeds.get(shape, 0.), speed)
+                self.trace['object_speeds'] = speeds
                 pose = self.pose_of(body)
                 speed = float(np.linalg.norm(self.env.privileged()['velocities'][body][0, :3]))
                 resting_on_robot = pose[2, 3] > .1 and speed < .02

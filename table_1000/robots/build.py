@@ -160,6 +160,8 @@ def main(argv=None):
             print(json.dumps(build((args.source / name).resolve(), (args.output / name).resolve())), flush=True)
     except Exception:
         import traceback
-        error.write_text(traceback.format_exc())
         failed = True
-    app.close(exit_code=int(failed))
+        error.parent.mkdir(parents=True, exist_ok=True)
+        error.write_text(traceback.format_exc())
+    finally:
+        app.close(exit_code=int(failed))

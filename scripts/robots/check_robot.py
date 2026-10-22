@@ -102,13 +102,19 @@ def worker(args):
             except Exception:
                 result = {'status': 'ERROR', 'error': traceback.format_exc()}
             result['wall_s'] = time.perf_counter() - case_started
-            if checker is not None and checker.states and len(checker.states) > 1:
-                write_episode(directory / 'trajectory.hdf5', checker.states,
-                              {'robot': robot, 'physics': backend, 'case': case, 'trial': -1 if trial is None else trial})
+            report = {'robot': robot, 'physics': backend, 'case': case, 'trial': trial,
+                      'attempt': args.attempt, 'log': str(args.log), 'result': result}
+            try:
+                if checker is not None and checker.states and len(checker.states) > 1:
+                    write_episode(directory / 'trajectory.hdf5', checker.states,
+                                  {'robot': robot, 'physics': backend, 'case': case, 'trial': -1 if trial is None else trial})
+                write_report(directory, report)
+            except Exception:
+                # The case's result still reaches the summary, as an error naming the failed write.
+                result = report['result'] = {'status': 'ERROR', 'error': traceback.format_exc(), 'wall_s': result['wall_s']}
+                write_report(directory, report)
             if checker is not None:
                 checker.states = None
-            write_report(directory, {'robot': robot, 'physics': backend, 'case': case, 'trial': trial,
-                                     'attempt': args.attempt, 'log': str(args.log), 'result': result})
             failed |= case != 'metrics' and result.get('status') != 'PASS'
             print(case, trial, result.get('status'), f"{result['wall_s']:.0f} s", flush=True)
     except Exception:
@@ -202,7 +208,11 @@ def main(argv=None):
     directories, units = {}, []
     for robot in args.robots:
         directories[robot] = args.output.resolve() / robot if args.output else assets / 'robots' / robot / 'check'
-        cases = args.cases or [*select_cases(load_spec(robot, root), load_robot_test(robot, root)), 'parallel']
+        known = [*select_cases(load_spec(robot, root), load_robot_test(robot, root)), 'parallel']
+        unknown = [case for case in args.cases or [] if case not in [*known, 'metrics']]
+        if unknown:
+            parser.error(f'{", ".join(unknown)}: not a case of {robot} ({", ".join(known)}, metrics)')
+        cases = args.cases or known
         if args.metrics and 'metrics' not in cases:
             cases = [*cases, 'metrics']
         for backend in args.physics:
