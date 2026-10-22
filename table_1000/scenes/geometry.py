@@ -39,6 +39,10 @@ class AssetGeometry:
         return [shape for shape in self.shapes
                 if part is None or shape[1] == part or shape[1].startswith(part + '.') or shape[0] == part]
 
+    def parts(self, part=None):
+        """``[(body, part)]`` of ``part`` (a body, a part and its sub-parts, or everything), in model order."""
+        return list(dict.fromkeys((shape[0], shape[1]) for shape in self._selected(part)))
+
     def points(self, part=None, frame=None):
         """Collision vertices of ``part`` (a body, a part and its sub-parts, or everything) in the
         frame of body ``frame`` (default: the asset frame), at rest. Spheres contribute the six

@@ -126,11 +126,21 @@ class RobotModel:
         if check_collision:
             status, result = planner.IK(pose(target), start, mask, n_init_qpos=attempts, return_closest=closest)
             return status, result
-        planner.robot.set_qpos(start, True)
-        q_goal, success, _ = planner.pinocchio_model.compute_IK_CLIK(planner.link_name_2_idx[planner.move_group],
-                                                                    pose(target), start, mask)
-        planner.robot.set_qpos(self.q, True)
-        return ('Success' if success else 'IK Failed'), (np.asarray(q_goal) if success else None)
+        # Without collision checking: CLIK from the start, then from random starts of the free joints.
+        rng = np.random.default_rng(0)
+        try:
+            for attempt in range(max(1, attempts)):
+                seed = start.copy()
+                if attempt:
+                    seed[~mask] = rng.uniform(self.limits[~mask, 0], self.limits[~mask, 1])
+                planner.robot.set_qpos(seed, True)
+                q_goal, success, _ = planner.pinocchio_model.compute_IK_CLIK(
+                    planner.link_name_2_idx[planner.move_group], pose(target), seed, mask)
+                if success and np.all(q_goal >= self.limits[:, 0] - 1e-6) and np.all(q_goal <= self.limits[:, 1] + 1e-6):
+                    return 'Success', np.asarray(q_goal)
+            return 'IK Failed', None
+        finally:
+            planner.robot.set_qpos(self.q, True)
 
     def self_collisions(self, q=None):
         """Robot body pairs in collision at ``q`` (default: current)."""
@@ -195,6 +205,15 @@ class RobotModel:
             result['reason'] = result['status']
         result.update(ik_s=ik_s, rrt_s=time.perf_counter() - started - ik_s)
         return self._arm_path(arm, result, lift)
+
+    def collisions(self, arm, q):
+        """``[(link, object, object link)]`` in collision in ``arm``'s planning world at full configuration ``q``."""
+        world = self.planners[arm].planning_world
+        try:
+            world.set_qpos_all(np.r_[q[self.lift_indices()], q[self.arm_indices(arm)]])
+            return sorted({(c.link_name1, c.object_name2, c.link_name2) for c in world.check_collision()})
+        finally:
+            self.planners[arm].robot.set_qpos(self.q, True)
 
     def check_path(self, arm, positions, step=.01, lift=None):
         """First collision along a path of ``arm`` joint rows (with ``lift`` rows of the torso

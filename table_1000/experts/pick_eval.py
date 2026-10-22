@@ -1,4 +1,4 @@
-"""Coverage of the pick skill (:mod:`table_1000.experts.pick`) on X1Pro at a table, with test objects.
+"""Coverage of the pick skill (:func:`table_1000.experts.skills.pick`) on X1Pro at a table, with test objects.
 
 The scene (:func:`scene`): a 1.4 x 0.8 m table 0.75 m high, the robot ``gap`` m
 from the middle of its long edge, facing it, base fixed, arms folded (zero pose),
@@ -255,7 +255,7 @@ class Evaluator:
         import mplib.pymp
         import torch
         from table_1000.experts.context import Context, ExpertFailed
-        from table_1000.experts.pick import Picker
+        from table_1000.experts import skills
         started = time.perf_counter()
         pose = table_pose(name, placement['x'], placement['y'], placement['yaw'], placement['pose'],
                           support=placement.get('support', TABLE['height']))
@@ -274,10 +274,9 @@ class Evaluator:
         ctx.hold(.5)
         placed = ctx.poses()[name]
         report['settled_shift'] = float(np.linalg.norm(placed[:3, 3] - pose[:3, 3]))
-        picker = Picker(ctx)
         try:
             phase['text'] = 'pick'
-            result = picker.pick(name, OBJECTS[name].shape)
+            result = skills.pick(ctx, name, shape=OBJECTS[name].shape)
             report.update(status='picked', pick=result)
         except ExpertFailed as error:
             report.update(status='failed', failure={'reason': error.reason, 'details': error.details})

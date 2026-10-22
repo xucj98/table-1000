@@ -4,7 +4,8 @@ The expert is plain blocking code: every motion steps the environment until it
 is done. ``ctx`` offers
 
 - **motion** -- :meth:`Context.solver` per arm (:class:`~table_1000.experts.solver.MotionSolver`),
-  :meth:`Context.step`, :meth:`Context.hold`;
+  :meth:`Context.step`, :meth:`Context.hold`; the atomic skills of
+  :mod:`table_1000.experts.skills` (grasp, pick, place, ...) on top of them;
 - **state and geometry queries** -- live poses of object bodies, object joint
   values and centres of mass, each object's
   :class:`~table_1000.scenes.geometry.AssetGeometry`, the TCP;
@@ -46,6 +47,7 @@ class Context:
         self.geometry = {name: AssetGeometry.of(assets, spec['asset']) for name, spec in scene.OBJECTS.items()}
         self.subtasks, self.current = [], None
         self.solvers = {}
+        self._skills = None
         self.events = []        # (step, note) along the way, for the episode report
         self.origin = env.steps  # the episode starts here, after settling
         self.observers = []      # called after every step (e.g. video capture)
@@ -87,6 +89,13 @@ class Context:
         if arm not in self.solvers:
             self.solvers[arm] = MotionSolver(self, arm)
         return self.solvers[arm]
+
+    def skills(self):
+        """The :class:`~table_1000.experts.skills.Skills` of every arm (made on first use)."""
+        from table_1000.experts.skills import Skills
+        if self._skills is None:
+            self._skills = Skills(self)
+        return self._skills
 
     # -- subtasks ------------------------------------------------------------------
     @contextmanager
