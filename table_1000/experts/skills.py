@@ -59,7 +59,7 @@ approach (or up).
 (a frame whose z = 0 plane is the surface), its footprint inside by a margin and out
 of keep-out rectangles. Positions every ``PLACE_STEP`` and turns about the surface
 normal every ``PLACE_TURN_STEP`` are ranked nearest a given point, then least turned;
-IK screens them (``MAX_PLACE_IK``), and the first of those that has a motion
+IK screens them above and at the release (``MAX_PLACE_IK``), and the first of those that has a motion
 (``MAX_PLACES`` planned) is taken: above it, straight down to ``clearance`` over the
 surface, then :func:`release`.
 
@@ -728,6 +728,10 @@ class Skills:
             tried += 1
             release = translated(placed, [0., 0., clearance]) @ np.linalg.inv(tcp_object)
             status, q_above = self.ik(arm, translated(release, [0., 0., above]), self.model.q)
+            if status != 'Success':
+                continue
+            # The way down ends clear too (the hand and arm low by a wall).
+            status, _ = self.model.ik(arm, release, q_above, world=True, attempts=IK_ATTEMPTS)
             if status != 'Success':
                 continue
             planned += 1
