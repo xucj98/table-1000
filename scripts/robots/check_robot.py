@@ -40,7 +40,6 @@ COST = {'keyframes': 5, 'sensors': 10, 'arm_hits_block': 20, 'arm_pushes_objects
         'grasp_pressing_table': 140, 'base_into_wall': 10, 'base_full_turn': 20, 'drive_holding': 25,
         'joint_limits': 10, 'parallel': 40, 'metrics': 320}
 GPU_COST = 1.5   # isaac-gpu over isaac-cpu
-LAUNCHED_JOBS = 16
 
 
 def unit_dir(backend_dir, case, trial):
@@ -64,7 +63,7 @@ def parse_unit(name):
 
 def worker(args):
     """Run one process's units, each writing ``report.json`` and ``trajectory.hdf5`` to its directory."""
-    from table_1000.scenes.batch import worker_gpu
+    from table_1000.common.batch import worker_gpu
     from table_1000.sim.isaaclab.app import start_app
     from table_1000.sim.isaaclab.render import RT2_ARGS
     started = time.perf_counter()
@@ -139,7 +138,7 @@ def collect(directory, robot, ran=()):
     """Merge the case reports under ``directory`` (one robot) into ``<backend>/report.json`` and
     ``summary.json``; returns the summary. Results of units not in ``ran`` (``(backend, case, trial)``) are
     from earlier runs: listed under ``earlier`` per backend."""
-    from table_1000.scenes.batch import commit
+    from table_1000.common.batch import commit
     summary = {'robot': robot, 'commit': commit(ROOT), 'backends': {}, 'cases': {}}
     for backend in BACKENDS:
         cases = {}
@@ -175,6 +174,7 @@ def collect(directory, robot, ran=()):
 
 
 def main(argv=None):
+    from table_1000.common.batch import add_arguments, job_count, process_name, run_batch
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('robots', nargs='+', help='robot names (asset_sources/robots/<name>)')
     parser.add_argument('--physics', nargs='+', choices=BACKENDS, required=True, help='physics backends to run')
@@ -182,11 +182,7 @@ def main(argv=None):
     parser.add_argument('--trials', type=int, nargs='+', default=TRIALS,
                         help='grasp_and_push trials (0: at the work point; k > 0: random placement, seed k)')
     parser.add_argument('--metrics', action='store_true', help='also the comparison metrics')
-    parser.add_argument('--jobs', type=int, help=f'processes at once (default: one per --gpus; {LAUNCHED_JOBS} with --launcher)')
-    parser.add_argument('--gpus', type=int, nargs='+', help='local GPUs (default 0); not with --launcher')
-    parser.add_argument('--launcher', help='command prefix of a job scheduler that runs a process on a free GPU '
-                        'it sets CUDA_VISIBLE_DEVICES to; instead of --gpus')
-    parser.add_argument('--retries', type=int, default=1, help='reruns of units whose process died before their result')
+    add_arguments(parser)
     parser.add_argument('--output', type=Path, help='results in <output>/<robot>/ (default <assets>/robots/<robot>/check/)')
     parser.add_argument('--root', type=Path, default=ROOT, help='repository root holding the robot sources')
     parser.add_argument('--assets', type=Path, default=ROOT / 'assets', help='asset root holding the built robots')
@@ -195,18 +191,13 @@ def main(argv=None):
     parser.add_argument('--units', nargs='+', help=argparse.SUPPRESS)
     parser.add_argument('--log', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--attempt', type=int, default=0, help=argparse.SUPPRESS)
-    parser.add_argument('--gpu', type=int, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.worker:
         worker(args)
         return
-    if args.launcher and args.gpus:
-        parser.error('--gpus runs locally; with --launcher the scheduler picks the GPUs')
-    args.gpus = args.gpus or [0]
-    jobs = args.jobs or (LAUNCHED_JOBS if args.launcher else len(args.gpus))
+    jobs = job_count(parser, args)
     from table_1000.robots import load_robot_test, load_spec
     from table_1000.robots.checks import select_cases
-    from table_1000.scenes.batch import run_batch
     root, assets = args.root.resolve(), args.assets.resolve()
     directories, units = {}, []
     for robot in args.robots:
@@ -229,7 +220,7 @@ def main(argv=None):
 
     def command(group, index, attempt):
         robot, backend = group[0][:2]
-        name = f'part{index}' + (f'-retry{attempt}' if attempt else '')
+        name = process_name(f'part{index}', attempt)
         log = directories[robot] / backend / 'logs' / name / 'run.log'
         argv = [sys.executable, str(Path(__file__).resolve()), robot, '--worker', '--physics', backend,
                 '--dir', str(directories[robot] / backend), '--units', *(unit_name(*unit[2:]) for unit in group),

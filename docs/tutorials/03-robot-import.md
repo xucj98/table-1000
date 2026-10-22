@@ -69,7 +69,7 @@ uv run python scripts/robots/check_robot.py x1pro --physics isaac-cpu isaac-gpu 
 uv run python scripts/robots/render_check.py x1pro --physics isaac-cpu --cases grasp_and_push --trials 3 --gpus 0
 ```
 
-`--views` 选外部视角 `wide`（默认）和机器人的 RGB 相机，如 `--views wide face_view`；视频写在用例目录，名为 `<视角>.mp4`。用例选择、`--jobs`、`--gpus`、`--launcher` 和 `--output` 与 `check_robot.py` 相同。
+`--views` 选外部视角 `wide`（默认）和机器人的 RGB 相机，如 `--views wide face_view`；视频写在用例目录，名为 `<视角>.mp4`。用例选择、`--jobs`、`--gpus`、`--launcher`、`--retries` 和 `--output` 与 `check_robot.py` 相同。
 
 遥控：在浏览器中用键盘操作机器人，人工检查行为：
 

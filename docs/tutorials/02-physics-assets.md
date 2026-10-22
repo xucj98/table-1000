@@ -32,7 +32,8 @@ uv run python scripts/assets/physics_test.py --assets pen/000002 cabinet/000000 
 ```
 
 - `--physics` 必填，列出要运行的物理后端：`isaac-cpu`、`isaac-gpu`。
-- 每个资产的每个后端单独运行，分到 `--gpus` 列出的显卡上并行，每张卡同时只跑一个。本例 4 组在三张卡上约 5 分钟。
+- 每个资产的每个后端是一个进程，`--jobs` 个同时运行：本机运行时平均分到 `--gpus` 列出的显卡上，`--jobs` 默认每张卡一个；`--launcher PREFIX` 把每个进程交给作业调度器，以 `PREFIX bash -c '<命令>'` 提交，由调度器选卡，例如 `--launcher "srun --gres=gpu:1"`，这时不给 `--gpus`，`--jobs` 默认 16。本例 4 组在三张卡上约 5 分钟。
+- 进程中途退出（如显存不足、被调度器终止）时，没有写出结果的测试自动重跑，次数由 `--retries` 设置（默认 1）；运行完但未通过的测试不重跑。
 - `--tests close pull_comparison` 只运行指定的测试。
 - `--scripts asset_sources/objects` 使用源码目录中正在修改的测试，默认用构建时复制的快照。
 - GPU 默认同时模拟 4 个相同的环境，结果取第一个环境；`--num-envs` 可修改。
