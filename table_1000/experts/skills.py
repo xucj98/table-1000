@@ -14,7 +14,7 @@ planned) when it is not. Lower-level moves stay available through
     skills.move_by_displacement(ctx, g['arm'], *-pull, drag=('cabinet', 'cabinet.drawer1'))
     skills.release(ctx, g['arm'])
     p = skills.pick(ctx, 'pen')                                              # grasp, then lift
-    skills.place(ctx, 'pen', [(x, y, table_height)])
+    skills.place(ctx, 'pen', (table_frame, (x0, y0), (x1, y1)), near=(x, y, table_height))
 
 What is grasped is an object of the scene (an asset, by name), or a part or body
 of it: its shape is the collision box of that part in the frame of its body, or
@@ -55,11 +55,16 @@ part's body carries moves with it as in a drag.
 **release** -- open the fingers to the grasp's opening and back out along the
 approach (or up).
 
-**place** -- put the held object down at the first of ``spots`` (world points:
-the centre of its footprint and the height of the surface under it) and turn about
-the vertical that plans (at most ``MAX_PLACES`` tried): above it, straight down to ``clearance`` over the surface,
-then :func:`release`. The object keeps its orientation, turned to ``heading`` (the
-world direction of its body's X axis, if given) and by each of ``turns``.
+**place** -- put the held object down anywhere in a region: a rectangle on a surface
+(a frame whose z = 0 plane is the surface), its footprint inside by a margin and out
+of keep-out rectangles. Positions every ``PLACE_STEP`` and turns about the surface
+normal every ``PLACE_TURN_STEP`` are ranked nearest a given point, then least turned;
+IK screens them (``MAX_PLACE_IK``), and the first of those that has a motion
+(``MAX_PLACES`` planned) is taken: above it, straight down to ``clearance`` over the
+surface, then :func:`release`.
+
+**retry** -- a step run again when it fails (``ATTEMPTS`` in all), the arms that hold
+nothing back at their start pose first, so that its choices start afresh.
 
 Each choice of another candidate is noted (``ctx.note``).
 """
@@ -70,7 +75,7 @@ import time
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from table_1000.experts.context import steps
+from table_1000.experts.context import ExpertFailed, steps
 from table_1000.experts.grasps import SUPPORT_CLEARANCE, Box, Cylinder, Hand, grasp_candidates, standoff, translated
 from table_1000.experts.solver import PlanningFailed
 from table_1000.planning.world import PlanningObject
@@ -86,7 +91,12 @@ MIN_RISE = .05          # m the object must rise in pick's lift
 SUPPORT_DISTANCE = .003 # m, planning objects this close to the grasped one support it
 PLACE_ABOVE = .08       # m, place comes down from this high above the release pose
 PLACE_CLEARANCE = .01   # m between the held object and the surface at the release
-MAX_PLACES = 24         # (spot, turn) options place tries
+ATTEMPTS = 3            # tries of a step under retry
+MAX_PLACES = 8          # placements whose motion place plans
+MAX_PLACE_IK = 150      # placements place checks by IK
+PLACE_STEP = .02        # m between the positions place samples in its region
+PLACE_TURN_STEP = 15.   # deg between the turns place samples
+PLACE_MARGIN = .01      # m the footprint keeps inside the region and off its keep-out areas
 RETREATS = (APPROACH, .03)   # m, back-off after releasing, tried in order
 PARTIALS = (.75, .5, .25)     # fractions of a straight move tried when all of it does not plan
 SHORT_RETREAT = .02     # m back along the approach that takes the fingers off what they held
@@ -147,6 +157,7 @@ class Skills:
                     parts = [obj.name for obj in solver.add_object(name, lambda body, part: (part, body),
                                                                    merged=ctx.geometry[name].solid)]
                     solver.world.allow(parts, parts)
+        self.home = self.model.q.copy()     # the arms' poses at the start, to return to (see ready)
         self.held = {}      # arm -> {'target', 'supports', 'grasp'}
         self.log, self.rejected = [], {}
 
@@ -345,6 +356,7 @@ class Skills:
         after = ctx.poses()[target.body]
         rise = float(after[2, 3] - before[2, 3])
         if rise < MIN_RISE:
+            self.release(result['arm'])     # so that it can be picked again
             ctx.fail('object not lifted', rise=rise, finger_gap=self.solvers[result['arm']].finger_gap(),
                      arm=result['arm'], grasp=result['grasp'], object_before=before.tolist())
         result.update(rise=rise, finger_gap=self.solvers[result['arm']].finger_gap(),
@@ -529,10 +541,64 @@ class Skills:
         finally:
             solver.allow([*held['target'].names, *held['supports']], False)
 
-    def place(self, obj, spots, arm=None, heading=None, turns=(0., np.pi), clearance=PLACE_CLEARANCE,
-              above=PLACE_ABOVE):
-        """Put the held ``obj`` down at the first of ``spots`` and ``turns`` that plans, release it;
-        see the module docstring. Returns ``{'arm', 'spot', 'turn', 'object'}`` (its pose after)."""
+    def placements(self, target, current, region, near, keep_out, step, margin):
+        """``[(object pose at rest on the surface, spot)]`` in ``region`` (see :meth:`place`), the
+        footprint at least ``margin`` inside it and out of ``keep_out``, nearest ``near`` first, then
+        the least turned from ``current``."""
+        frame, low, high = (np.asarray(item, dtype=float) for item in region)
+        local = np.linalg.inv(frame)
+        boxes = [(np.linalg.inv(np.asarray(f, dtype=float)), np.asarray(l, dtype=float)[:2] - margin,
+                  np.asarray(h, dtype=float)[:2] + margin) for f, l, h in keep_out]
+        options = []
+        for turn in np.radians(np.arange(0., 360., PLACE_TURN_STEP)):
+            # Turned about the surface normal, in the region frame.
+            rotation = frame[:3, :3] @ Rotation.from_euler('z', turn).as_matrix() @ frame[:3, :3].T @ current[:3, :3]
+            points = (target.points @ rotation.T) @ local[:3, :3].T     # in the region frame, about the origin
+            centre = (points[:, :2].min(0) + points[:, :2].max(0)) / 2
+            spread = np.ptp(points[:, :2], axis=0) / 2
+            first, last = low[:2] + spread + margin, high[:2] - spread - margin
+            if np.any(first > last + 1e-9):
+                continue
+            for x in np.arange(first[0], last[0] + 1e-9, step):
+                for y in np.arange(first[1], last[1] + 1e-9, step):
+                    spot = frame @ [x, y, 0., 1.]
+                    footprint = points[:, :2] - centre + [x, y]
+                    world = (frame @ np.c_[footprint, np.zeros(len(footprint)), np.ones(len(footprint))].T).T
+                    if any(np.any(np.all((low_ <= (inv @ world.T).T[:, :2]) & ((inv @ world.T).T[:, :2] <= high_), axis=1))
+                           for inv, low_, high_ in boxes):
+                        continue
+                    pose = np.eye(4)
+                    pose[:3, :3] = rotation
+                    pose[:3, 3] = frame[:3, :3] @ np.r_[[x, y] - centre, -points[:, 2].min()] + frame[:3, 3]
+                    turned = Rotation.from_matrix(rotation @ current[:3, :3].T).magnitude()
+                    options.append((float(np.linalg.norm((spot[:3] - near)[:2])), turned, pose, spot[:3]))
+        options.sort(key=lambda option: (round(option[0] / step), option[1]))
+        return [(pose, spot) for _, _, pose, spot in options]
+
+    def ready(self):
+        """Back to the start pose with each arm holding nothing (a planned move; skipped where it
+        does not plan), the fingers open."""
+        for arm in self.arms:
+            if arm in self.held:
+                continue
+            solver, indices = self.solvers[arm], self.model.arm_indices(arm)
+            goal = self.model.q.copy()
+            goal[indices] = self.home[indices]
+            if np.abs(goal - self.model.q).max() < .05:
+                continue
+            try:
+                solver.open_gripper()
+                solver.move_to_pose_with_RRTConnect(None, goals=[goal])
+            except PlanningFailed as error:
+                self.ctx.note('not ready', arm=arm, reason=error.reason)
+
+    def place(self, obj, region, arm=None, near=None, keep_out=(), clearance=PLACE_CLEARANCE, above=PLACE_ABOVE,
+              step=PLACE_STEP, margin=PLACE_MARGIN):
+        """Put the held ``obj`` down in ``region`` and release it; see the module docstring.
+        ``region`` is ``(frame, low, high)``: the rectangle ``low``-``high`` (x, y) on the surface
+        z = 0 of the world 4x4 ``frame``; ``keep_out`` are such rectangles (any height) the
+        footprint stays out of; ``near`` the world point to place it nearest (default the
+        region's centre). Returns ``{'arm', 'spot', 'object'}`` (its pose after)."""
         ctx = self.ctx
         arm = arm or self.holding(obj)
         if arm is None or arm not in self.held or self.held[arm]['target'].obj != obj:
@@ -540,42 +606,54 @@ class Skills:
         solver, target = self.solvers[arm], self.held[arm]['target']
         current = ctx.poses()[target.body]
         tcp_object = np.linalg.inv(solver.tcp()) @ current
-        delta = 0.
-        if heading is not None:
-            axis = current[:3, 0]
-            delta = float(np.arctan2(heading[1], heading[0]) - np.arctan2(axis[1], axis[0]))
-        options = [(np.asarray(spot, dtype=float), turn) for spot in spots for turn in turns][:MAX_PLACES]
-        for index, (spot, turn) in enumerate(options):
-            rotation = Rotation.from_euler('z', delta + turn).as_matrix() @ current[:3, :3]
-            points = target.points @ rotation.T
-            placed = np.eye(4)
-            placed[:3, :3] = rotation
-            placed[:2, 3] = spot[:2] - (points[:, :2].min(0) + points[:, :2].max(0)) / 2
-            placed[2, 3] = spot[2] + clearance - points[:, 2].min()
-            release = placed @ np.linalg.inv(tcp_object)
+        frame, low, high = (np.asarray(item, dtype=float) for item in region)
+        if near is None:
+            near = frame @ np.r_[(low[:2] + high[:2]) / 2, 0., 1.]
+        options = self.placements(target, current, region, np.asarray(near, dtype=float)[:3], keep_out, step, margin)
+        if not options:
+            ctx.fail('no room', region=[frame.tolist(), low.tolist(), high.tolist()])
+        # IK first (cheap) over many, then motion for those that have it.
+        tried, planned, last, details, done = 0, 0, 'no placement in reach', {}, False
+        for placed, spot in options:
+            if tried >= MAX_PLACE_IK or planned >= MAX_PLACES:
+                break
+            tried += 1
+            release = translated(placed, [0., 0., clearance]) @ np.linalg.inv(tcp_object)
+            status, q_above = self.ik(arm, translated(release, [0., 0., above]), self.model.q)
+            if status != 'Success':
+                continue
+            planned += 1
             try:
-                status, q_above = self.ik(arm, translated(release, [0., 0., above]), self.model.q)
-                if status != 'Success':
-                    raise PlanningFailed(ctx.current, status)
                 solver.move_to_pose_with_RRTConnect(None, lift=True, goals=[q_above])
                 solver.move_to_pose_with_screw(release)
+                done = True
                 break
             except PlanningFailed as error:
-                details = collisions(error)
-                if error.reason.startswith('IK'):
-                    self.rejected = {'collisions': {}}
-                    self.why(arm, translated(release, [0., 0., above]), self.model.q, [])
-                    details['collisions'] = self.rejected['collisions']
-                if index == len(options) - 1:
-                    ctx.fail('no placement', arm=arm, last=error.reason, **details)
-                ctx.note('next placement', arm=arm, spot=spot.tolist(), turn=float(turn), reason=error.reason, **details)
+                last, details = error.reason, collisions(error)
+                ctx.note('next placement', arm=arm, spot=spot.tolist(), reason=error.reason, **details)
+        if not done:
+            ctx.fail('no placement', arm=arm, last=last, options=len(options), ik_checked=tried, planned=planned,
+                     **details)
         self.release(arm)
         ctx.hold(.3)
-        return {'arm': arm, 'spot': spot.tolist(), 'turn': float(turn), 'object': ctx.poses()[target.body].tolist()}
+        return {'arm': arm, 'spot': spot.tolist(), 'object': ctx.poses()[target.body].tolist()}
 
 
 def _skills(ctx):
     return ctx.skills()
+
+
+def retry(ctx, step, attempts=ATTEMPTS):
+    """``step()``, again up to ``attempts`` times in all when it fails (each choice of grasp, path
+    and spot starts afresh from where things are), the free arms back at their start pose first."""
+    for attempt in range(1, attempts + 1):
+        try:
+            return step()
+        except ExpertFailed as failure:
+            if attempt == attempts:
+                raise
+            ctx.note('retry', attempt=attempt, reason=failure.reason)
+            _skills(ctx).ready()
 
 
 def grasp(ctx, obj, part=None, *, arm=None, shape=None, offset=None, body=None, point=None, approach=None, then=None,
@@ -609,9 +687,10 @@ def release(ctx, arm):
     _skills(ctx).release(arm)
 
 
-def place(ctx, obj, spots, *, arm=None, heading=None, turns=(0., np.pi), clearance=PLACE_CLEARANCE, above=PLACE_ABOVE):
-    """Put the held ``obj`` down at the first of ``spots`` that plans and release it."""
-    return _skills(ctx).place(obj, spots, arm, heading, turns, clearance, above)
+def place(ctx, obj, region, *, arm=None, near=None, keep_out=(), clearance=PLACE_CLEARANCE, above=PLACE_ABOVE,
+          step=PLACE_STEP, margin=PLACE_MARGIN):
+    """Put the held ``obj`` down in ``region`` (see :meth:`Skills.place`) and release it."""
+    return _skills(ctx).place(obj, region, arm, near, keep_out, clearance, above, step, margin)
 
 
 def open_gripper(ctx, arm, gap=None):

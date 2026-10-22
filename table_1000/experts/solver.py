@@ -20,9 +20,9 @@ import numpy as np
 from table_1000.experts.context import DT, ExpertFailed, steps
 from table_1000.planning.world import PlanningScene, asset_objects, box_object, pose
 
-# Free-space (RRTConnect) plans keep this clearance from padded objects; contact
-# moves use the bare geometry. Objects the hand touches on purpose are never grown.
-PADDING = .003
+# Free-space (RRTConnect) plans keep this clearance from padded objects (its edges are checked
+# coarsely); contact moves use the bare geometry. Objects the hand touches on purpose are never grown.
+PADDING = .01
 # RRTConnect checks its edges coarsely; its time-parameterized path is re-checked
 # at this joint step and re-planned if any check collides.
 VALIDATION_STEP = .01
@@ -45,6 +45,7 @@ class MotionSolver:
         self.world = PlanningScene(self.planner, np.linalg.inv(self.model.base))
         self.log = []
         self.timings = {'planning_s': 0., 'executing_s': 0.}
+        self.overlaps = []      # pairs allowed for the plan being made (see _plan)
 
     # -- planning world --------------------------------------------------------------
     def add_box(self, name, size, transform):
@@ -112,34 +113,38 @@ class MotionSolver:
         return self.arm.gap(self.ctx.env.qpos(self.arm.fingers)[0])
 
     # -- planning ------------------------------------------------------------------------
-    def _plan(self, kind, function):
+    def _plan(self, kind, function, goals=()):
         self.world.set_padding(PADDING if kind == 'rrt' else 0.)
         self.sync()
-        # A hand starting closer to an object than the padding (just let go of it) plans unpadded.
-        closer = self.model.collisions(self.arm.name, self.model.q) if kind == 'rrt' else []
-        if closer:
-            self.world.set_padding(0.)
-        # The robot's planning links are grown, so they may overlap where the bare links do not (an
-        # elbow by the torso after a pull): a straight move starting so is planned with them allowed.
+        # What the robot is in contact with at its ends is allowed in this plan: in a free-space plan,
+        # objects closer than the padding at the start or a given goal (a hand that just let go of
+        # one); in a straight move, the robot's grown planning links overlapping where the bare links
+        # do not (an elbow by the torso after a pull). A free-space path is then checked on the bare
+        # geometry without them (see _validated).
         robot = self.planner.robot.get_name()
-        overlaps = [(link, other) for link, name, other in self.model.collisions(self.arm.name, self.model.q)
-                    if name == robot] if kind == 'screw' else []
+        overlaps = [(link, other if name == robot else name)
+                    for q in [self.model.q, *goals]
+                    for link, name, other in self.model.collisions(self.arm.name, q)
+                    if kind == 'rrt' or name == robot]
+        overlaps = list(dict.fromkeys(overlaps))
+        overlaps = [pair for pair in overlaps if frozenset(pair) not in self.world.permissions]
+        self.overlaps = overlaps
         for link, other in overlaps:
             self.world.allow([link], [other])
         started = time.perf_counter()
         try:
             result = function()
         finally:
-            for link, other in overlaps:
+            for link, other in self.overlaps:
                 self.world.allow([link], [other], False)
+            self.overlaps = []
+            self.world.set_padding(0.)
         elapsed = time.perf_counter() - started
         self.timings['planning_s'] += elapsed
         entry = {'subtask': self.ctx.current, 'step': self.ctx.steps, 'kind': kind, 'status': result['status'],
                  'planning_s': elapsed}
-        if closer:
-            entry['unpadded'] = closer
         if overlaps:
-            entry['self_overlaps'] = overlaps
+            entry['start_allowed'] = overlaps
         self.log.append(entry)
         if result['status'] != 'Success':
             entry.update({key: value for key, value in result.items()
@@ -152,6 +157,12 @@ class MotionSolver:
         """Fail ``result`` if its path collides anywhere at VALIDATION_STEP."""
         if result['status'] != 'Success':
             return result
+        # On the bare geometry, with nothing allowed for the start (check_path tolerates the
+        # contacts the path starts in until it leaves them).
+        for link, other in self.overlaps:
+            self.world.allow([link], [other], False)
+        self.overlaps = []
+        self.world.set_padding(0.)
         checks, pairs = self.model.check_path(self.arm.name, result['position'], VALIDATION_STEP, result.get('lift'))
         if pairs:
             return {'status': 'path collision', 'reason': 'path collision', 'collisions': pairs}
@@ -166,7 +177,7 @@ class MotionSolver:
             try:
                 result = self._plan('rrt', lambda: self._validated(self.model.plan_rrt(
                     self.arm.name, target, world=True, time_step=DT, planning_time=planning_time * 2 ** attempt,
-                    lift=lift, goals=goals)))
+                    lift=lift, goals=goals)), goals=list(goals or []))
                 break
             except PlanningFailed as error:
                 if not error.reason.startswith(('RRTConnect', 'path collision')) or attempt == attempts - 1:
