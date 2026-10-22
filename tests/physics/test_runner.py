@@ -73,8 +73,12 @@ class CaseResultsTests(unittest.TestCase):
                         'environments': {'count': 1}, 'metrics': {},
                         'performance': {'no_render': {'RTF': 1}, 'video_end_to_end': {'RTF': 1}}}))
                 return []
-            with patch('table_1000.common.batch.run_jobs', side_effect=run) as jobs:
+            with patch('table_1000.common.batch.run_jobs', side_effect=run) as jobs, \
+                 patch('builtins.print') as output:
                 main(['--source', temporary, '--physics', 'isaac-cpu', 'isaac-gpu', '--gpus', '1', '2'])
+            # The definitions here differ from asset_sources/objects.
+            warnings = [call.args[0] for call in output.call_args_list if str(call.args[0]).startswith('WARNING')]
+            self.assertEqual([line.split(':')[0] for line in warnings], ['WARNING cabinet/000000', 'WARNING pen/000002'])
             self.assertEqual(jobs.call_count, 1)
             commands = jobs.call_args.args[0]
             self.assertEqual(jobs.call_args.args[1], [1, 2])

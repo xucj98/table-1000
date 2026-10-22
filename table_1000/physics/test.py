@@ -371,6 +371,12 @@ def main(argv=None):
                 else sorted(path.parent.relative_to(source) for path in source.rglob('physics_test.py')))
     scripts={reference:(args.scripts.resolve()/reference if args.scripts else source/reference)/'physics_test.py'
              for reference in references}
+    if not args.scripts:
+        for reference,script in scripts.items():
+            edited=ENTRY.parents[2]/'asset_sources'/'objects'/reference/'physics_test.py'
+            if edited.is_file() and script.is_file() and edited.read_bytes()!=script.read_bytes():
+                print(f'WARNING {reference}: {script} differs from {edited}; rebuild with build_physics.py '
+                      'or test the edited one with --scripts asset_sources/objects',flush=True)
     names,broken={},{}
     for reference,script in scripts.items():
         try:

@@ -221,20 +221,25 @@ def test_run_expert_rejects_another_robot(tmp_path, monkeypatch):
 
 
 def test_build_scene_combines_parts(tmp_path, monkeypatch):
+    rounds = []
+
     def jobs(commands, gpus):
         for command, _, _ in commands:
             work = tmp_path / command[command.index('--work') + 1]
             seeds = parse_seeds(command[command.index('--seeds') + 1:command.index('--work')])
-            (work / 'images').mkdir(parents=True)
-            records = {seed: {'seed': seed, 'attempt': None if seed == 1 else 0,
-                              'attempts': [{'attempt': 0, 'settle': {'objects': {}, 'robot_contacts': []}}]}
-                       for seed in seeds}
-            write_states(work / 'states.hdf5', {seed: (0, STATE) for seed in seeds if seed != 1},
-                         {'scene': '000000', 'robot': 'x1pro'})
+            rounds.append(seeds)
+            for name in ('states', 'images', 'records'):
+                (work / name).mkdir(parents=True)
             for seed in seeds:
+                if seed == 2 and len(rounds) == 1:
+                    break      # the process died on seed 2: seeds 0 and 1 keep their results
                 if seed != 1:
+                    write_states(work / 'states' / f'{seed}.hdf5', {seed: (0, STATE)}, {'scene': '000000', 'robot': 'x1pro'})
                     Image.new('RGB', (64, 36), 'red').save(work / 'images' / f'{seed}.jpg')
-            (work / 'report.json').write_text(json.dumps({'robot': 'x1pro', 'camera': 'face_view', 'records': records}))
+                record = {'seed': seed, 'attempt': None if seed == 1 else 0,
+                          'attempts': [{'attempt': 0, 'settle': {'objects': {}, 'robot_contacts': []}}]}
+                (work / 'records' / f'{seed}.json').write_text(
+                    json.dumps({'robot': 'x1pro', 'camera': 'face_view', 'record': record}))
         return []
 
     monkeypatch.setattr(scene_batch, 'run_jobs', jobs)
@@ -244,6 +249,7 @@ def test_build_scene_combines_parts(tmp_path, monkeypatch):
     with pytest.raises(SystemExit, match='without a valid state: 1'):
         build_scene.main(['000000', '--seeds', '0:5', '--gpus', '0', '1', '--grid', '2x1', '--output', str(output),
                           '--root', str(root)])
+    assert rounds == [[0, 1, 2], [3, 4], [2]]          # only the seed without a result runs again
     directory = output / '000000'
     report = json.loads((directory / 'initial.json').read_text())
     assert report['seeds'] == {'range': '0:5', 'count': 5} and report['without_state'] == [1]

@@ -5,8 +5,9 @@
 For each seed, makes the initial state as in ``table_1000/scenes/initial.py``
 (``scene.initialize``, penetration and settling checks, retried with sub-seeds)
 on CPU PhysX. The seeds are split into ``--jobs`` contiguous parts, one process each, spread
-over ``--gpus`` or submitted through ``--launcher`` (see ``table_1000/common/batch.py``); seeds
-whose process stopped before its result run again (``--retries``). Logs are in
+over ``--gpus`` or submitted through ``--launcher`` (see ``table_1000/common/batch.py``); each
+seed's result is written when it is done, and seeds whose process stopped before theirs run
+again (``--retries``). An error on a seed fails only that seed. Logs are in
 ``outputs/scenes/<scene>/build/``. Into ``<output>/<scene>/``
 (``<output>`` = ``assets/scenes`` by default), replacing what an earlier run wrote:
 
@@ -50,11 +51,12 @@ def main_camera(spec):
 
 
 def worker(args):
-    """Initial states of ``args.seeds`` in this process, into ``args.work``: ``states.hdf5``,
-    ``report.json`` and ``images/<seed>.jpg`` (all valid seeds with ``--images``, else the first
-    ``--first`` valid ones)."""
+    """Initial states of ``args.seeds`` in this process, into ``args.work``, per seed as it is done:
+    ``states/<seed>.hdf5`` (a valid state), ``images/<seed>.jpg`` (all valid seeds with ``--images``,
+    else the first ``--first`` valid ones), then ``records/<seed>.json``, the seed's result."""
     work = args.work.resolve()
-    (work / 'images').mkdir(parents=True, exist_ok=True)
+    for name in ('states', 'images', 'records'):
+        (work / name).mkdir(parents=True, exist_ok=True)
     render = args.images or args.first > 0
     from table_1000.common.batch import worker_gpu
     from table_1000.sim.isaaclab.app import start_app
@@ -82,28 +84,31 @@ def worker(args):
             else:
                 kwargs['cameras'] = {camera: spec.cameras[camera]}
         env = RobotEnv(scene, spec, assets, root=root, **kwargs)
-        records, states, pictured = {}, {}, 0
+        attrs = {'scene': args.scene, 'robot': spec.name, 'physics': 'isaac-cpu', 'commit': commit(root) or ''}
+        pictured = 0
         for seed in parse_seeds(args.seeds):
             try:
                 _, record = initial_state(env, scene, assets, seed)
+                write_states(work / 'states' / f'{seed}.hdf5',
+                             {seed: (record['attempt'], to_numpy(env.env.scene.get_state(is_relative=True)))}, attrs)
+                if args.images or pictured < args.first:
+                    # RT2 denoises over time: the first render after a state change blends in the last one.
+                    env.render([camera])
+                    Image.fromarray(env.render([camera])[camera]['rgb'][0]).save(work / 'images' / f'{seed}.jpg',
+                                                                                quality=90)
+                    pictured += 1
+                print(seed, 'attempt', record['attempt'], flush=True)
             except InitializationFailed as error:
-                records[seed] = {'seed': seed, 'attempt': None, 'attempts': error.attempts}
+                record = {'seed': seed, 'attempt': None, 'attempts': error.attempts}
                 print(seed, 'no valid state', flush=True)
-                continue
-            records[seed] = record
-            state = env.env.scene.get_state(is_relative=True)
-            states[seed] = (record['attempt'], to_numpy(state))
-            if args.images or pictured < args.first:
-                # RT2 denoises over time: the first render after a state change blends in the last one.
-                env.render([camera])
-                Image.fromarray(env.render([camera])[camera]['rgb'][0]).save(work / 'images' / f'{seed}.jpg',
-                                                                            quality=90)
-                pictured += 1
-            print(seed, 'attempt', record['attempt'], flush=True)
-        write_states(work / 'states.hdf5', states, {'scene': args.scene, 'robot': spec.name, 'physics': 'isaac-cpu',
-                                                    'commit': commit(root) or ''})
-        (work / 'report.json').write_text(json.dumps({'robot': spec.name, 'camera': camera, 'records': records},
-                                                     indent=1, default=float))
+            except Exception:
+                # The next seed starts from a reset; the error is this seed's result.
+                traceback.print_exc()
+                (work / 'states' / f'{seed}.hdf5').unlink(missing_ok=True)
+                record = {'seed': seed, 'attempt': None, 'attempts': [],
+                          'problems': [traceback.format_exc().strip().splitlines()[-1]]}
+            (work / 'records' / f'{seed}.json').write_text(
+                json.dumps({'robot': spec.name, 'camera': camera, 'record': record}, indent=1, default=float))
         env.close()
     except Exception:
         traceback.print_exc()
@@ -179,21 +184,20 @@ def main(argv=None):
         return argv, staging / f'{name}.log', f'{args.scene} {name} seeds {seed_range(part)}'
 
     started = time.perf_counter()
-    # A part writes its seeds' report at the end.
-    missing = run_batch(seeds, command=command, missing=lambda seed: not (parts[seed] / 'report.json').is_file(),
-                        count=jobs, gpus=args.gpus, launcher=args.launcher, retries=args.retries)
+    missing = run_batch(seeds, command=command, count=jobs, gpus=args.gpus, launcher=args.launcher,
+                        retries=args.retries, missing=lambda seed: not (parts[seed] / 'records' / f'{seed}.json').is_file())
 
     records, states, images, attrs, robot, camera = {}, {}, {}, {}, None, None
-    for work in sorted(staging.glob('part*/')):
-        if not (work / 'report.json').is_file():
-            continue
-        report = json.loads((work / 'report.json').read_text())
-        robot, camera = report['robot'], report['camera']
-        records.update({int(seed): record for seed, record in report['records'].items()})
-        part_attrs, part_states = read_states(work / 'states.hdf5')
-        attrs = attrs or part_attrs
-        states.update(part_states)
-        images.update({int(path.stem): path for path in (work / 'images').glob('*.jpg')})
+    for seed in (seed for seed in seeds if seed not in missing):
+        work = parts[seed]
+        result = json.loads((work / 'records' / f'{seed}.json').read_text())
+        robot, camera, records[seed] = result['robot'], result['camera'], result['record']
+        if (work / 'states' / f'{seed}.hdf5').is_file():
+            part_attrs, part_states = read_states(work / 'states' / f'{seed}.hdf5')
+            attrs = attrs or part_attrs
+            states.update(part_states)
+        if (work / 'images' / f'{seed}.jpg').is_file():
+            images[seed] = work / 'images' / f'{seed}.jpg'
     for seed in seeds:
         records.setdefault(seed, {'seed': seed, 'attempt': None, 'attempts': [], 'problems': ['process exited']})
     output.mkdir(parents=True, exist_ok=True)
