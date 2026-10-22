@@ -102,8 +102,8 @@ class MotionSolver:
         self.sync()
 
     # -- state ---------------------------------------------------------------------------
-    def qpos(self):
-        return self.ctx.env.qpos(self.arm.joints)[0]
+    def qpos(self, lift=False):
+        return self.ctx.env.qpos([*self.arm.joints, *(self.ctx.spec.lift if lift else ())])[0]
 
     def tcp(self):
         return self.model.tcp(self.arm.name, world=True)
@@ -133,18 +133,20 @@ class MotionSolver:
         """Fail ``result`` if its path collides anywhere at VALIDATION_STEP."""
         if result['status'] != 'Success':
             return result
-        checks, pairs = self.model.check_path(self.arm.name, result['position'], VALIDATION_STEP)
+        checks, pairs = self.model.check_path(self.arm.name, result['position'], VALIDATION_STEP, result.get('lift'))
         if pairs:
             return {'status': 'path collision', 'reason': 'path collision', 'collisions': pairs}
         return result
 
-    def move_to_pose_with_RRTConnect(self, target, planning_time=3., attempts=3):
-        """Plan to an IK goal of world TCP pose ``target`` with RRTConnect and follow it; an
-        approximate or colliding path is re-planned up to ``attempts`` times."""
+    def move_to_pose_with_RRTConnect(self, target, planning_time=3., attempts=3, lift=False, goals=None):
+        """Plan to an IK goal of world TCP pose ``target`` (or to ``goals``, full configurations of
+        the planning model) with RRTConnect and follow it; an approximate or colliding path is
+        re-planned up to ``attempts`` times. ``lift`` moves the torso lift as well."""
         for attempt in range(attempts):
             try:
                 result = self._plan('rrt', lambda: self._validated(self.model.plan_rrt(
-                    self.arm.name, target, world=True, time_step=DT, planning_time=planning_time)))
+                    self.arm.name, target, world=True, time_step=DT, planning_time=planning_time, lift=lift,
+                    goals=goals)))
                 break
             except PlanningFailed as error:
                 if not error.reason.startswith(('RRTConnect', 'path collision')) or attempt == attempts - 1:
@@ -170,18 +172,25 @@ class MotionSolver:
 
     # -- execution -----------------------------------------------------------------------
     def follow(self, result):
-        """Send the path one waypoint per control step, then hold its end until arrival."""
+        """Send the path one waypoint per control step (with the torso lift's, if it moves), then
+        hold its end until arrival."""
         started = time.perf_counter()
         positions = np.asarray(result['position'])
+        lift = result.get('lift')
         worst = 0.
-        for target in positions:
-            self.ctx.step({self.arm.name: target[None]})
+        for index, target in enumerate(positions):
+            action = {self.arm.name: target[None]}
+            if lift is not None:
+                action['lift'] = lift[index][None]
+            self.ctx.step(action)
             worst = max(worst, float(np.abs(self.qpos() - target).max()))
+        if lift is not None:
+            positions = np.c_[positions, lift]
         final, held = positions[-1], 0
-        while np.abs(self.qpos() - final).max() > ARRIVAL_TOLERANCE:
+        while np.abs(self.qpos(lift is not None) - final).max() > ARRIVAL_TOLERANCE:
             if held * DT >= SETTLE_LIMIT:
                 raise PlanningFailed(self.ctx.current, 'tracking',
-                                     final_error_rad=float(np.abs(self.qpos() - final).max()))
+                                     final_error_rad=float(np.abs(self.qpos(lift is not None) - final).max()))
             self.ctx.step()
             held += 1
         self.log[-1].update(max_tracking_error_rad=worst, settle_steps=held)

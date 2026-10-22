@@ -48,6 +48,7 @@ class Context:
         self.solvers = {}
         self.events = []        # (step, note) along the way, for the episode report
         self.origin = env.steps  # the episode starts here, after settling
+        self.observers = []      # called after every step (e.g. video capture)
         self.sync_model()
 
     # -- stepping ------------------------------------------------------------------
@@ -72,6 +73,8 @@ class Context:
     def step(self, action=None):
         obs = self.env.step(action or {})
         self.sync_model()
+        for observer in self.observers:
+            observer(self)
         return obs
 
     def hold(self, seconds):

@@ -4,7 +4,8 @@ One planning model (MPlib, Pinocchio and FCL) holds every body joint, so a
 plan for one arm is checked against the torso, head and the other arm at their
 current positions. Each arm gets its own MPlib planner, whose move group is the
 chain from the root link to the arm's TCP; a torso lift on that chain is held
-fixed, so only the arm's own joints move.
+fixed, so only the arm's own joints move, unless a call frees it (``lift=True``):
+then IK and RRTConnect move the lift together with the arm.
 
 Poses here are in the frame of the URDF's root link; :attr:`RobotModel.base`
 (world from root: a mobile base's planar pose, or a fixed robot's placement)
@@ -45,7 +46,7 @@ class RobotModel:
 
     def __init__(self, spec, output, root=ROOT):
         import mplib
-        self.spec = spec
+        self.spec, self.root = spec, Path(root)
         output = Path(output)
         tcps = [(arm.tcp[0], arm.tcp_link, arm.tcp[1], (0., 0., 0.)) for arm in spec.arms.values()]
         urdf = write_planning_urdf(Path(root) / spec.urdf, output / 'robot.urdf', spec.body_joints, {}, tcps,
@@ -54,10 +55,12 @@ class RobotModel:
         self.planners = {}
         for name, arm in spec.arms.items():
             chain = len(spec.lift) + len(arm.joints)
+            lift = len(spec.lift)
             self.planners[name] = mplib.Planner(
                 str(urdf), arm.tcp_link, srdf=str(output / 'robot.srdf'), use_convex=True,
-                joint_vel_limits=np.full(chain, arm.velocity_limit),
-                joint_acc_limits=np.full(chain, arm.acceleration_limit))
+                joint_vel_limits=np.r_[np.full(lift, spec.lift_velocity_limit), np.full(chain - lift, arm.velocity_limit)],
+                joint_acc_limits=np.r_[np.full(lift, spec.lift_acceleration_limit),
+                                       np.full(chain - lift, arm.acceleration_limit)])
         first = next(iter(self.planners.values()))
         self.joints = list(first.user_joint_names)
         self.index = {name: i for i, name in enumerate(self.joints)}
@@ -94,6 +97,9 @@ class RobotModel:
     def arm_indices(self, arm):
         return [self.index[name] for name in self.spec.arms[arm].joints]
 
+    def lift_indices(self):
+        return [self.index[name] for name in self.spec.lift]
+
     # -- kinematics --------------------------------------------------------------
     def fk(self, link, q=None, world=False):
         """Pose of ``link`` in the base frame (or the world with ``world=True``)."""
@@ -105,17 +111,18 @@ class RobotModel:
     def tcp(self, arm, q=None, world=False):
         return self.fk(self.spec.arms[arm].tcp_link, q, world)
 
-    def ik(self, arm, target, q=None, *, world=False, attempts=20, closest=True, check_collision=True):
+    def ik(self, arm, target, q=None, *, world=False, attempts=20, closest=True, check_collision=True, lift=False):
         """Joint configuration placing ``arm``'s TCP at ``target``; ``(status, q)``.
 
-        Only the arm's joints change. Solutions that collide in the planning
-        world are rejected unless ``check_collision`` is False.
+        Only the arm's joints change (and the torso lift with ``lift=True``).
+        Solutions that collide in the planning world are rejected unless
+        ``check_collision`` is False.
         """
         planner = self.planners[arm]
         target = np.linalg.inv(self.base) @ target if world else np.asarray(target)
         start = np.clip(self.q if q is None else q, self.limits[:, 0], self.limits[:, 1])
         mask = np.ones(len(self.joints), dtype=bool)
-        mask[self.arm_indices(arm)] = False
+        mask[self.arm_indices(arm) + (self.lift_indices() if lift else [])] = False
         if check_collision:
             status, result = planner.IK(pose(target), start, mask, n_init_qpos=attempts, return_closest=closest)
             return status, result
@@ -156,49 +163,56 @@ class RobotModel:
         return dict(zip(self.spec.head, map(float, solution)))
 
     # -- planning ------------------------------------------------------------------
-    def _arm_path(self, arm, result):
-        """Keep only the arm joints of an MPlib result (the lift is held fixed)."""
+    def _arm_path(self, arm, result, lift=False):
+        """Keep the arm joints of an MPlib result (the lift is held fixed); with ``lift``, the lift
+        joints' rows go to ``result['lift']``."""
         if result['status'] != 'Success':
             return result
-        lift = len(self.spec.lift)
+        count = len(self.spec.lift)
+        if lift:
+            result['lift'] = np.asarray(result['position'])[:, :count]
         for key in ('position', 'velocity', 'acceleration'):
-            result[key] = np.asarray(result[key])[:, lift:]
+            result[key] = np.asarray(result[key])[:, count:]
         result['joints'] = list(self.spec.arms[arm].joints)
         return result
 
-    def plan_rrt(self, arm, target, q=None, *, world=False, time_step=.04, planning_time=3., goals=None):
-        """RRTConnect to an IK solution of ``target`` (or to ``goals``, full configurations)."""
+    def plan_rrt(self, arm, target, q=None, *, world=False, time_step=.04, planning_time=3., goals=None, lift=False):
+        """RRTConnect to an IK solution of ``target`` (or to ``goals``, full configurations). The
+        torso lift is held unless ``lift`` frees it; its path is then ``result['lift']``."""
         planner = self.planners[arm]
         start = np.clip(self.q if q is None else q, self.limits[:, 0], self.limits[:, 1])
         started = time.perf_counter()
         if goals is None:
-            status, goals = self.ik(arm, target, start, world=world, closest=False)
+            status, goals = self.ik(arm, target, start, world=world, closest=False, lift=lift)
             if status != 'Success':
                 return {'status': status, 'reason': status, 'ik_s': time.perf_counter() - started}
         ik_s = time.perf_counter() - started
-        # The torso lift is the first joint of the move group; hold it.
+        # The torso lift is the first joint of the move group.
         result = planner.plan_qpos(list(goals), start, time_step=time_step, planning_time=planning_time,
-                                   fixed_joint_indices=list(range(len(self.spec.lift))))
+                                   fixed_joint_indices=[] if lift else list(range(len(self.spec.lift))))
         planner.robot.set_qpos(self.q, True)
         if result['status'] != 'Success':
             result['reason'] = result['status']
         result.update(ik_s=ik_s, rrt_s=time.perf_counter() - started - ik_s)
-        return self._arm_path(arm, result)
+        return self._arm_path(arm, result, lift)
 
-    def check_path(self, arm, positions, step=.01):
-        """First collision along a path of ``arm`` joint rows, interpolated so that no
-        joint moves more than ``step`` rad between checks.
+    def check_path(self, arm, positions, step=.01, lift=None):
+        """First collision along a path of ``arm`` joint rows (with ``lift`` rows of the torso
+        lift, else the lift where it is), interpolated so that no joint moves more than ``step``
+        rad (or m) between checks.
 
         Returns ``(checks, pairs)``; ``pairs`` is empty when the path is free.
         Contacts present at the start (a hand just released next to an object)
         are tolerated until the path first leaves them.
         """
         world = self.planners[arm].planning_world
-        lift = self.q[[self.index[name] for name in self.spec.lift]]
         positions = np.asarray(positions, dtype=float)
+        if lift is None:
+            lift = np.repeat(self.q[self.lift_indices()][None], len(positions), axis=0)
+        positions = np.c_[np.asarray(lift, dtype=float), positions]
 
         def colliding(row):
-            world.set_qpos_all(np.r_[lift, row])
+            world.set_qpos_all(row)
             return {(c.link_name1, c.object_name2, c.link_name2) for c in world.check_collision()}
 
         rows = [positions[0]]

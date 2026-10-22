@@ -105,7 +105,11 @@ def plan_screw(planner, goal, qpos, *, qpos_step=.03, time_step=.004,
     positions = np.asarray(positions)
     if len(positions) < 2 or not np.isfinite(positions).all():
         return {'status': 'screw plan failed', 'reason': 'time_parameterization_samples', **state}
-    timed = endpoint_error(planner, ee_index, goal, planner.pad_move_group_qpos(positions[-1].copy()))
+    # MPlib's pad_move_group_qpos assumes the move group leads the full configuration;
+    # here it need not (a second arm's chain), so the end is written at the group's indices.
+    end = qpos.copy()
+    end[joints] = positions[-1]
+    timed = endpoint_error(planner, ee_index, goal, end)
     if timed[0] > position_tolerance or timed[1] > rotation_tolerance:
         return {'status': 'screw plan failed', 'reason': 'time_parameterization_endpoint',
                 'position_error_m': timed[0], 'rotation_error_rad': timed[1]}

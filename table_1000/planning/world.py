@@ -20,7 +20,24 @@ def pose(transform):
     """``mplib.Pose`` of a 4x4 transform."""
     from mplib import Pose
     transform = np.asarray(transform, dtype=float)
-    return Pose(transform[:3, 3], Rotation.from_matrix(transform[:3, :3]).as_quat()[[3, 0, 1, 2]])
+    return Pose(transform[:3, 3], quaternion(transform[:3, :3]))
+
+
+def quaternion(m):
+    """``(w, x, y, z)`` of a rotation matrix (Shepperd's method; scipy's is slow for one matrix)."""
+    trace = m[0, 0] + m[1, 1] + m[2, 2]
+    if trace > 0.:
+        s = 2. * np.sqrt(trace + 1.)
+        return np.array([s / 4, (m[2, 1] - m[1, 2]) / s, (m[0, 2] - m[2, 0]) / s, (m[1, 0] - m[0, 1]) / s])
+    i = int(np.argmax(np.diag(m)))
+    j, k = (i + 1) % 3, (i + 2) % 3
+    s = 2. * np.sqrt(1. + m[i, i] - m[j, j] - m[k, k])
+    q = np.empty(4)
+    q[0] = (m[k, j] - m[j, k]) / s
+    q[1 + i] = s / 4
+    q[1 + j] = (m[j, i] + m[i, j]) / s
+    q[1 + k] = (m[k, i] + m[i, k]) / s
+    return q
 
 
 def model_shapes(model):
@@ -68,6 +85,8 @@ def geometry(kind, data, padding=0.):
         return fcl.Sphere(data + padding)
     if kind == 'box':
         return fcl.Box(*(np.asarray(data) + 2 * padding))
+    if kind == 'cylinder':    # (radius, length) along the shape frame's Z
+        return fcl.Cylinder(data[0] + padding, data[1] + 2 * padding)
     hull = trimesh.Trimesh(data).convex_hull
     vertices = grow(hull.vertices, padding) if padding else np.asarray(hull.vertices, dtype=float)
     return fcl.Convex(vertices, np.asarray(hull.faces, dtype=np.int32))

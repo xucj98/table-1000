@@ -164,6 +164,9 @@ class RobotSpec:
     arms: dict                     # name -> ArmSpec; the first is the primary arm
     base: BaseSpec = None          # mobile base, or None for a fixed robot
     lift: tuple = ()               # prismatic torso joints
+    # Torso lift limits for time parameterization (m/s, m/s^2).
+    lift_velocity_limit: float = .1
+    lift_acceleration_limit: float = .2
     head: tuple = ()               # head joints (yaw, pitch)
     keyframes: dict = field(default_factory=dict)   # name -> {joint: value}; 'zero' is implied
     cameras: dict = field(default_factory=dict)     # name -> CameraSpec (see override_cameras)
