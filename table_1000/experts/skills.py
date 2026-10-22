@@ -400,35 +400,30 @@ class Skills:
                                if name.split(':')[0] not in objects]
 
     def straight(self, arm, displacement, least=1.):
-        """Straight by ``displacement`` with the arm, else with the arm and the torso lift, else
-        (``least`` < 1) by the largest of ``PARTIALS`` of it down to ``least`` that plans; straight
+        """Straight by ``displacement`` with the arm, else (``least`` < 1) by the largest of
+        ``PARTIALS`` of it down to ``least`` that plans, else with the arm and the torso lift; straight
         up out of their reach (the arm may hit the body close to it), the torso lift rises, then
         the arm does the rest, straight or along a planned path. Returns the fraction moved."""
         solver, ctx = self.solvers[arm], self.ctx
         start = solver.tcp()
 
-        def line(fraction):
-            target = translated(start, displacement * fraction)
-            try:
-                solver.move_to_pose_with_screw(target)
-            except PlanningFailed as error:
-                # Six arm joints alone may run into a limit along the line; the lift adds one more.
-                if error.reason not in ('joint_limit', 'no_progress', 'iteration_limit'):
-                    raise
-                solver.move_to_pose_with_screw(target, lift=True)
-
         try:
-            line(1.)
+            solver.move_to_pose_with_screw(translated(start, displacement))
             return 1.
         except PlanningFailed as error:
             failed = error
-        for fraction in (f for f in PARTIALS if f >= least):
-            try:
-                line(fraction)
-                ctx.note('moved part way', fraction=fraction, reason=failed.reason)
-                return fraction
-            except PlanningFailed:
-                pass
+        # Six arm joints alone may run into a limit along the line: part of it, else all of it with
+        # the torso lift as well (which follows its path less closely).
+        options = [(f, False) for f in PARTIALS if f >= least] + [(1., True)]
+        if failed.reason in ('joint_limit', 'no_progress', 'iteration_limit'):
+            for fraction, lift in options:
+                try:
+                    solver.move_to_pose_with_screw(translated(start, displacement * fraction), lift=lift)
+                    if fraction < 1.:
+                        ctx.note('moved part way', fraction=fraction, reason=failed.reason)
+                    return fraction
+                except PlanningFailed:
+                    pass
         if np.linalg.norm(displacement[:2]) > 1e-9 or displacement[2] <= 0.:
             raise failed
         straight = {'reason': failed.reason, 'collisions': failed.details.get('plan', {}).get('collisions')}

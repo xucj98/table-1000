@@ -26,11 +26,13 @@ SPOT_MARGIN = .10
 # The pen goes into a drawer along its width, either way round, or turned a little; on the table it
 # may lie any way.
 DRAWER_TURNS = np.radians([0., 180., 20., -20., 160., 200.])
-# Along the drawer's front wall, PEN_INSET from it: the hand coming down keeps clear of the drawers
-# above, whose fronts and handles stand out over the open part.
-PEN_INSET = .035
+# Near the drawer's front wall, PEN_INSETS from it, or in the middle of its open part: the hand coming
+# down keeps clear of the drawers above, whose fronts and handles stand out over the open part.
+PEN_INSETS = (.05, .065)
 TABLE_TURNS = np.radians([0., 180., 90., -90.])
-DOWN = (0., 0., -1.)    # the pen is picked up from the table from above, to go down into the drawer
+# The pen is picked up from the table from above, leaning PICK_TILT about its axis with the wrist
+# toward the robot: put down along the drawer's width it then leans away from the drawers above.
+PICK_TILT = np.radians(25.)
 
 
 def slide(drawer):
@@ -122,6 +124,16 @@ def table_spots(ctx):
     return sorted(spots, key=lambda spot: np.linalg.norm(spot[:2] - pen[:2]))
 
 
+def pick_from_above(ctx):
+    """Approach to the pen lying on the table: down, leaning about its axis toward the robot."""
+    pen = ctx.pose('pen', 'body')
+    across = np.cross([0., 0., 1.], pen[:3, 0])
+    across /= np.linalg.norm(across)
+    if across @ (pen[:3, 3] - ctx.base_transform()[:3, 3]) < 0.:
+        across = -across
+    return np.cos(PICK_TILT) * np.array([0., 0., -1.]) + np.sin(PICK_TILT) * across
+
+
 def solve(ctx):
     with ctx.subtask('open the top drawer of the cabinet'):
         open_drawer(ctx, TOP)
@@ -134,11 +146,12 @@ def solve(ctx):
     with ctx.subtask('open the bottom drawer of the cabinet'):
         open_drawer(ctx, BOTTOM)
     with ctx.subtask('pick up the pen from the table'):
-        skills.pick(ctx, 'pen', approach=DOWN)
+        skills.pick(ctx, 'pen', approach=pick_from_above(ctx))
     with ctx.subtask('put the pen into the bottom drawer'):
         frame, (x0, y0), (x1, y1), floor, rear = drawer_box(ctx, BOTTOM)
-        spot = frame @ [(x0 + x1) / 2, min(y0 + PEN_INSET, (y0 + y1) / 2), floor, 1.]
-        skills.place(ctx, 'pen', [spot[:3]], heading=frame[:3, 0], turns=DRAWER_TURNS)
+        spots = [(frame @ [(x0 + x1) / 2, y, floor, 1.])[:3]
+                 for y in sorted({min(y0 + inset, (y0 + y1) / 2) for inset in PEN_INSETS} | {(y0 + y1) / 2})]
+        skills.place(ctx, 'pen', spots, heading=frame[:3, 0], turns=DRAWER_TURNS)
         local = (np.linalg.inv(frame) @ ctx.pose('pen', 'body'))[:3, 3]
         if not (x0 <= local[0] <= x1 and y0 <= local[1] <= rear and local[2] < floor + .03):
             ctx.fail('pen not in the drawer', pen_in_drawer=local.tolist())
