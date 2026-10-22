@@ -33,6 +33,7 @@ SLIP_LIMIT = .005    # m, object from its place in the hand (as the robot accept
 PENETRATION_LIMIT = .001  # m, contacts deeper than this are reported
 DROP_DISTANCE = .03  # m, object this far from its place in the hand is dropped
 RANDOM_PUSHES = 8
+CYLINDER_SIDES = 32  # of the simulated cylinder mesh (table_1000.sim.isaaclab.scene.shape_cfg)
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,10 @@ class TestObject:
             rotation = np.eye(3)
         else:   # 'lying': the frame's Z (the long or round axis) horizontal
             rotation = Rotation.from_euler('x', 90, degrees=True).as_matrix()
+            if isinstance(self.shape, Cylinder):
+                # On a face of the simulated 32-sided mesh: on the edge under the bare turn it balances
+                # and, nudged, rolls off by centimetres within a second.
+                rotation = rotation @ Rotation.from_euler('z', 180 / CYLINDER_SIDES, degrees=True).as_matrix()
         points = self.shape.points() @ rotation.T
         return rotation, float(-points[:, 2].min())
 
