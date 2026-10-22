@@ -10,11 +10,17 @@ Each part writes ``reports.jsonl``; the batch writes ``summary.json`` (success b
 object and failure reasons) and ``trials.jsonl`` into ``--output``. ``--video``
 records every trial as ``videos/<index>_<object>.mp4`` (a wide and a close view
 side by side).
+
+``--parts N --launcher PREFIX`` runs the N parts at once, each as ``PREFIX bash -c <part command>``
+instead of on ``--gpus``: a job scheduler that waits for a free GPU and sets
+``CUDA_VISIBLE_DEVICES`` to it, e.g. ``--launcher "srun --gres=gpu:1"``.
 """
 
 import argparse
 import json
+import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
@@ -42,7 +48,9 @@ def tasks(args):
 
 def worker(args):
     from table_1000.sim.isaaclab.app import start_app
-    app = start_app(gpu=args.gpu, workers=4, cameras=args.video)
+    # Without --gpu (run by a --launcher): the one GPU the scheduler made visible.
+    gpu = args.gpu if args.gpu is not None else int(os.environ.get('CUDA_VISIBLE_DEVICES', '0'))
+    app = start_app(gpu=gpu, workers=4, cameras=args.video)
     failed = False
     evaluator = None
     work = args.work
@@ -117,6 +125,29 @@ def summarize(reports):
             'mean_wall_s': float(np.mean([r['wall_s'] for r in reports])) if reports else None}
 
 
+def run_launched(jobs, chunks, args):
+    """Run the parts at once, each through ``args.launcher``; returns the parts that did not report
+    every trial."""
+    from concurrent.futures import ThreadPoolExecutor
+    (args.output / 'parts').mkdir(parents=True, exist_ok=True)
+
+    def run(job):
+        command, log, label = job
+        line = f'{args.launcher} bash -c {shlex.quote(f"{shlex.join(command)} > {shlex.quote(str(log))} 2>&1")}'
+        print('START', label, flush=True)
+        code = subprocess.run(line, shell=True, cwd=ROOT).returncode
+        print('DONE' if code == 0 else 'FAILED', label, log, flush=True)
+
+    with ThreadPoolExecutor(len(jobs)) as pool:
+        list(pool.map(run, jobs))
+    failed = []
+    for (_, _, label), chunk in zip(jobs, chunks):
+        reports = args.output / 'parts' / label / 'reports.jsonl'
+        if not reports.exists() or len(reports.read_text().splitlines()) < len(chunk):
+            failed.append(label)
+    return failed
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--trials', type=int, default=0)
@@ -131,12 +162,15 @@ def main(argv=None):
     parser.add_argument('--robot', default='x1pro', help='robot name (asset_sources/robots/<name>)')
     parser.add_argument('--assets', type=Path, default=ROOT / 'assets', help='asset root holding robots/<name>')
     parser.add_argument('--gpus', type=int, nargs='+', default=[0])
+    parser.add_argument('--parts', type=int, help='parts run through --launcher (default: one per --gpus slot)')
+    parser.add_argument('--launcher', help='command prefix running a part on a free GPU it sets '
+                        'CUDA_VISIBLE_DEVICES to (a job scheduler), instead of running on --gpus')
     parser.add_argument('--jobs-per-gpu', type=int, default=1)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--indices', type=int, nargs='+', help=argparse.SUPPRESS)
     parser.add_argument('--work', type=Path, help=argparse.SUPPRESS)
-    parser.add_argument('--gpu', type=int, default=0, help=argparse.SUPPRESS)
+    parser.add_argument('--gpu', type=int, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     args.output = args.output.resolve()
     if args.worker:
@@ -160,13 +194,19 @@ def main(argv=None):
         passthrough.append('--video')
     passthrough += ['--random-pushes', str(args.random_pushes)]
     jobs = []
-    for part, chunk in enumerate(split(indices, len(args.gpus) * args.jobs_per_gpu)):
+    if args.parts and not args.launcher:
+        parser.error('--parts needs --launcher')
+    chunks = split(indices, args.parts or len(args.gpus) * args.jobs_per_gpu)
+    for part, chunk in enumerate(chunks):
         work = args.output / 'parts' / f'part{part}'
         command = [sys.executable, str(Path(__file__).resolve()), '--worker', '--work', str(work),
                    '--indices', *map(str, chunk), *passthrough]
         jobs.append((command, args.output / 'parts' / f'part{part}.log', f'part{part}'))
     started = time.perf_counter()
-    failed = run_parts(jobs, args.gpus, args.jobs_per_gpu)
+    if args.launcher:
+        failed = run_launched(jobs, chunks, args)
+    else:
+        failed = run_parts(jobs, args.gpus, args.jobs_per_gpu)
     reports = [json.loads(line) for path in sorted((args.output / 'parts').glob('part*/reports.jsonl'))
                for line in path.read_text().splitlines()]
     reports.sort(key=lambda report: report['index'])
