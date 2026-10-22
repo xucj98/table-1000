@@ -29,7 +29,7 @@ PULLS, PULL_LEAST = 3, .25  # grasps a drawer is slid open with at most; the lea
 # reach of a grasp from above), clear of the cabinet and of the drawers' pull-out space by
 # SPOT_MARGIN; nearest ASIDE (ahead, to the side away from the cabinet), out of the arm's way.
 SPOT_AHEAD, SPOT_SIDE = (.38, .62), .45
-ASIDE = (.5, .25)
+ASIDE = (.5, .15)
 SPOT_MARGIN = .10
 # The pen is picked up from the table from above, leaning PICK_TILT about its axis with the wrist
 # toward the robot: put down along the drawer's width it then leans away from the drawers above.
@@ -238,6 +238,12 @@ def opened(drawer):
     return {'cabinet': {slide(drawer): OPENING}}
 
 
+def opened_with_pen(ctx, drawer):
+    """``drawer`` open, the pen in it moved out with it."""
+    ctx.arrange({'pen': translated(ctx.pose('pen'), pull(ctx, drawer, OPENING - ctx.joint('cabinet', slide(drawer))))},
+                opened(drawer))
+
+
 def staged(steps):
     """``{name: stage(ctx)}``, each running its step as one subtask."""
     def stage(name, step):
@@ -250,9 +256,9 @@ def staged(steps):
 
 STAGES = staged({
     'open the top drawer': lambda ctx: skills.retry(ctx, lambda: open_drawer(ctx, TOP)),
-    'take the pen out': lambda ctx: (ctx.arrange(joints=opened(TOP)), skills.retry(ctx, lambda: take_out(ctx))),
+    'take the pen out': lambda ctx: (opened_with_pen(ctx, TOP), skills.retry(ctx, lambda: take_out(ctx))),
     'take the pen out and put it on the table': lambda ctx: (
-        ctx.arrange(joints=opened(TOP)), skills.retry(ctx, lambda: take_out(ctx)),
+        opened_with_pen(ctx, TOP), skills.retry(ctx, lambda: take_out(ctx)),
         skills.retry(ctx, lambda: put_on_table(ctx))),
     'close the top drawer': lambda ctx: (
         ctx.arrange({'pen': pen_on_table(ctx)}, opened(TOP)), skills.retry(ctx, lambda: close_drawer(ctx, TOP))),

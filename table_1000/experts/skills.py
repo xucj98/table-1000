@@ -58,7 +58,8 @@ approach (or up).
 **place** -- put the held object down anywhere in a region: a rectangle on a surface
 (a frame whose z = 0 plane is the surface), its footprint inside by a margin and out
 of keep-out rectangles. Positions every ``PLACE_STEP`` and turns about the surface
-normal every ``PLACE_TURN_STEP`` are ranked nearest a given point, then least turned;
+normal every ``PLACE_TURN_STEP`` are ranked nearest a given point, then least turned
+(``PLACE_TURNS`` per position);
 IK screens them above and at the release (``MAX_PLACE_IK``), and the first of those that has a motion
 (``MAX_PLACES`` planned) is taken: above it, straight down to ``clearance`` over the
 surface, then :func:`release`.
@@ -112,6 +113,7 @@ MAX_PLACES = 8          # placements whose motion place plans
 MAX_PLACE_IK = 150      # placements place checks by IK
 PLACE_STEP = .02        # m between the positions place samples in its region
 PLACE_TURN_STEP = 15.   # deg between the turns place samples
+PLACE_TURNS = 4         # turns place tries per position, the least first
 PLACE_MARGIN = .01      # m the footprint keeps inside the region and off its keep-out areas
 RETREATS = (APPROACH, .03)   # m, back-off after releasing, tried in order
 PARTIALS = (.75, .5, .25)     # fractions of a straight move tried when all of it does not plan
@@ -528,8 +530,15 @@ class Skills:
         finally:
             solver.allow(target.names, False)
         moved = float((ctx.poses()[target.body][:3, 3] - before) @ direction)
-        solver.first_reachable([translated(solver.tcp(), -direction * d) for d in RETREATS]
-                               + [translated(solver.tcp(), [0., 0., d]) for d in RETREATS])
+        # Back off: straight back or up, else along a planned path. The push is done either way.
+        tcp = solver.tcp()
+        moves = [lambda pose=pose: solver.move_to_pose_with_screw(pose)
+                 for pose in [translated(tcp, -direction * d) for d in RETREATS] + [translated(tcp, [0., 0., d]) for d in RETREATS]]
+        moves.append(lambda: solver.move_to_pose_with_RRTConnect(translated(tcp, -direction * RETREATS[0]), lift=True))
+        try:
+            solver.first_reachable(moves, lambda move: move())
+        except PlanningFailed as error:
+            ctx.note('no retreat', arm=candidate, reason=error.reason, **collisions(error))
         return {'arm': candidate, 'tilt': float(tilt), 'moved': moved}
 
     def release(self, arm):
@@ -589,8 +598,16 @@ class Skills:
                     pose[:3, 3] = frame[:3, :3] @ np.r_[[x, y] - centre, -points[:, 2].min()] + frame[:3, 3]
                     turned = Rotation.from_matrix(rotation @ current[:3, :3].T).magnitude()
                     options.append((float(np.linalg.norm((spot[:3] - near)[:2])), turned, pose, spot[:3]))
+        # Nearest first, at most PLACE_TURNS of the least turned per position: IK checks spread over
+        # positions rather than spending themselves on the turns of a few.
         options.sort(key=lambda option: (round(option[0] / step), option[1]))
-        return [(pose, spot) for _, _, pose, spot in options]
+        kept, counts = [], {}
+        for distance, turned, pose, spot in options:
+            key = tuple(np.round(spot[:2] / step).astype(int))
+            counts[key] = counts.get(key, 0) + 1
+            if counts[key] <= PLACE_TURNS:
+                kept.append((pose, spot))
+        return kept
 
     # -- the base --------------------------------------------------------------------------
     def base_pose(self):
