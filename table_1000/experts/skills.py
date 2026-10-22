@@ -110,11 +110,11 @@ BASE_BACKS = (0., .05, .10, .15, .20)
 BASE_TURNS = (0., 10., -10., 20., -20.)
 BASE_MARGIN = .25
 MAX_PLACES = 8          # placements whose motion place plans
-MAX_PLACE_IK = 150      # placements place checks by IK
+MAX_PLACE_IK = 200      # placements place checks by IK
 ROOM_PLACES = 10        # first placements the base moves to reach when none is in reach
 PLACE_STEP = .02        # m between the positions place samples in its region
 PLACE_TURN_STEP = 15.   # deg between the turns place samples
-PLACE_TURNS = 4         # turns place tries per position, the least first
+PLACE_TURNS = 8         # turns place tries per position, the least first
 PLACE_MARGIN = .01      # m the footprint keeps inside the region and off its keep-out areas
 RETREATS = (APPROACH, .03)   # m, back-off after releasing, tried in order
 PARTIALS = (.75, .5, .25)     # fractions of a straight move tried when all of it does not plan
@@ -366,10 +366,10 @@ class Skills:
                 ctx.note('next grasp', arm=arm, cost=grasp.cost, reason=error.reason, **collisions(error))
         return None
 
-    def pick(self, target, arm=None, point=None, approach=None, height=LIFT):
+    def pick(self, target, arm=None, point=None, approach=None, height=LIFT, max_angle=None):
         """:meth:`grasp` with the lift checked, then up by ``height``; the object must have risen."""
         ctx = self.ctx
-        result = self.grasp(target, arm, point, approach, then=(0., 0., height))
+        result = self.grasp(target, arm, point, approach, then=(0., 0., height), max_angle=max_angle)
         before = ctx.poses()[target.body]
         self.move_by_displacement(result['arm'], (0., 0., height))
         ctx.hold(.2)
@@ -706,6 +706,7 @@ class Skills:
         if not self.ctx.spec.base:
             return
         chosen = self.base_for(poses, arms, need, path)
+        self.ctx.note('room', chosen=None if chosen is None else [float(v) for v in chosen])
         if chosen is None:
             return
         back, turn = chosen
@@ -836,10 +837,11 @@ def grasp(ctx, obj, part=None, *, arm=None, shape=None, offset=None, body=None, 
     return skills.grasp(skills.target(obj, part, shape, offset, body), arm, point, approach, then, max_angle)
 
 
-def pick(ctx, obj, part=None, *, arm=None, shape=None, offset=None, body=None, point=None, approach=None, height=LIFT):
-    """Grasp scene object ``obj`` (or its ``part``) and lift it by ``height``."""
+def pick(ctx, obj, part=None, *, arm=None, shape=None, offset=None, body=None, point=None, approach=None, height=LIFT,
+         max_angle=None):
+    """Grasp scene object ``obj`` (or its ``part``) and lift it by ``height``; ``max_angle`` as for :func:`grasp`."""
     skills = _skills(ctx)
-    return skills.pick(skills.target(obj, part, shape, offset, body), arm, point, approach, height)
+    return skills.pick(skills.target(obj, part, shape, offset, body), arm, point, approach, height, max_angle)
 
 
 def move_by_displacement(ctx, arm, x=0., y=0., z=0., drag=None, least=1.):

@@ -33,7 +33,8 @@ ASIDE = (.5, .15)
 SPOT_MARGIN = .10
 # The pen is picked up from the table from above, leaning PICK_TILT about its axis with the wrist
 # toward the robot: put down along the drawer's width it then leans away from the drawers above.
-PICK_TILT = np.radians(25.)
+PICK_TILT = np.radians(35.)
+PICK_ANGLES = np.radians([15., 180.])  # how far the grasp may turn from that, the first that reaches
 APPROACH_HEIGHT = .05   # m above a spot, the hand pose the base is placed to reach
 
 
@@ -159,6 +160,16 @@ def table_region(ctx):
     return (frame, (SPOT_AHEAD[0], -SPOT_SIDE), (SPOT_AHEAD[1], SPOT_SIDE)), [keep_out]
 
 
+def pick_up(ctx):
+    """Pick the pen up from the table leaning as :func:`pick_from_above`, within the first of PICK_ANGLES that reaches."""
+    for limit in PICK_ANGLES:
+        try:
+            return skills.pick(ctx, 'pen', approach=pick_from_above(ctx), max_angle=limit)
+        except ExpertFailed as failure:
+            if failure.reason != 'no reachable grasp' or limit == PICK_ANGLES[-1]:
+                raise
+
+
 def pick_from_above(ctx):
     """Approach to the pen lying on the table: down, leaning about its axis toward the robot."""
     pen = ctx.pose('pen', 'body')
@@ -223,7 +234,7 @@ def solve(ctx):
         skills.retry(ctx, lambda: open_drawer(ctx, BOTTOM))
     with ctx.subtask('pick up the pen from the table'):
         skills.make_room(ctx, [])
-        skills.retry(ctx, lambda: skills.pick(ctx, 'pen', approach=pick_from_above(ctx)))
+        skills.retry(ctx, lambda: pick_up(ctx))
     with ctx.subtask('put the pen into the bottom drawer'):
         put_in_drawer(ctx, BOTTOM)
     with ctx.subtask('close the bottom drawer'):
@@ -274,7 +285,7 @@ STAGES = staged({
     'pick the pen up from the table and put it into the bottom drawer': lambda ctx: (
         ctx.arrange({'pen': pen_on_table(ctx)}, opened(BOTTOM)),
         skills.make_room(ctx, []),
-        skills.retry(ctx, lambda: skills.pick(ctx, 'pen', approach=pick_from_above(ctx))),
+        skills.retry(ctx, lambda: pick_up(ctx)),
         put_in_drawer(ctx, BOTTOM)),
     'close the bottom drawer': lambda ctx: (
         ctx.arrange({'pen': pen_on_table(ctx)}, opened(BOTTOM)), skills.retry(ctx, lambda: close_drawer(ctx, BOTTOM))),
