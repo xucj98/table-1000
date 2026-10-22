@@ -17,10 +17,20 @@ PIECES = {name: 4 for name in ['chassis_base_link', 'lift_link', 'head_yaw_link'
         'arm_gripper_base_link', 'arm_gripper_left_link', 'arm_gripper_right_link')]}
 # Links inside the gripper base; they get no collision.
 NO_COLLISION = ('arm_link6', 'motor_link')
+# Flat pad on each fingertip's inner face, a box in the finger link's frame: (centre of the left
+# finger's, size); the right finger's is mirrored in z. The convex pieces of a finger meet a held
+# object at one point each (their inner faces are not parallel) and the object turns about the line
+# between the fingers; the pad, 0.5 mm proud of the pieces, covers the tip's flat 25 x 18 mm.
+PAD = ((.069426, 0., .018), (.025, .003, .018))
 
 
 def edit(root):
-    """Joint changes over the vendor URDF (listed in README)."""
+    """Joint changes over the vendor URDF and finger pads (listed in README)."""
+    edit_joints(root)
+    add_pads(root)
+
+
+def edit_joints(root):
     for joint in root.findall('joint'):
         # Fingers are driven directly in metres; the virtual motor joint becomes fixed.
         if joint.get('name').endswith('_arm_gripper'):
@@ -32,3 +42,14 @@ def edit(root):
             joint.remove(mimic)
         if joint.get('name') == 'lift_joint':
             joint.find('limit').attrib.update(effort='2000', velocity='0.2')
+
+
+def add_pads(root):
+    import xml.etree.ElementTree as ET
+    (x, y, z), size = PAD
+    for link in root.findall('link'):
+        for finger, sign in (('left', 1.), ('right', -1.)):
+            if link.get('name').endswith(f'_arm_gripper_{finger}_link'):
+                collision = ET.SubElement(link, 'collision', name=f'{link.get("name")}_pad')
+                ET.SubElement(collision, 'origin', xyz=f'{x:g} {y:g} {sign * z:g}', rpy='0 0 0')
+                ET.SubElement(ET.SubElement(collision, 'geometry'), 'box', size=' '.join(f'{v:g}' for v in size))

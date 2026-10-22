@@ -2,7 +2,7 @@
 
 ![preview](three_quarter.jpg)
 
-带抬升柱、双 6 自由度手臂和平动二指夹爪的差速轮式机器人。`robot.urdf` 来自真机控制容器中的 xacro 展开（底盘 dvt1、从臂 hy_1.0、夹爪 fx001_h_evt1），关节、限位、质量与惯量保持真机值。真机导出的原始 URDF 包（`ex001_render`，含 157.7 MB 外观 STL 与未采用的厂商碰撞网格，共 193 MB）不进入 Git：存档于 Hugging Face 私有数据集，版本记录在仓库根目录的 `assets.lock.json`，下载到已忽略的 `assets/robots/x1pro/raw/ex001_render/`。机器人构建只重写 `assets/robots/x1pro/` 下的 `import/` 与生成文件，不触及 `raw/`。
+带抬升柱、双 6 自由度手臂和平动二指夹爪的差速轮式机器人。换用转动二指夹爪 rm001 的同一台机器人见 [x1pro_rm001](../x1pro_rm001/)，它引用本目录的网格与 `.py` 文件。`robot.urdf` 来自真机控制容器中的 xacro 展开（底盘 dvt1、从臂 hy_1.0、夹爪 fx001_h_evt1），关节、限位、质量与惯量保持真机值。真机导出的原始 URDF 包（`ex001_render`，含 157.7 MB 外观 STL 与未采用的厂商碰撞网格，共 193 MB）不进入 Git：存档于 Hugging Face 私有数据集，版本记录在仓库根目录的 `assets.lock.json`，下载到已忽略的 `assets/robots/x1pro/raw/ex001_render/`。机器人构建只重写 `assets/robots/x1pro/` 下的 `import/` 与生成文件，不触及 `raw/`。
 
 ## 关节
 
@@ -28,11 +28,13 @@
 - `meshes/visual/`：外观网格，由真机 STL 用二次误差简化，每个网格简化前后表面距离的 99 分位不超过 1 mm（共约 37 万面）。只按面数预算简化时，躯干外壳被压坏，误差约 19 mm。
 - `meshes/collision/`：每个外观网格的少量凸块（CoACD，阈值 0.3；主体部件最多 4 块，传感器与轮子 1 块），导入为凸包碰撞。外观顶点越出碰撞凸块最多 0.19 mm（夹爪座），其余在 0.04 mm 以内。
 - `arm_link6` 与夹爪电机坐标系位于夹爪座内部，不设碰撞。
+- 指垫：每根手指的凸块内侧面不平行，持物时每指只有一个接触点，物体绕两点连线转动；右指的一块凸块还把内侧平面一直延伸到手掌，实物在指尖之后是收窄的。因此每根手指在指尖内侧加一个 25 × 18 × 3 mm 的盒形指垫（`prepare.py` 的 `PAD`），比凸块突出 0.5 mm，持物的接触落在指垫上，每指 4 个接触点。夹住物体时的指间距因此比物体宽 1 mm。
 
 ## 物理
 
 `physics.py` 设置关节驱动（力驱动，增益按弧度或米给出）、articulation 求解迭代与自碰撞，以及接触材料：机身静/动摩擦 0.4/0.3，手指 1.0/0.8。
 
+- **夹紧力**：手指驱动 5000 N/m、阻尼 60 N·s/m，力上限 20 N（URDF）。闭合目标越过物体 4 mm 即达上限，1 cm 与 4 cm 的物体夹紧力相同（1500 N/m 时 1 cm 方块只有 7.5 N）。两指耦合平分驱动力，每个指垫压 10 N。
 - **两指耦合**：右指 mimic 左指，只驱动左指。两指各自驱动、都顶在 20 N 力上限时，沿开合方向没有回复力：持物原地转向时两指连同物体侧移了 13 mm；耦合后小于 0.1 mm。
 - **指垫扭转摩擦**：接触片半径 6 mm（`torsionalPatchRadius`），否则物体可绕两指连线自由转动。
 - **底盘**：虚拟关节刚度 1e5 N/m、8000 N·m/rad，推力上限 116 N、扭矩上限 28 N·m（两个轮电机各 5 N·m，轮半径 0.086 m，轮距 0.48 m）。挡住时停下，不会把障碍物硬推开。机器人与地面的碰撞关闭，轮子只随动。每个夹爪的两指之间、头与躯干之间、每只手臂的上臂（link2）与前臂（link4）之间不检测碰撞（规划模型也排除）：它们的凸块互相重叠，真机上由导轨、装配或关节限位保证不接触。零位时手臂折叠，joint2、joint3 都在限位上，前臂外壳贴在上臂上，两者不能更近。机身连杆不受重力，相当于理想的重力补偿控制，位置目标没有下垂；手中物体仍受重力。增益与摩擦是仿真取值，未对照真机控制器标定。
@@ -43,7 +45,7 @@
 
 ```bash
 uv run python scripts/robots/build_robot.py x1pro --gpu 0
-uv run python scripts/robots/check_robot.py x1pro --output outputs/robots/x1pro-check --gpu 0
+uv run python scripts/robots/check_robot.py x1pro --physics isaac-cpu --gpus 0
 uv run python scripts/robots/teleop.py x1pro --output outputs/robots/x1pro-teleop --gpu 0 --port 8765
 ```
 

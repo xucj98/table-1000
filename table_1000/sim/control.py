@@ -28,9 +28,23 @@ def interpolate(start, target, substep, substeps, dt):
     return start + alpha * (target - start), (target - start) / (substeps * dt)
 
 
-def finger_targets(gap, signs, max_gap):
-    """``[N, 2]`` finger targets ``sign * g / 2`` of pad gaps ``[N, 1]``, clipped to ``[0, max_gap]``."""
-    return torch.clamp(gap, 0., max_gap) * signs / 2
+def finger_targets(gap, signs, max_gap, pivot=None):
+    """``[N, 2]`` finger targets of pad gaps ``[N, 1]`` clipped to ``[0, max_gap]``: ``sign * g / 2`` for
+    sliding fingers, the matching angles for pivoting ones (see :class:`table_1000.robots.spec.ArmSpec`)."""
+    half = torch.clamp(gap, 0., max_gap) / 2
+    if pivot is not None:
+        offset, (x, y) = pivot
+        half = math.atan2(-y, x) + torch.asin((half - offset) / math.hypot(x, y))
+    return half * signs
+
+
+def finger_gap(q, signs, pivot=None):
+    """``[N, 1]`` pad gaps of finger positions ``[N, 2]``, the inverse of :func:`finger_targets`."""
+    s = (q * signs).sum(dim=1, keepdim=True) / 2
+    if pivot is not None:
+        offset, (x, y) = pivot
+        s = offset + x * torch.sin(s) + y * torch.cos(s)
+    return 2 * s
 
 
 def clamp_lag(pose, measured, lag):

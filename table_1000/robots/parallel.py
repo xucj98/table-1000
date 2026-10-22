@@ -1,40 +1,31 @@
-"""Check independent GPU robot environments, distinct actions, and partial reset."""
+"""GPU robot environments in parallel: clones given the same inputs agree, distinct inputs are tracked
+independently, resetting one clone leaves the others, and clone zero matches a single environment."""
 
-import argparse
-import json
-from pathlib import Path
-import sys
-import traceback
-
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT))
+import numpy as np
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('robot')
-    parser.add_argument('--gpu', type=int, default=0)
-    parser.add_argument('--num-envs', type=int, default=4)
-    parser.add_argument('--output', type=Path, required=True)
-    args = parser.parse_args()
-    if args.num_envs < 2:
-        parser.error('--num-envs must be at least 2')
-    args.output.mkdir(parents=True, exist_ok=True)
-    from table_1000.sim.isaaclab.app import start_app
-    app = start_app(gpu=args.gpu, device='cuda:0', cameras=False)
-    result = {'robot': args.robot, 'device': 'cuda:0', 'num_envs': args.num_envs}
-    env = None
+def check_parallel(spec, settings, assets, root, num_envs=4):
+    """Run the parallel-environment checks on CUDA PhysX (in a started app); returns the result with
+    ``status`` ``'PASS'`` (a failed check raises)."""
+    import torch
+    from table_1000.robots.checks import check_scene
+    from table_1000.sim.isaaclab.env import RobotEnv, apply_layout
+    scene = check_scene(spec, settings)
+    result = {'num_envs': num_envs}
+    opened = []
+
+    def open_env(count):
+        opened.append(RobotEnv(scene, spec, assets, device='cuda:0', num_envs=count, root=root))
+        return opened[-1]
+
+    def close(env):
+        opened.remove(env)
+        env.close()
+
     try:
-        import numpy as np
-        import torch
-        from table_1000.robots import load_spec, load_robot_test
-        from table_1000.robots.checks import check_scene
-        from table_1000.sim.isaaclab.env import RobotEnv, apply_layout
-        spec = load_spec(args.robot, ROOT)
-        scene = check_scene(spec, load_robot_test(args.robot, ROOT))
-        env = RobotEnv(scene, spec, ROOT / 'assets', device='cuda:0', num_envs=args.num_envs)
+        env = open_env(num_envs)
         obs = env.reset(scene.placement())
-        assert obs['agent']['qpos'].shape == (args.num_envs, len(env.joints))
+        assert obs['agent']['qpos'].shape == (num_envs, len(env.joints))
         for _ in range(50):
             env.step()
         # All clones start from the same local scene and receive the same inputs.
@@ -48,7 +39,7 @@ def main():
         joints = spec.arms[arm].joints
         initial = env.qpos(joints).copy()
         target = initial.copy()
-        offsets = np.linspace(-.12, .12, args.num_envs)
+        offsets = np.linspace(-.12, .12, num_envs)
         target[:, 0] += offsets
         for step in range(1, 101):
             env.step({arm: initial + (target - initial) * min(step / 50, 1.)})
@@ -64,7 +55,7 @@ def main():
         poses_before = env.privileged()['poses']
         block = np.eye(4)
         block[:3, 3] = (4., 4., 2.)
-        env.env.pending_reset = (scene.placement(block=block), env.initial_robot_q())
+        env.env.pending_reset = (scene.placement(block=block), env.initial_robot_q(), {})
         apply_layout(env.env, torch.tensor([0], device=env.device))
         torch.testing.assert_close(env.robot.data.joint_pos[1:], before, rtol=0, atol=0)
         torch.testing.assert_close(env.robot.data.joint_pos_target[1:], targets_before, rtol=0, atol=0)
@@ -76,13 +67,10 @@ def main():
         np.testing.assert_allclose(env.privileged()['poses']['block'][0], block, atol=1e-5, rtol=0)
         result['partial_reset_preserved_other_states_and_targets'] = True
         result['kinematic_reset_persisted_after_steps'] = True
-        env.close()
-        env = None
-        import omni.usd
-        omni.usd.get_context().new_stage()
+        close(env)
         # Compare an independent N=1 simulation against clone zero under the
         # same layout and action sequence, rather than only comparing clones.
-        env = RobotEnv(scene, spec, ROOT / 'assets', device='cuda:0', num_envs=1)
+        env = open_env(1)
         env.reset(scene.placement())
         for _ in range(50):
             env.step()
@@ -95,15 +83,13 @@ def main():
         move_error = float(np.max(np.abs(env.obs['agent']['qpos'][0] - moved_q)))
         result['single_vs_multiple_max_joint_error_rad'] = max(hold_error, move_error)
         assert result['single_vs_multiple_max_joint_error_rad'] < .001
-        result['status'] = 'PASS'
-    except BaseException:
-        result.update(status='ERROR', error=traceback.format_exc())
+        close(env)
     finally:
-        (args.output / 'report.json').write_text(json.dumps(result, indent=2) + '\n')
-        if env is not None:
-            env.close()
-        app.close(exit_code=int(result['status'] != 'PASS'))
-
-
-if __name__ == '__main__':
-    main()
+        # A failed check leaves no environment behind for the next case of the process.
+        for env in list(opened):
+            close(env)
+    # Every check above raises when it fails.
+    result['checks'] = {'same_inputs_agree': True, 'distinct_inputs_tracked': True, 'partial_reset_keeps_others': True,
+                        'matches_single_environment': True}
+    result['status'] = 'PASS'
+    return result

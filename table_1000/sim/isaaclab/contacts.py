@@ -11,7 +11,8 @@ class Contacts:
     """Contact intervals of labelled bodies, timed by physics steps of ``dt``.
 
     ``labels`` maps prim path prefixes to names; pairs are kept when either side's
-    label starts with one of ``watched``.
+    label starts with one of ``watched``. Normal impulses are summed per pair until
+    :meth:`take_impulses`.
     """
 
     TOUCH = .0005
@@ -25,6 +26,7 @@ class Contacts:
         self.time, self.phase = 0., 'start'
         self.events = []
         self.open = {}
+        self.impulses = {}
         self.tensor_view = None
         self.subscription = None
         if device == 'cpu':
@@ -60,16 +62,18 @@ class Contacts:
 
     def on_tensor_step(self):
         import numpy as np
-        _, _, _, distances, counts, starts = self.tensor_view.get_contact_data(self.dt)
+        forces, _, _, distances, counts, starts = self.tensor_view.get_contact_data(self.dt)
         distances = distances.detach().cpu().numpy().ravel()
+        forces = forces.detach().cpu().numpy().ravel()
         counts = counts.detach().cpu().numpy()
         starts = starts.detach().cpu().numpy()
         touching = {}
         for i, j in np.argwhere(counts > 0):
             start, count = int(starts[i, j]), int(counts[i, j])
             separation = float(distances[start:start+count].min())
+            pair = tuple(sorted((self.label(self.tensor_view.sensor_paths[i]), self.label(self.filters[j]))))
+            self.impulses[pair] = self.impulses.get(pair, 0.) + float(np.abs(forces[start:start+count]).sum()) * self.dt
             if separation < self.TOUCH:
-                pair = tuple(sorted((self.label(self.tensor_view.sensor_paths[i]), self.label(self.filters[j]))))
                 touching[pair] = min(touching.get(pair, float('inf')), separation)
         for pair, separation in touching.items():
             entry = self.open.setdefault(pair, {'pair': pair, 'start': self.time, 'phase': self.phase,
@@ -105,6 +109,8 @@ class Contacts:
             pair = tuple(sorted((a, b)))
             points = data[header.contact_data_offset:header.contact_data_offset + header.num_contact_data]
             separation = min((point.separation for point in points), default=float('inf'))
+            self.impulses[pair] = self.impulses.get(pair, 0.) + sum(
+                abs(sum(point.impulse[k] * point.normal[k] for k in range(3))) for point in points)
             touching = 'LOST' not in str(header.type) and separation < self.TOUCH
             if touching:
                 entry = self.open.setdefault(pair, {'pair': pair, 'start': self.time, 'phase': self.phase,
@@ -114,6 +120,11 @@ class Contacts:
                 entry = self.open.pop(pair)
                 entry['end'] = self.time
                 self.events.append(entry)
+
+    def take_impulses(self):
+        """Normal impulse (N s) summed per pair since the last call."""
+        impulses, self.impulses = self.impulses, {}
+        return impulses
 
     def intervals(self):
         return self.events + [dict(entry, end=None) for entry in self.open.values()]
@@ -126,4 +137,5 @@ class Contacts:
         """Forget every interval and restart the clock (after a reset)."""
         self.events.clear()
         self.open.clear()
+        self.impulses.clear()
         self.time = 0.

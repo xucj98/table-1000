@@ -1,13 +1,13 @@
 """Robot acceptance in the simulator: physical-sense cases and comparison metrics.
 
-``scripts/robots/check_robot.py <name>`` runs, in one Isaac process, a check
+``scripts/robots/check_robot.py <name>`` runs, in a few Isaac processes, a check
 scene (a table in front of the robot and a few primitive shapes, see
 :func:`check_scene`) through:
 
 - **cases** with pass/fail criteria, each starting from a reset (:attr:`Checker.LIBRARY`):
   ``keyframes``, ``sensors``, ``arm_hits_block``, ``arm_pushes_objects``,
   ``drop_on_robot``, ``lift_into_shelf``, ``self_collision``,
-  ``grasp_and_shake``, ``base_into_wall``, ``base_full_turn``, ``drive_holding``, ``joint_limits``.
+  ``grasp_and_shake``, ``grasp_and_push``, ``grasp_pressing_table``, ``base_into_wall``, ``base_full_turn``, ``drive_holding``, ``joint_limits``.
   Cases needing a part the robot lacks (cameras, a lift, a mobile base) do not
   apply to it;
 - **metrics** recorded for comparison only: model/simulator consistency, IK,
@@ -46,8 +46,26 @@ IMPACT_PENETRATION_LIMIT = .01
 # a little past its limit; flung bodies go far beyond.
 SPEED_MARGIN = 1.5
 OBJECT_SPEED_LIMIT = 2.      # m/s, horizontal
+# A body dropped onto the robot bounces off at a solver-dependent speed (PhysX
+# resolves the step's overlap by pushing it out, up to about 3 m/s here, above
+# the 2.2 m/s of the impact); a flung body is far faster.
+DROP_SPEED_LIMIT = 4.
 JITTER_LIMIT = 1e-3          # rad or m, oscillation std of a blocked joint over 0.5 s
 HOLD_DRIFT_LIMIT = .005      # m, held object relative to the TCP
+# A held object is pushed at its centre of mass in each world axis direction and
+# PUSH_RANDOM random ones: ramped up over PUSH_RAMP s, held PUSH_HOLD s, released.
+PUSH_FORCE, PUSH_RAMP, PUSH_HOLD, PUSH_RANDOM = 5., .2, .8, 8
+# Grasp trials (``Checker.trials``): trial 0 grasps objects placed at the work point; trial k > 0 shifts them
+# by up to GRASP_OFFSET and turns them by up to GRASP_YAW (deg), and the grasp follows the object's yaw with an
+# error of up to GRASP_YAW_ERROR (deg), drawn with seed k.
+GRASP_OFFSET, GRASP_YAW, GRASP_YAW_ERROR = .01, 10., 3.
+PUSH_REPORT_ONLY = ('disc',)  # reported, not part of the pass condition
+GRASP_PENETRATION_LIMIT = .001   # m, fingers in a held object
+# Closing on an object with the fingers pressing on the table with each of PRESS_FORCES (N; 0: just touching),
+# for approach tilts PRESS_TILTS (deg from horizontal); the hand is lowered in PRESS_STEP steps.
+PRESS_FORCES, PRESS_TILTS, PRESS_STEP = (0., 5., 10.), (90., 80.), .0005
+FINGER_LIMIT_MARGIN = .05   # of a finger joint's range, past its limits while closing on the table
+CALM_SPEED, CALM_SHIFT = .5, .01   # m/s, m: the object is neither flung nor pushed away
 TURN_RATE_MARGIN = 1.05      # measured yaw rate over the commanded one, through whole turns
 TURN_ERROR_LIMIT = .02       # rad, turned angle against the command; m, translation while turning
 KEYFRAME_DRIFT_LIMIT = .01   # rad, joint drift while holding a keyframe
@@ -61,15 +79,27 @@ PIXEL_LIMIT = 2.             # px, marker centre (rgb)
 DEPTH_LIMIT = .003           # m, marker surface along the optical axis (depth)
 CONTRAST_LIMIT = 5.          # grey-level standard deviation of a usable image
 DT = 1 / CONTROL_HZ
+# Fixed views of the check scene for videos (scripts/robots/render_check.py).
+VIEWS = {'wide': {'position': (1.9, -1.7, 1.7), 'target': (.25, 0., .8), 'focal_length_mm': 20,
+                  'resolution': (960, 540)}}
 
 # Primitives; a missing mass makes the shape kinematic (it stays where it is put).
 PRIMITIVES = {
-    'block': {'shape': 'box', 'size': (.06, .06, .14), 'color': (.8, .3, .2)},
+    # Tall enough to stop the whole hand, however long its fingers: the joint-space sweep lifts the hand
+    # mid-way, and the long fingers of X1Pro's rm001 gripper pass over a 0.14 m block with only the tips.
+    'block': {'shape': 'box', 'size': (.06, .06, .30), 'color': (.8, .3, .2)},
     'box': {'shape': 'box', 'size': (.05, .05, .08), 'mass': .2},
     'can': {'shape': 'cylinder', 'size': (.025, .10), 'mass': .2, 'color': (.3, .7, .3)},
     'stick': {'shape': 'cylinder', 'size': (.007, .14), 'mass': .02, 'color': (.9, .8, .2)},
     'ball': {'shape': 'sphere', 'size': .03, 'mass': .1, 'color': (.9, .5, .1)},
     'cube': {'shape': 'box', 'size': (.06, .06, .06), 'mass': .3, 'color': (.6, .3, .8)},
+    # Small objects of tabletop tasks, for grasp_and_push: a 1 cm steel cube, a 4 cm cube, a 2 x 2 x 10 cm
+    # bar, a rod of 2 cm diameter and 10 cm, a disc of 3 cm diameter and 1 cm (plastic, 1000 kg/m^3).
+    'cube1': {'shape': 'box', 'size': (.01, .01, .01), 'mass': .00785, 'color': (.75, .75, .78)},
+    'cube4': {'shape': 'box', 'size': (.04, .04, .04), 'mass': .064, 'color': (.25, .55, .85)},
+    'bar': {'shape': 'box', 'size': (.02, .02, .10), 'mass': .04, 'color': (.9, .7, .15)},
+    'rod': {'shape': 'cylinder', 'size': (.01, .10), 'mass': .0314, 'color': (.3, .75, .35)},
+    'disc': {'shape': 'cylinder', 'size': (.015, .01), 'mass': .00707, 'color': (.6, .35, .8)},
     'shelf': {'shape': 'box', 'size': (.12, .12, .02), 'color': (.5, .5, .5)},
     'wall': {'shape': 'box', 'size': (.1, 1.4, 1.), 'color': (.5, .5, .5)},
 }
@@ -96,7 +126,7 @@ def parked(index):
 
 
 LIBRARY = ('keyframes', 'sensors', 'arm_hits_block', 'arm_pushes_objects', 'drop_on_robot', 'lift_into_shelf',
-           'self_collision', 'grasp_and_shake', 'base_into_wall', 'base_full_turn', 'drive_holding', 'joint_limits')
+           'self_collision', 'grasp_and_shake', 'grasp_and_push', 'grasp_pressing_table', 'base_into_wall', 'base_full_turn', 'drive_holding', 'joint_limits')
 # Parts a case needs; it does not apply to a robot without them.
 NEEDS = {'sensors': 'cameras', 'lift_into_shelf': 'lift', 'base_into_wall': 'base', 'base_full_turn': 'base',
          'drive_holding': 'base'}
@@ -142,7 +172,7 @@ def check_scene(spec, settings):
     """Scene source for :class:`~table_1000.sim.isaaclab.env.RobotEnv` from a robot's ``robot_test`` settings."""
     robot = settings.ROBOT
     scene = types.SimpleNamespace(
-        TABLE=settings.TABLE, OBJECTS=(), PRIMITIVES=PRIMITIVES,
+        TABLE=settings.TABLE, OBJECTS={}, PRIMITIVES=PRIMITIVES,
         ROBOT={'asset': f'robots/{spec.name}', 'position': robot['position'], 'yaw': robot['yaw'],
                'joints': spec.keyframe(robot.get('keyframe', 'zero'))})
 
@@ -202,20 +232,21 @@ class VisualModel:
 
 
 class Checker:
-    def __init__(self, spec, settings, output, assets, root, views=None, video=False, device='cpu'):
-        """``views``: fixed views for videos; ``video`` records them and every robot camera."""
+    def __init__(self, spec, settings, output, assets, root, device='cpu', trials=(0,)):
+        """``output``: the process's working files (planning model); set ``self.output`` to a case's
+        directory for its images. ``trials``: the grasp trials of ``grasp_and_push`` (see ``GRASP_OFFSET``).
+        Set ``states`` to a list to record the scene state of every step into it."""
         from table_1000.robots.kinematics import RobotModel
         from table_1000.sim.isaaclab.env import RobotEnv
-        from table_1000.sim.isaaclab.video import Video
         self.spec, self.settings, self.output, self.root = spec, settings, Path(output), Path(root)
         self.arm = spec.primary_arm
         self.gripper = f'{self.arm}_gripper'
+        self.trials = tuple(trials)
         self.top = settings.TABLE['height']
         self.scene = check_scene(spec, settings)
         started = time.perf_counter()
-        self.env = RobotEnv(self.scene, spec, assets, cameras=spec.cameras, depth=True, views=views or {}, root=root,
+        self.env = RobotEnv(self.scene, spec, assets, cameras=spec.cameras, depth=True, root=root,
                             contact_watch=('robot', *PRIMITIVES), device=device)
-        self.video = Video(self.env, [*(views or {}), *spec.cameras], self.output / 'frames', CONTROL_HZ) if video else None
         self.model = RobotModel(spec, self.output / 'planning')
         self.visual = VisualModel(spec, self.model, root)
         self.load_s = time.perf_counter() - started
@@ -226,14 +257,17 @@ class Checker:
         self.child_link = {joint.get('name'): joint.find('child').get('link') for joint in joints}
         self.speed_limits = np.array([limits[j] for j in self.body_joints])
         self.case, self.past = '', []
-        self.trace = {'joint_speed': 0., 'joint': None, 'object_speed': 0.}
+        self.trace = {'joint_speed': 0., 'joint': None, 'object_speed': 0., 'object_speeds': {}}
+        # A list to record into: the scene state before the first step, then after every step.
+        self.states = None
+        self.reaches = {}    # finger_reach by its arguments
 
     # -- driving ---------------------------------------------------------------
     def run(self, case):
         """Run ``case``. Its common checks cover every reset within it (a case
         may run several sub-cases, one per object or pose)."""
         self.case = case
-        self.trace = {'joint_speed': 0., 'joint': None, 'object_speed': 0.}
+        self.trace = {'joint_speed': 0., 'joint': None, 'object_speed': 0., 'object_speeds': {}}
         self.past = []
         self.env.contacts.clear()    # the previous case's contacts are not this case's
         return getattr(self, case)()
@@ -257,18 +291,23 @@ class Checker:
         return transform
 
     def step(self, action=None, count=1):
+        from table_1000.sim.isaaclab.replay import numpy_state
         for _ in range(count):
+            if self.states == []:
+                self.states.append(numpy_state(self.env))
             obs = self.env.step(action or {})
+            if self.states is not None:
+                self.states.append(numpy_state(self.env))
             ratio = np.abs(obs['agent']['qvel'][0, [self.env.joints.index(j) for j in self.body_joints]]) / self.speed_limits
             if ratio.max() > self.trace['joint_speed']:
                 self.trace['joint_speed'], self.trace['joint'] = float(ratio.max()), self.body_joints[int(ratio.argmax())]
             velocities = self.env.privileged()['velocities']
             if velocities:
                 # Horizontal: falling off the robot or the table is no fling.
-                self.trace['object_speed'] = max(self.trace['object_speed'], max(
-                    float(np.linalg.norm(v[0, :2])) for v in velocities.values()))
-            if self.video:
-                self.video.capture(f'{self.case}  t={self.env.time:5.2f}s')
+                speeds = self.trace['object_speeds']
+                for name, v in velocities.items():
+                    speeds[name] = max(speeds.get(name, 0.), float(np.linalg.norm(v[0, :2])))
+                self.trace['object_speed'] = max(self.trace['object_speed'], max(speeds.values()))
         # The planning model follows the measured joints, as on the real robot.
         self.model.set_state(dict(zip(self.env.joints, obs['agent']['qpos'][0])), self.base_transform())
         return obs
@@ -324,14 +363,17 @@ class Checker:
                 depth = max(depth, entry['max_penetration_m'])
         return depth
 
-    def common(self, result, penetration_limit=PENETRATION_LIMIT):
+    def common(self, result, penetration_limit=PENETRATION_LIMIT, speed_limit=OBJECT_SPEED_LIMIT, speed_exempt=()):
+        """Add the common checks to ``result``; objects of ``speed_exempt`` are left out of the speed check."""
         result['max_penetration_m'] = self.penetration()
+        speed = (max((v for k, v in self.trace['object_speeds'].items() if k not in speed_exempt), default=0.)
+                 if speed_exempt else self.trace['object_speed'])
         result.update(max_joint_speed_ratio=self.trace['joint_speed'], fastest_joint=self.trace['joint'],
-                      max_object_speed=self.trace['object_speed'])
+                      max_object_speed=speed)
         checks = result.setdefault('checks', {})
         checks['penetration'] = result['max_penetration_m'] <= penetration_limit
         checks['joint_speed'] = result['max_joint_speed_ratio'] <= SPEED_MARGIN
-        checks['object_speed'] = result['max_object_speed'] <= OBJECT_SPEED_LIMIT
+        checks['object_speed'] = result['max_object_speed'] <= speed_limit
         checks = {key: bool(value) for key, value in checks.items()}
         result['checks'] = checks
         result['status'] = 'PASS' if all(checks.values()) else 'FAIL'
@@ -341,6 +383,26 @@ class Checker:
             deepest[pair] = max(deepest.get(pair, 0.), entry['max_penetration_m'])
         result['contacts'] = dict(sorted(deepest.items(), key=lambda item: -item[1]))
         return result
+
+    def finger_reach(self, arm, gap, steps=9):
+        """Farthest point of ``arm``'s finger visual meshes past its TCP along the approach axis (+X), over
+        finger gaps from ``gap`` down to closed (pivoting fingertips advance as they close)."""
+        key = (arm, gap, steps)
+        if key in self.reaches:
+            return self.reaches[key]
+        spec = self.spec.arms[arm]
+        reach = -np.inf
+        for value in np.linspace(gap, 0., steps):
+            q = np.array(self.model.q, dtype=float)
+            for joint, target in spec.finger_targets(value).items():
+                q[self.model.index[joint]] = target
+            inverse = np.linalg.inv(self.model.tcp(arm, q))
+            for link, transform, mesh in self.visual.parts:
+                if link in spec.finger_links:
+                    points = (inverse @ self.model.fk(link, q) @ transform)[:3] @ np.c_[mesh.vertices, np.ones(len(mesh.vertices))].T
+                    reach = max(reach, float(points[0].max()))
+        self.reaches[key] = reach
+        return reach
 
     def tcp(self, arm=None):
         return self.env.obs['agent']['tcp'][arm or self.arm][0]
@@ -371,7 +433,7 @@ class Checker:
     def arm_hits_block(self):
         """The hand sweeps sideways through a fixed block; it must stop, then reach the goal once freed."""
         arm = self.arm
-        self.reset(block=self.on_work(0., .03, .14))
+        self.reset(block=self.on_work(0., .03, PRIMITIVES['block']['size'][2]))
         start, goal = self.ik(arm, self.work_point(0., -.21, .045, down(70))), self.ik(arm, self.work_point(0., .20, .045, down(70)))
         self.move_joints(self.arm, start, 2.)
         self.move_joints(self.arm, goal, 3.)
@@ -419,18 +481,22 @@ class Checker:
                     continue
                 half = PRIMITIVES[body]['size'] if body == 'ball' else PRIMITIVES[body]['size'][2] / 2
                 self.env.set_shape_pose(body, translation(point[0], point[1], surface + .25 + half))
+                fastest, self.trace['object_speed'] = self.trace['object_speed'], 0.
                 self.step(count=round(2.5 / DT))
+                speed_of_drop = self.trace['object_speed']
+                self.trace['object_speed'] = max(fastest, speed_of_drop)
                 pose = self.pose_of(body)
                 speed = float(np.linalg.norm(self.env.privileged()['velocities'][body][0, :3]))
                 resting_on_robot = pose[2, 3] > .1 and speed < .02
                 gap = self.visual.distance(primitive_surface(PRIMITIVES[body], pose)) if resting_on_robot else None
                 results[f'{name}/{body}'] = {'link': link, 'resting_on_robot': bool(resting_on_robot),
-                                             'gap_to_visual_m': gap, 'penetration_m': self.penetration(sub_case=True)}
+                                             'gap_to_visual_m': gap, 'penetration_m': self.penetration(sub_case=True),
+                                             'max_object_speed': speed_of_drop}
         gaps = [r['gap_to_visual_m'] for r in results.values() if r['gap_to_visual_m'] is not None]
         result = {'drops': results, 'max_gap_m': max(gaps, default=0.)}
         # Resting more than 15 mm above the visible surface: the collision shell is too fat.
         result['checks'] = {'rests_on_visible_surface': result['max_gap_m'] <= .015}
-        return self.common(result, IMPACT_PENETRATION_LIMIT)
+        return self.common(result, IMPACT_PENETRATION_LIMIT, DROP_SPEED_LIMIT)
 
     def lift_into_shelf(self):
         """The torso rises into a fixed shelf above its top (the head, if any): it stops there, then lowers again."""
@@ -474,7 +540,8 @@ class Checker:
         return self.common(result)
 
     def colliding_target(self, arm, ready, beyond=.3):
-        """Arm joints just past the first self-collision along one shoulder or elbow joint from ``ready``."""
+        """Arm joints just past the first self-collision along one shoulder or elbow joint from ``ready``,
+        still in collision there (a hand that only grazes a body on the way is passed by)."""
         indices = self.model.arm_indices(arm)
         for joint in (0, 1, 2, 3):
             for sign in (1., -1.):
@@ -487,33 +554,36 @@ class Checker:
                     pairs = self.model.self_collisions(self.model.vector(dict(zip(self.spec.arms[arm].joints, q))))
                     if pairs:
                         q[joint] = np.clip(q[joint] + sign * beyond, low, high)
-                        return q, pairs
+                        if self.model.self_collisions(self.model.vector(dict(zip(self.spec.arms[arm].joints, q)))):
+                            return q, pairs
         raise RuntimeError('no self-collision reachable along single joints')
 
-    def _grasp(self, body, pose, height, approach=.10):
-        """Top-down grasp of ``body`` resting at ``pose``; returns the closed finger gap."""
+    def _grasp(self, body, pose, approach=.10, clearance=.004, yaw=0.):
+        """Top-down grasp of ``body`` resting at ``pose``, the closing direction turned by ``yaw`` (deg) about
+        the vertical from world Y; returns the closed finger gap."""
         self.reset(**{body: pose})
         self.step(count=round(.5 / DT))
         center = self.pose_of(body)[:3, 3]
-        # Pads 15 mm below the top, fingertips (18.5 mm past the TCP) clear of the table.
-        z = max(center[2] + height / 2 - .015, self.top + .0185 + .004)
-        grasp = translation(center[0], center[1], z, down(90))
+        # TCP at mid-height (pivoting fingers close on a wide object above the TCP), fingertips
+        # ``clearance`` above the table throughout the closing.
+        z = max(center[2], self.top + self.finger_reach(self.arm, .08) + clearance)
+        hand = Rotation.from_euler('z', yaw, degrees=True).as_matrix() @ down(90)
+        grasp = translation(center[0], center[1], z, hand)
         self.step({self.gripper: [[.08]]}, count=round(.6 / DT))
-        self.move_joints(self.arm, self.ik(self.arm, translation(*grasp[:3, 3] + [0., 0., approach], down(90))), 2.5)
+        self.move_joints(self.arm, self.ik(self.arm, translation(*grasp[:3, 3] + [0., 0., approach], hand)), 2.5)
         self.move_joints(self.arm, self.ik(self.arm, grasp), 1.5)
         self.step({self.gripper: [[0.]]}, count=round(.8 / DT))
-        fingers = self.q(self.spec.arms[self.arm].fingers)
-        return float(fingers[0] - fingers[1])
+        arm = self.spec.arms[self.arm]
+        return arm.gap(self.q(arm.fingers))
 
     def grasp_and_shake(self):
         """Grasp a box, a can and a thin stick, lift and shake each: no slip, no finger penetration."""
-        objects = {'box': (self.on_work(0., 0., .08), .08), 'can': (self.on_work(0., 0., .10), .10),
+        objects = {'box': self.on_work(0., 0., .08), 'can': self.on_work(0., 0., .10),
                    # lying across the closing direction (world Y): its axis along world X
-                   'stick': (self.work_point(0., 0., .007, Rotation.from_euler('y', 90, degrees=True).as_matrix()),
-                             .014)}
+                   'stick': self.work_point(0., 0., .007, Rotation.from_euler('y', 90, degrees=True).as_matrix())}
         results = {}
-        for body, (pose, height) in objects.items():
-            gap = self._grasp(body, pose, height)
+        for body, pose in objects.items():
+            gap = self._grasp(body, pose)
             lifted = self.ik(self.arm, translation(*self.tcp()[:3, 3] + [0., 0., .08], down(90)))
             self.move_joints(self.arm, lifted, 1.5)
             self.step(count=round(.5 / DT))
@@ -534,6 +604,125 @@ class Checker:
         result = {'objects': results}
         result['checks'] = {'held_without_slip': all(r['drift_m'] <= HOLD_DRIFT_LIMIT for r in results.values()),
                             'released': all(r['falls_when_released'] for r in results.values())}
+        return self.common(result)
+
+    def grasp_offset(self, trial):
+        """``(dx, dy, object yaw, grasp yaw)`` of grasp trial ``trial`` (m, deg; see ``GRASP_OFFSET``)."""
+        if trial == 0:
+            return 0., 0., 0., 0.
+        random = np.random.default_rng(trial)
+        dx, dy = random.uniform(-GRASP_OFFSET, GRASP_OFFSET, 2)
+        yaw = random.uniform(-GRASP_YAW, GRASP_YAW)
+        return float(dx), float(dy), float(yaw), float(yaw + random.uniform(-GRASP_YAW_ERROR, GRASP_YAW_ERROR))
+
+    def grasp_and_push(self):
+        """For each grasp trial, grasp each small tabletop object, lift it and push it with PUSH_FORCE at its
+        centre of mass in every direction in turn: it stays in the hand."""
+        random = np.random.default_rng(0).normal(size=(PUSH_RANDOM, 3))
+        directions = [sign * axis for axis in np.eye(3) for sign in (1., -1.)] + list(
+            random / np.linalg.norm(random, axis=1, keepdims=True))
+        ramp, hold = round(PUSH_RAMP / DT), round(PUSH_HOLD / DT)
+        trials = {}
+        for trial in self.trials:
+            dx, dy, yaw, grasp_yaw = self.grasp_offset(trial)
+            turn = Rotation.from_euler('z', yaw, degrees=True).as_matrix()
+            lying = Rotation.from_euler('y', 90, degrees=True).as_matrix()   # long axis across the closing
+            objects = {'cube1': self.work_point(dx, dy, .005, turn), 'cube4': self.work_point(dx, dy, .02, turn),
+                       'bar': self.work_point(dx, dy, .01, turn @ lying),
+                       # A lying PhysX cylinder turned about the vertical rolls away by itself: not turned.
+                       'rod': self.work_point(dx, dy, .01, lying), 'disc': self.work_point(dx, dy, .005, turn)}
+            results = {}
+            for body, pose in objects.items():
+                body_yaw = grasp_yaw - yaw if body == 'rod' else grasp_yaw
+                # Fingertips 1 mm above the table: the pads reach down the sides of a 1 cm object.
+                gap = self._grasp(body, pose, clearance=.001, yaw=body_yaw)
+                lifted = self.ik(self.arm, translation(*self.tcp()[:3, 3] + [0., 0., .08],
+                                                       Rotation.from_euler('z', body_yaw, degrees=True).as_matrix() @ down(90)))
+                self.move_joints(self.arm, lifted, 1.5)
+                self.step(count=round(.5 / DT))
+                relative = self.held(body)
+                drifts = []
+                for direction in directions:
+                    drift = 0.
+                    for k in range(1, ramp + hold + 1):
+                        self.env.push_shape(body, PUSH_FORCE * min(1., k / ramp) * direction)
+                        self.step()
+                        drift = max(drift, float(np.linalg.norm(self.held(body)[:3, 3] - relative[:3, 3])))
+                    self.env.push_shape(body, np.zeros(3))
+                    self.step(count=round(.3 / DT))
+                    drifts.append(drift)
+                    if drift > .03:    # dropped; pushing on would fling it
+                        break
+                results[body] = {'finger_gap_m': gap, 'drift_m': max(drifts), 'pushes': len(drifts),
+                                 'held': max(drifts) <= HOLD_DRIFT_LIMIT and len(drifts) == len(directions),
+                                 'drift_by_push_m': drifts, 'penetration_m': self.penetration(sub_case=True)}
+            trials[trial] = {'offset': {'dx_m': dx, 'dy_m': dy, 'object_yaw_deg': yaw, 'grasp_yaw_deg': grasp_yaw},
+                             'objects': results}
+        result = {'force_n': PUSH_FORCE, 'directions': [d.tolist() for d in directions], 'trials': trials,
+                  'report_only': list(PUSH_REPORT_ONLY)}
+        result['checks'] = {'held_without_slip': all(r['held'] for t in trials.values()
+                                                     for body, r in t['objects'].items() if body not in PUSH_REPORT_ONLY)}
+        # A dropped report-only object is still pushed off the hand: its speed is not a fling of the robot's.
+        dropped = {body for t in trials.values() for body, r in t['objects'].items()
+                   if body in PUSH_REPORT_ONLY and not r['held']}
+        return self.common(result, GRASP_PENETRATION_LIMIT, speed_exempt=dropped)
+
+    def finger_table_force(self, steps, action=None):
+        """Mean normal force (N) between the primary arm's fingers and the table over the next ``steps`` steps
+        of ``action`` (default: the current targets)."""
+        fingers = {f'robot.{link}' for link in self.spec.arms[self.arm].finger_links}
+        self.env.contacts.take_impulses()
+        self.step(action, count=steps)
+        impulse = sum(value for pair, value in self.env.contacts.take_impulses().items()
+                      if 'table' in pair and fingers & set(pair))
+        return impulse / (steps * DT)
+
+    def grasp_pressing_table(self):
+        """Close on a 4 cm cube with the fingers on the table, just touching or pressing with each of
+        PRESS_FORCES, for each approach tilt of PRESS_TILTS: the fingers stay within their limits and the cube
+        is neither flung nor pushed away."""
+        arm = self.spec.arms[self.arm]
+        limits = {joint: self.model.limits[self.model.index[joint]] for joint in arm.fingers}
+        open_gap = min(.07, arm.max_gap)
+        runs = {}
+        for tilt in PRESS_TILTS:
+            for target in PRESS_FORCES:
+                self.reset(cube4=self.on_work(0., 0., .04))
+                self.step(count=round(.5 / DT))
+                center = self.pose_of('cube4')[:3, 3]
+                touch = max(center[2], self.top + self.finger_reach(self.arm, open_gap))
+                self.step({self.gripper: [[open_gap]]}, count=round(.6 / DT))
+                self.move_joints(self.arm, self.ik(self.arm, translation(*center[:2], touch + .1, down(tilt))), 2.5)
+                # From 3 mm above the visual contact, down until the fingers touch or press with the target force.
+                depth, force = -.003, 0.
+                while depth < .02:
+                    self.move_joints(self.arm, self.ik(self.arm, translation(*center[:2], touch - depth, down(tilt))), .3)
+                    force = self.finger_table_force(5)
+                    if force > 0. and force >= target:
+                        break
+                    depth += PRESS_STEP
+                start = self.pose_of('cube4')[:3, 3].copy()
+                speed, peak, q_min, q_max = 0., 0., np.full(len(arm.fingers), np.inf), np.full(len(arm.fingers), -np.inf)
+                for _ in range(round(1. / DT)):
+                    peak = max(peak, self.finger_table_force(1, {self.gripper: [[0.]]}))
+                    speed = max(speed, float(np.linalg.norm(self.env.privileged()['velocities']['cube4'][0, :3])))
+                    q = self.q(arm.fingers)
+                    q_min, q_max = np.minimum(q_min, q), np.maximum(q_max, q)
+                margin = {j: FINGER_LIMIT_MARGIN * (high - low) for j, (low, high) in limits.items()}
+                within = all(limits[j][0] - margin[j] <= lo and hi <= limits[j][1] + margin[j]
+                             for j, lo, hi in zip(arm.fingers, q_min, q_max))
+                runs[f'tilt{tilt:g}_{target:g}n'] = {
+                    'depth_below_visual_contact_m': depth, 'force_before_closing_n': force, 'peak_force_closing_n': peak,
+                    'max_cube_speed': speed, 'cube_shift_m': float(np.linalg.norm(self.pose_of('cube4')[:3, 3] - start)),
+                    'finger_range': [[float(lo), float(hi)] for lo, hi in zip(q_min, q_max)], 'fingers_within_limits': within,
+                    'finger_gap_m': float(arm.gap(self.q(arm.fingers)))}
+        result = {'runs': runs}
+        # Touching is a force above zero; the depth limit reached in the air is not.
+        result['checks'] = {'pressed': all(r['force_before_closing_n'] > 0. and r['force_before_closing_n'] >= f
+                                           for r, f in zip(runs.values(), [f for _ in PRESS_TILTS for f in PRESS_FORCES])),
+                            'fingers_within_limits': all(r['fingers_within_limits'] for r in runs.values()),
+                            'cube_calm': all(r['max_cube_speed'] <= CALM_SPEED and r['cube_shift_m'] <= CALM_SHIFT
+                                             for r in runs.values())}
         return self.common(result)
 
     def base_into_wall(self):
@@ -580,7 +769,7 @@ class Checker:
 
     def drive_holding(self):
         """Hold a box, drive at full speed and stop: the box stays in the hand."""
-        self._grasp('box', self.on_work(0., 0., .08), .08)
+        self._grasp('box', self.on_work(0., 0., .08))
         lifted = self.ik(self.arm, translation(*self.tcp()[:3, 3] + [0., 0., .08], down(90)))
         self.move_joints(self.arm, lifted, 1.5)
         self.step(count=round(.5 / DT))
@@ -702,7 +891,7 @@ class Checker:
                 self.env.set_markers((frame[:3, :3] @ points.T).T + frame[:3, 3], radius)
                 seen = self.env.render([name])[name]
                 expected = project(sensor, points)
-                save_marked(self.output / 'sensors' / f'{name}_{pose}.jpg', seen, expected)
+                save_marked(self.output / f'{name}_{pose}.jpg', seen, expected)
                 seen = seen['depth'][0]
                 entry = {'markers': len(points)}
                 if sensor.kind == 'depth':
@@ -727,8 +916,6 @@ class Checker:
                                   and entry['self_view'] <= camera.self_view and entry['contrast'] >= CONTRAST_LIMIT)
                 result.setdefault(name, {})[pose] = entry
                 checks[f'{name}_{pose}'] = passed
-                if self.video:
-                    self.video.capture(f'{self.case} {name} {pose}')
         self.env.set_markers([], 0.)
         result['checks'] = checks
         return self.common(result)
@@ -846,57 +1033,6 @@ class Checker:
         self.move_joints(self.arm, self.ik(self.arm, self.work_point(0., -.10, .195, down(45))), 2.)
         moving = (self.env.timings['step_s'] - before) / (50 * SUBSTEPS) * 1e3
         return {'hold': hold, 'arm_moving': moving}
-
-
-def physics_ms(checker, actions):
-    """Median physics time per 4 ms step over the control steps of ``actions``."""
-    times = []
-    for action in actions:
-        before = checker.env.timings['step_s']
-        checker.step(action)
-        times.append((checker.env.timings['step_s'] - before) / SUBSTEPS * 1e3)
-    return float(np.median(times))
-
-
-def benchmark(checker, sweeps=3, samples=1000, plans=10, seed=0):
-    """Cost of the robot's collision geometry: physics while holding and while an
-    arm swings into the torso and back; planning collision checks and RRT."""
-    model, arm = checker.model, checker.spec.arms[checker.arm]
-    checker.reset()
-    checker.step(count=5)
-    hold = physics_ms(checker, [{}] * 75)
-    ready = checker.arm_q(checker.arm)
-    target, _ = checker.colliding_target(checker.arm, ready)
-    path = []
-    for _ in range(sweeps):
-        for start, goal in ((ready, target), (target, ready)):
-            path += [{checker.arm: (start + (goal - start) * k / 50)[None]} for k in range(1, 51)]
-    sweep = physics_ms(checker, path)
-    planner = model.planners[checker.arm]
-    rng = np.random.default_rng(seed)
-    configurations = []
-    for _ in range(samples):
-        q = model.q.copy()
-        for name in checker.spec.arms:
-            indices = model.arm_indices(name)
-            q[indices] = rng.uniform(*model.limits[indices].T)
-        configurations.append(q)
-    started = time.perf_counter()
-    for q in configurations:
-        planner.robot.set_qpos(q, True)
-        planner.check_for_self_collision()
-    check_us = (time.perf_counter() - started) / samples * 1e6
-    model.set_state()
-    free = [q for q in configurations if not model.self_collisions(q)]
-    times = []
-    for start, goal in zip(free[:plans], free[plans:2 * plans]):
-        model.set_state(dict(zip(model.joints, start)))
-        started = time.perf_counter()
-        model.plan_rrt(checker.arm, None, goals=[goal], planning_time=2.)
-        times.append(time.perf_counter() - started)
-    checker.reset()
-    return {'physics_hold_ms': hold, 'physics_self_contact_ms': sweep, 'self_collision_check_us': check_us,
-            'rrt_median_s': float(np.median(times))}
 
 
 def _pose_error(a, b):

@@ -95,8 +95,8 @@ class JointTargetActionCfg(ActionTermCfg):
 
 
 class GripperGapAction(ActionTerm):
-    """Pad gap ``g`` (m) -> finger targets ``sign * g / 2``; the drives close on their own and
-    contact stops them at the object."""
+    """Pad gap ``g`` (m) -> finger targets (:func:`table_1000.sim.control.finger_targets`); the drives
+    close on their own and contact stops them at the object."""
 
     def __init__(self, cfg, env):
         super().__init__(cfg, env)
@@ -114,14 +114,14 @@ class GripperGapAction(ActionTerm):
 
     @property
     def processed_actions(self):
-        return control.finger_targets(self.gap, self.signs, self.cfg.max_gap)
+        return control.finger_targets(self.gap, self.signs, self.cfg.max_gap, self.cfg.pivot)
 
     def hold_action(self):
         return self.gap.clone()
 
     def set_state(self, q, env_ids=slice(None)):
         """Gap of ``env_ids`` from finger positions ``q``."""
-        self.gap[env_ids] = (q * self.signs).sum(dim=1, keepdim=True)
+        self.gap[env_ids] = control.finger_gap(q, self.signs, self.cfg.pivot)
 
     def process_actions(self, actions):
         self.gap[:] = torch.clamp(actions, 0., self.cfg.max_gap)
@@ -141,6 +141,7 @@ class GripperGapActionCfg(ActionTermCfg):
     joint_names: tuple = MISSING
     signs: tuple = (1., -1.)
     max_gap: float = .1
+    pivot: tuple = None
 
 
 class BaseVelocityAction(ActionTerm):
@@ -246,5 +247,6 @@ def actions_cfg(spec, modes=None, asset='robot'):
         else:
             setattr(cfg, name, joints(arm.joints, modes[name]))
         setattr(cfg, f'{name}_gripper', GripperGapActionCfg(asset_name=asset, joint_names=tuple(arm.fingers),
-                                                            signs=tuple(arm.finger_signs), max_gap=arm.max_gap))
+                                                            signs=tuple(arm.finger_signs), max_gap=arm.max_gap,
+                                                            pivot=arm.finger_pivot))
     return cfg
