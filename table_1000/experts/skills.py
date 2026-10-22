@@ -40,8 +40,9 @@ gap must stop within ``HELD_TOLERANCE`` of the gap at which the pads touch the o
 object and chooses again (at most ``MAX_REGRASPS`` times). The grasped part then
 moves with the hand in the planning world until :func:`release`.
 
-**move_by_displacement** -- the TCP straight by a world displacement; straight up
-beyond the arm's reach, the torso lift rises and the arm does the rest. ``drag``
+**move_by_displacement** -- the TCP straight by a world displacement, with the torso
+lift too where the arm alone runs into a joint limit, or (``least``) as far along as
+plans; straight up beyond the arm's reach, the torso lift rises and the arm does the rest. ``drag``
 names a body moved through a joint by the held part (a drawer pulled by its
 handle): its planning objects move with the hand and may touch the rest of their
 object and whatever rests on them.
@@ -87,6 +88,7 @@ PLACE_ABOVE = .08       # m, place comes down from this high above the release p
 PLACE_CLEARANCE = .01   # m between the held object and the surface at the release
 MAX_PLACES = 24         # (spot, turn) options place tries
 RETREATS = (APPROACH, .03)   # m, back-off after releasing, tried in order
+PARTIALS = (.75, .5, .25)     # fractions of a straight move tried when all of it does not plan
 SHORT_RETREAT = .02     # m back along the approach that takes the fingers off what they held
 WHY_LIMIT = 20          # rejected grasps per choice whose collisions are counted for the report
 PUSH_GAP = .03          # m, push starts with the fingertips this far in front of the face
@@ -349,9 +351,10 @@ class Skills:
                       tcp_object=(np.linalg.inv(self.solvers[result['arm']].tcp()) @ after).tolist())
         return result
 
-    def move_by_displacement(self, arm, displacement, drag=None):
-        """The TCP straight by world ``displacement``; ``drag``: ``(object, body)`` moved through a
-        joint by the held part. Supports of the held object may be touched in this move only."""
+    def move_by_displacement(self, arm, displacement, drag=None, least=1.):
+        """The TCP straight by world ``displacement`` (or a part of it down to ``least``, see
+        :meth:`straight`); ``drag``: ``(object, body)`` moved through a joint by the held part.
+        Supports of the held object may be touched in this move only. Returns the fraction moved."""
         solver = self.solvers[arm]
         displacement = np.asarray(displacement, dtype=float)
         held = self.held.get(arm)
@@ -361,7 +364,7 @@ class Skills:
             solver.carry(dragged, contacts + riders)
             solver.carry(riders, contacts)
         try:
-            self.straight(arm, displacement)
+            return self.straight(arm, displacement, least)
         finally:
             if dragged:
                 solver.release(riders, contacts)
@@ -396,28 +399,39 @@ class Skills:
         return names, riders, [name for name in touching(carried, bodies, drag[0] + ':')
                                if name.split(':')[0] not in objects]
 
-    def straight(self, arm, displacement):
-        """Straight by ``displacement`` with the arm, else with the arm and the torso lift; straight
+    def straight(self, arm, displacement, least=1.):
+        """Straight by ``displacement`` with the arm, else with the arm and the torso lift, else
+        (``least`` < 1) by the largest of ``PARTIALS`` of it down to ``least`` that plans; straight
         up out of their reach (the arm may hit the body close to it), the torso lift rises, then
-        the arm does the rest, straight or along a planned path."""
+        the arm does the rest, straight or along a planned path. Returns the fraction moved."""
         solver, ctx = self.solvers[arm], self.ctx
-        target = translated(solver.tcp(), displacement)
+        start = solver.tcp()
+
+        def line(fraction):
+            target = translated(start, displacement * fraction)
+            try:
+                solver.move_to_pose_with_screw(target)
+            except PlanningFailed as error:
+                # Six arm joints alone may run into a limit along the line; the lift adds one more.
+                if error.reason not in ('joint_limit', 'no_progress', 'iteration_limit'):
+                    raise
+                solver.move_to_pose_with_screw(target, lift=True)
+
         try:
-            solver.move_to_pose_with_screw(target)
-            return
+            line(1.)
+            return 1.
         except PlanningFailed as error:
-            # Six arm joints alone may run into a limit along the line; the lift adds one more.
-            if error.reason not in ('joint_limit', 'no_progress', 'iteration_limit'):
-                failed = error
-            else:
-                try:
-                    solver.move_to_pose_with_screw(target, lift=True)
-                    return
-                except PlanningFailed as again:
-                    failed = again
-            if np.linalg.norm(displacement[:2]) > 1e-9 or displacement[2] <= 0.:
-                raise failed
-            straight = {'reason': failed.reason, 'collisions': failed.details.get('plan', {}).get('collisions')}
+            failed = error
+        for fraction in (f for f in PARTIALS if f >= least):
+            try:
+                line(fraction)
+                ctx.note('moved part way', fraction=fraction, reason=failed.reason)
+                return fraction
+            except PlanningFailed:
+                pass
+        if np.linalg.norm(displacement[:2]) > 1e-9 or displacement[2] <= 0.:
+            raise failed
+        straight = {'reason': failed.reason, 'collisions': failed.details.get('plan', {}).get('collisions')}
         rise = float(displacement[2])
         lift = ctx.env.qpos(ctx.spec.lift)[0]
         upper = self.model.limits[self.model.lift_indices(), 1]
@@ -429,7 +443,7 @@ class Skills:
         ctx.hold(.3)
         rest = rise - float(np.min(target - lift))
         if rest < .005:
-            return
+            return 1.
         up = translated(solver.tcp(), [0., 0., rest])
         held = self.held.get(arm)
         if held:
@@ -437,10 +451,11 @@ class Skills:
         for move in (solver.move_to_pose_with_screw, lambda pose: solver.move_to_pose_with_RRTConnect(pose, lift=True)):
             try:
                 move(up)
-                return
+                return 1.
             except PlanningFailed as error:
                 reason, collisions = error.reason, error.details.get('plan', {}).get('collisions')
         ctx.note('rise short', rest=rest, reason=reason, collisions=collisions)
+        return 1. - rest / rise
 
     def push(self, target, direction, distance, arm=None):
         """Push ``target`` (:class:`Target`) by ``distance`` along world ``direction``; see the
@@ -580,9 +595,10 @@ def pick(ctx, obj, part=None, *, arm=None, shape=None, offset=None, body=None, p
     return skills.pick(skills.target(obj, part, shape, offset, body), arm, point, approach, height)
 
 
-def move_by_displacement(ctx, arm, x=0., y=0., z=0., drag=None):
-    """Move ``arm``'s TCP straight by ``(x, y, z)`` (world); ``drag``: ``(object, body)`` moved by the held part."""
-    _skills(ctx).move_by_displacement(arm, (x, y, z), drag)
+def move_by_displacement(ctx, arm, x=0., y=0., z=0., drag=None, least=1.):
+    """Move ``arm``'s TCP straight by ``(x, y, z)`` (world), or part way down to the fraction
+    ``least``; ``drag``: ``(object, body)`` moved by the held part. Returns the fraction moved."""
+    return _skills(ctx).move_by_displacement(arm, (x, y, z), drag, least)
 
 
 def push(ctx, obj, part=None, *, direction, distance, arm=None, shape=None, offset=None, body=None):

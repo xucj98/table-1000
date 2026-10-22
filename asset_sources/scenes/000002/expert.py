@@ -17,6 +17,7 @@ OPENING = .16           # m a drawer is pulled out (stroke 0.173)
 OPEN_TOLERANCE = .02    # m short of OPENING still counts as open
 CLOSED = .005           # m
 PUSH_PAST = .003        # m pushed beyond the closed stop, so the drawer surely reaches it
+PULLS, PULL_LEAST = 3, .25  # grasps a drawer is slid open with at most; the least part of the rest one slides
 # Spots for the pen on the table: a grid in front of the robot (SPOT_AHEAD of its centre, within
 # the reach of a grasp from above), clear of the cabinet and of the drawers' pull-out space by
 # SPOT_MARGIN, nearest the pen first.
@@ -25,6 +26,9 @@ SPOT_MARGIN = .10
 # The pen goes into a drawer along its width, either way round, or turned a little; on the table it
 # may lie any way.
 DRAWER_TURNS = np.radians([0., 180., 20., -20., 160., 200.])
+# Along the drawer's front wall, PEN_INSET from it: the hand coming down keeps clear of the drawers
+# above, whose fronts and handles stand out over the open part.
+PEN_INSET = .035
 TABLE_TURNS = np.radians([0., 180., 90., -90.])
 DOWN = (0., 0., -1.)    # the pen is picked up from the table from above, to go down into the drawer
 
@@ -43,18 +47,23 @@ def pull(ctx, drawer, distance):
 
 
 def move_drawer(ctx, drawer, opening):
-    """Grasp the handle, slide the drawer to ``opening``, let go."""
-    move = pull(ctx, drawer, opening - ctx.joint('cabinet', slide(drawer)))
-    # Straight at the drawer face: pivoting fingers pinching the handle's ends from above slip off
-    # in the pull.
-    inward = ctx.pose('cabinet', body(drawer))[:3, 1]
-    held = skills.grasp(ctx, 'cabinet', f'{body(drawer)}.handle', then=move, approach=inward)
-    housing = ctx.pose('cabinet')[:3, 3]
-    skills.move_by_displacement(ctx, held['arm'], *move, drag=('cabinet', body(drawer)))
-    ctx.note('slid', drawer=drawer, opening=ctx.joint('cabinet', slide(drawer)),
-             cabinet_shift=float(np.linalg.norm(ctx.pose('cabinet')[:3, 3] - housing)),
-             finger_gap=ctx.solver(held['arm']).finger_gap())
-    skills.release(ctx, held['arm'])
+    """Grasp the handle, slide the drawer to ``opening``, let go; where the hand cannot follow the
+    handle all the way (the wrist bends to its limit as the handle nears the body), it slides it
+    part way, grasps again and goes on."""
+    for _ in range(PULLS):
+        move = pull(ctx, drawer, opening - ctx.joint('cabinet', slide(drawer)))
+        # Straight at the drawer face: pivoting fingers pinching the handle's ends from above slip
+        # off in the pull.
+        inward = ctx.pose('cabinet', body(drawer))[:3, 1]
+        held = skills.grasp(ctx, 'cabinet', f'{body(drawer)}.handle', then=move, approach=inward)
+        housing = ctx.pose('cabinet')[:3, 3]
+        moved = skills.move_by_displacement(ctx, held['arm'], *move, drag=('cabinet', body(drawer)), least=PULL_LEAST)
+        ctx.note('slid', drawer=drawer, opening=ctx.joint('cabinet', slide(drawer)), moved=moved,
+                 cabinet_shift=float(np.linalg.norm(ctx.pose('cabinet')[:3, 3] - housing)),
+                 finger_gap=ctx.solver(held['arm']).finger_gap())
+        skills.release(ctx, held['arm'])
+        if moved == 1.:
+            return
 
 
 def open_drawer(ctx, drawer):
@@ -128,7 +137,7 @@ def solve(ctx):
         skills.pick(ctx, 'pen', approach=DOWN)
     with ctx.subtask('put the pen into the bottom drawer'):
         frame, (x0, y0), (x1, y1), floor, rear = drawer_box(ctx, BOTTOM)
-        spot = frame @ [(x0 + x1) / 2, (y0 + y1) / 2, floor, 1.]
+        spot = frame @ [(x0 + x1) / 2, min(y0 + PEN_INSET, (y0 + y1) / 2), floor, 1.]
         skills.place(ctx, 'pen', [spot[:3]], heading=frame[:3, 0], turns=DRAWER_TURNS)
         local = (np.linalg.inv(frame) @ ctx.pose('pen', 'body'))[:3, 3]
         if not (x0 <= local[0] <= x1 and y0 <= local[1] <= rear and local[2] < floor + .03):
