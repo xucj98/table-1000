@@ -1,29 +1,25 @@
 """Pick-skill coverage on X1Pro: random trials or given placements, with optional videos.
 
-``uv run python scripts/experts/eval_pick.py --trials 200 --gpus 0 1 --jobs-per-gpu 4 --output outputs/grasp-exp/eval``
+``uv run python scripts/experts/eval_pick.py --trials 200 --gpus 0 1 --jobs 8 --output outputs/grasp-exp/eval``
 ``uv run python scripts/experts/eval_pick.py --case cube1 0.62 0.37 0 standing --video --output ...``
 
 Random trials cycle through the test objects (``table_1000/experts/pick_eval.py``),
 each placed by its seed anywhere on the table, or with ``--scenario`` among obstacles
 (``box``: in an open box, ``side``/``back``/``corner``: walls beside and behind it). ``--case NAME X Y YAW POSE`` (world
 frame: table centre at the origin, robot on the -Y side) runs given placements.
-Each part writes ``reports.jsonl``; the batch writes ``summary.json`` (success by
-object and failure reasons) and ``trials.jsonl`` into ``--output``. ``--video``
-records every trial as ``videos/<index>_<object>.mp4`` (a wide and a close view
-side by side).
-
-``--parts N --launcher PREFIX`` runs the N parts at once, each as ``PREFIX bash -c <part command>``
-instead of on ``--gpus``: a job scheduler that waits for a free GPU and sets
-``CUDA_VISIBLE_DEVICES`` to it, e.g. ``--launcher "srun --gres=gpu:1"``.
+The trials run in ``--jobs`` processes at once: spread over ``--gpus`` (default one per
+GPU), or each submitted through ``--launcher PREFIX``, a job scheduler that picks its GPU
+and sets ``CUDA_VISIBLE_DEVICES`` (e.g. ``--launcher "srun --gres=gpu:1"``, default 16
+jobs). Each trial writes ``trials/<index>.json``; trials whose process died before that run
+again (``--retries``, default 1). The batch writes ``summary.json`` (success by object and
+failure reasons) and ``trials.jsonl`` into ``--output``. ``--video`` records every trial as
+``videos/<index>_<object>_<status>.mp4`` (a wide and a close view side by side).
 """
 
 import argparse
 import json
-import os
 from pathlib import Path
-import shlex
 import shutil
-import subprocess
 import sys
 import time
 import traceback
@@ -32,6 +28,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 WIDE = {'position': (1.5, -1.45, 1.6), 'target': (0., -.1, .8), 'focal_length_mm': 18, 'resolution': (960, 720)}
+LAUNCHED_JOBS = 16
 CLOSE = {'position': (.5, .6, 1.2), 'target': (0., 0., .8), 'focal_length_mm': 24, 'resolution': (960, 720)}
 
 
@@ -50,57 +47,73 @@ def tasks(args):
             for index in range(args.trials)]
 
 
+class Recorder:
+    """Every step's frame of the env's views side by side, captioned, saved under ``frames``."""
+
+    def __init__(self, env, views, frames):
+        self.env, self.views, self.frames, self.count = env, list(views), Path(frames), 0
+        shutil.rmtree(self.frames, ignore_errors=True)
+        self.frames.mkdir(parents=True)
+
+    def capture(self, text):
+        from PIL import Image
+        from table_1000.sim.isaaclab.video import caption, save_frame, tile
+        rendered = self.env.render(self.views)
+        images = [Image.fromarray(rendered[name]['rgb'][0]) for name in self.views]
+        save_frame(caption(tile(images, images[0].height), text), self.frames / f'{self.count:05d}.jpg')
+        self.count += 1
+
+
+def trial_path(output, index):
+    return output / 'trials' / f'{index:04d}.json'
+
+
 def worker(args):
+    """Run trials ``args.indices``, each writing ``trials/<index>.json`` (and with ``--video`` a video)."""
+    from table_1000.scenes.batch import worker_gpu
     from table_1000.sim.isaaclab.app import start_app
-    # Without --gpu (run by a --launcher): the one GPU the scheduler made visible.
-    gpu = args.gpu if args.gpu is not None else int(os.environ.get('CUDA_VISIBLE_DEVICES', '0'))
-    app = start_app(gpu=gpu, workers=4, cameras=args.video)
+    app = start_app(gpu=worker_gpu(args.gpu), workers=4, cameras=args.video)
     failed = False
     evaluator = None
     work = args.work
     work.mkdir(parents=True, exist_ok=True)
     try:
-        import numpy as np
         from table_1000.experts.pick_eval import Evaluator, scene
-        from table_1000.sim.isaaclab.video import Video
+        from table_1000.sim.isaaclab.video import encode
         views = {'wide': WIDE, 'close': CLOSE} if args.video else {}
-        evaluator = Evaluator(scene(args.gap, args.lift, robot=args.robot, scenario=args.scenario), args.assets, work, ROOT, views,
-                              args.random_pushes)
+        evaluator = Evaluator(scene(args.gap, args.lift, robot=args.robot, scenario=args.scenario), args.assets, work, ROOT,
+                              views, args.random_pushes)
         selected = set(args.indices)
-        with open(work / 'reports.jsonl', 'a') as out:
-            for index, name, placement in tasks(args):
-                if index not in selected:
-                    continue
-                video = None
-                if args.video:
-                    camera = evaluator.env.env.scene['close']
-                    import torch
-                    side = 1. if placement['x'] >= 0 else -1.
-                    target = [placement['x'], placement['y'], .80]
-                    eye = [placement['x'] + side * .35, placement['y'] + .30, 1.05]
-                    obstacles = placement.get('obstacles', {})
-                    if obstacles:   # look from the open side, past the walls
-                        if 'wall_side' in obstacles:
-                            side = -1. if obstacles['wall_side'][0][3] > placement['x'] else 1.
-                        eye = [placement['x'] + side * .3, placement['y'] - .12, 1.15]
-                    camera.set_world_poses_from_view(torch.tensor([eye], dtype=torch.float32),
-                                                     torch.tensor([target], dtype=torch.float32))
-                    shutil.rmtree(work / 'frames', ignore_errors=True)
-                    video = Video(evaluator.env, list(views), work / 'frames', 25)
-                report = evaluator.trial(name, placement, args.seed * 100000 + index, video)
-                report['index'] = index
-                out.write(json.dumps(report, default=float) + '\n')
-                out.flush()
-                print(index, name, placement['pose'], report['status'], report.get('failure', {}).get('reason', ''),
-                      f"{report['wall_s']:.0f} s", flush=True)
-                if video is not None:
-                    destination = args.output / 'videos'
-                    destination.mkdir(parents=True, exist_ok=True)
-                    files = video.encode(work / 'frames')
-                    subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-y', '-i', files['wide'], '-i',
-                                    files['close'], '-filter_complex', 'hstack=inputs=2', '-c:v', 'libx264',
-                                    '-pix_fmt', 'yuv420p', '-crf', '23',
-                                    str(destination / f'{index:03d}_{name}_{report["status"]}.mp4')], check=True)
+        for index, name, placement in tasks(args):
+            if index not in selected:
+                continue
+            video = None
+            if args.video:
+                camera = evaluator.env.env.scene['close']
+                import torch
+                side = 1. if placement['x'] >= 0 else -1.
+                target = [placement['x'], placement['y'], .80]
+                eye = [placement['x'] + side * .35, placement['y'] + .30, 1.05]
+                obstacles = placement.get('obstacles', {})
+                if obstacles:   # look from the open side, past the walls
+                    if 'wall_side' in obstacles:
+                        side = -1. if obstacles['wall_side'][0][3] > placement['x'] else 1.
+                    eye = [placement['x'] + side * .3, placement['y'] - .12, 1.15]
+                camera.set_world_poses_from_view(torch.tensor([eye], dtype=torch.float32),
+                                                 torch.tensor([target], dtype=torch.float32))
+                video = Recorder(evaluator.env, views, work / 'frames')
+            report = evaluator.trial(name, placement, args.seed * 100000 + index, video)
+            report['index'] = index
+            if video is not None:
+                destination = args.output / 'videos'
+                destination.mkdir(parents=True, exist_ok=True)
+                encode(work / 'frames', 25, destination / f'{index:03d}_{name}_{report["status"]}.mp4')
+            path = trial_path(args.output, index)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.with_suffix('.part').write_text(json.dumps(report, default=float))
+            path.with_suffix('.part').replace(path)
+            print(index, name, placement['pose'], report['status'], report.get('failure', {}).get('reason', ''),
+                  f"{report['wall_s']:.0f} s", flush=True)
     except Exception:
         traceback.print_exc()
         failed = True
@@ -134,29 +147,6 @@ def summarize(reports):
             'mean_wall_s': float(np.mean([r['wall_s'] for r in reports])) if reports else None}
 
 
-def run_launched(jobs, chunks, args):
-    """Run the parts at once, each through ``args.launcher``; returns the parts that did not report
-    every trial."""
-    from concurrent.futures import ThreadPoolExecutor
-    (args.output / 'parts').mkdir(parents=True, exist_ok=True)
-
-    def run(job):
-        command, log, label = job
-        line = f'{args.launcher} bash -c {shlex.quote(f"{shlex.join(command)} > {shlex.quote(str(log))} 2>&1")}'
-        print('START', label, flush=True)
-        code = subprocess.run(line, shell=True, cwd=ROOT).returncode
-        print('DONE' if code == 0 else 'FAILED', label, log, flush=True)
-
-    with ThreadPoolExecutor(len(jobs)) as pool:
-        list(pool.map(run, jobs))
-    failed = []
-    for (_, _, label), chunk in zip(jobs, chunks):
-        reports = args.output / 'parts' / label / 'reports.jsonl'
-        if not reports.exists() or len(reports.read_text().splitlines()) < len(chunk):
-            failed.append(label)
-    return failed
-
-
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--trials', type=int, default=0)
@@ -173,11 +163,12 @@ def main(argv=None):
                         help='random push directions after the six axes (0: a quicker run)')
     parser.add_argument('--robot', default='x1pro', help='robot name (asset_sources/robots/<name>)')
     parser.add_argument('--assets', type=Path, default=ROOT / 'assets', help='asset root holding robots/<name>')
-    parser.add_argument('--gpus', type=int, nargs='+', default=[0])
-    parser.add_argument('--parts', type=int, help='parts run through --launcher (default: one per --gpus slot)')
-    parser.add_argument('--launcher', help='command prefix running a part on a free GPU it sets '
-                        'CUDA_VISIBLE_DEVICES to (a job scheduler), instead of running on --gpus')
-    parser.add_argument('--jobs-per-gpu', type=int, default=1)
+    parser.add_argument('--jobs', type=int,
+                        help=f'processes at once (default: one per --gpus; {LAUNCHED_JOBS} with --launcher)')
+    parser.add_argument('--gpus', type=int, nargs='+', help='local GPUs (default 0); not with --launcher')
+    parser.add_argument('--launcher', help='command prefix of a job scheduler that runs a process on a free GPU '
+                        'it sets CUDA_VISIBLE_DEVICES to; instead of --gpus')
+    parser.add_argument('--retries', type=int, default=1, help='reruns of trials whose process died before their report')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--indices', type=int, nargs='+', help=argparse.SUPPRESS)
@@ -188,7 +179,10 @@ def main(argv=None):
     if args.worker:
         worker(args)
         return
-    from table_1000.scenes.batch import run_parts, split
+    if args.launcher and args.gpus:
+        parser.error('--gpus runs locally; with --launcher the scheduler picks the GPUs')
+    args.gpus = args.gpus or [0]
+    from table_1000.scenes.batch import run_batch
     indices = [index for index, _, _ in tasks(args) if args.select is None or index in args.select]
     if not indices:
         parser.error('give --trials or --case')
@@ -205,22 +199,20 @@ def main(argv=None):
     if args.video:
         passthrough.append('--video')
     passthrough += ['--random-pushes', str(args.random_pushes)]
-    jobs = []
-    if args.parts and not args.launcher:
-        parser.error('--parts needs --launcher')
-    chunks = split(indices, args.parts or len(args.gpus) * args.jobs_per_gpu)
-    for part, chunk in enumerate(chunks):
-        work = args.output / 'parts' / f'part{part}'
-        command = [sys.executable, str(Path(__file__).resolve()), '--worker', '--work', str(work),
-                   '--indices', *map(str, chunk), *passthrough]
-        jobs.append((command, args.output / 'parts' / f'part{part}.log', f'part{part}'))
+
+    def command(group, index, attempt):
+        name = f'part{index}' + (f'-retry{attempt}' if attempt else '')
+        work = args.output / 'parts' / name
+        argv = [sys.executable, str(Path(__file__).resolve()), '--worker', '--work', str(work),
+                '--indices', *map(str, sorted(group)), *passthrough]
+        return argv, args.output / 'parts' / f'{name}.log', name
+
     started = time.perf_counter()
-    if args.launcher:
-        failed = run_launched(jobs, chunks, args)
-    else:
-        failed = run_parts(jobs, args.gpus, args.jobs_per_gpu)
-    reports = [json.loads(line) for path in sorted((args.output / 'parts').glob('part*/reports.jsonl'))
-               for line in path.read_text().splitlines()]
+    missing = run_batch(indices, key=lambda index: 0, cost=lambda index: 1., count=args.jobs or (
+                            LAUNCHED_JOBS if args.launcher else len(args.gpus)),
+                        command=command, missing=lambda index: not trial_path(args.output, index).exists(),
+                        gpus=args.gpus, launcher=args.launcher, retries=args.retries)
+    reports = [json.loads(trial_path(args.output, index).read_text()) for index in indices if index not in missing]
     reports.sort(key=lambda report: report['index'])
     with open(args.output / 'trials.jsonl', 'w') as out:
         for report in reports:
@@ -230,8 +222,8 @@ def main(argv=None):
                'total_s': time.perf_counter() - started}
     (args.output / 'summary.json').write_text(json.dumps(summary, indent=1, default=float) + '\n')
     print(json.dumps({key: summary[key] for key in ('trials', 'success', 'rate', 'by_object')}, indent=1))
-    if failed:
-        raise SystemExit('failed: ' + ', '.join(failed))
+    if missing:
+        raise SystemExit(f'no report of trials {missing}; see {args.output / "parts"}')
 
 
 if __name__ == '__main__':

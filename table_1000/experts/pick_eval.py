@@ -251,7 +251,7 @@ class Evaluator:
 
     def trial(self, name, placement, seed, video=None):
         """Pick object ``name`` placed by ``placement`` (see :func:`sample`); returns the report.
-        ``video``: a :class:`~table_1000.sim.isaaclab.video.Video` capturing every step."""
+        ``video``: an object whose ``capture(caption)`` is called after every step (a frame recorder)."""
         import mplib.pymp
         import torch
         from table_1000.experts.context import Context, ExpertFailed
