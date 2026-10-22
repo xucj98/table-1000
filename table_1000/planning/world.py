@@ -212,6 +212,13 @@ class PlanningScene:
                 world.remove_object(name)
         self.objects, self.poses, self.permissions = {}, {}, set()
 
+    def set_frame(self, frame):
+        """The planner's frame from the world (the robot's base moved): objects re-placed in it."""
+        self.frame = np.asarray(frame, dtype=float)
+        for name, world_pose in self.poses.items():
+            if not self.planner.planning_world.is_object_attached(name):
+                self.set_pose(name, world_pose)
+
     def update(self, body_poses):
         """``body_poses`` maps a body key (``prefix + body``) to its world 4x4."""
         for name, obj in self.objects.items():

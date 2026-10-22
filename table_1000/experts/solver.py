@@ -69,7 +69,10 @@ class MotionSolver:
         return objects
 
     def sync(self):
-        """Move planning objects to their live poses."""
+        """Move planning objects to their live poses (and all of them where the base moved)."""
+        frame = np.linalg.inv(self.model.base)
+        if not np.allclose(frame, self.world.frame, atol=1e-6):
+            self.world.set_frame(frame)
         self.world.update(self.ctx.poses())
 
     def allow(self, names, allowed=True):

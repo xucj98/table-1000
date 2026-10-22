@@ -5,19 +5,24 @@ drawer; open the bottom drawer, pick the pen up from the table, put it in, close
 it. Written with the atomic skills of :mod:`table_1000.experts.skills` alone:
 each skill chooses the arm (the nearer that reaches), the grasp and its motion
 from the live poses and the assets' geometry, so this file only says what to do
-and where.
+and where. Before reaching into the cabinet the base backs off or turns to where
+the hand reaches with room (make_room); on the table it stands where it started.
 """
 
 import numpy as np
 
 from table_1000.experts import skills
+from table_1000.experts.context import ExpertFailed
+from table_1000.experts.grasps import translated
 
 TOP, BOTTOM = 'drawer1', 'drawer3'
 OPENING = .16           # m a drawer is pulled out (stroke 0.173)
 OPEN_TOLERANCE = .02    # m short of OPENING still counts as open
 CLOSED = .005           # m
 PUSH_PAST = .003        # m pushed beyond the closed stop, so the drawer surely reaches it
-HANDLE_ANGLE = np.radians(10.)  # the most a handle grasp may turn from straight at the drawer
+# The most a handle grasp may turn from straight at the drawer: tilted, pivoting fingers pinching the
+# handle's ends may slip off; a low handle is reached tilted down.
+HANDLE_ANGLES = np.radians([10., 30.])
 PULLS, PULL_LEAST = 3, .25  # grasps a drawer is slid open with at most; the least part of the rest one slides
 # Where the pen may go on the table: in front of the robot (SPOT_AHEAD of its centre, within the
 # reach of a grasp from above), clear of the cabinet and of the drawers' pull-out space by
@@ -27,6 +32,7 @@ SPOT_MARGIN = .10
 # The pen is picked up from the table from above, leaning PICK_TILT about its axis with the wrist
 # toward the robot: put down along the drawer's width it then leans away from the drawers above.
 PICK_TILT = np.radians(25.)
+APPROACH_HEIGHT = .05   # m above a spot, the hand pose the base is placed to reach
 
 
 def slide(drawer):
@@ -42,17 +48,49 @@ def pull(ctx, drawer, distance):
     return -ctx.pose('cabinet', body(drawer))[:3, 1] * distance
 
 
+def tcp_pose(position, approach, closing):
+    """World TCP pose at ``position`` approaching along ``approach``, the fingers closing along ``closing``."""
+    pose = np.eye(4)
+    pose[:3, :3] = np.c_[approach, closing, np.cross(approach, closing)]
+    pose[:3, 3] = position
+    return pose
+
+
+def handle_poses(ctx, drawer, opening):
+    """Hand poses on ``drawer``'s handle straight at it, before and after sliding it to ``opening``."""
+    frame = ctx.pose('cabinet', body(drawer))
+    box, _ = ctx.part_box('cabinet', f'{body(drawer)}.handle', body(drawer))
+    grasp = tcp_pose(box[:3, 3], frame[:3, 1], frame[:3, 0])
+    return [grasp, translated(grasp, pull(ctx, drawer, opening - ctx.joint('cabinet', slide(drawer))))]
+
+
+def above(position, across):
+    """Hand pose straight down at ``position`` (lifted by APPROACH_HEIGHT), the fingers closing ``across``."""
+    return tcp_pose(np.asarray(position, dtype=float) + [0., 0., APPROACH_HEIGHT], [0., 0., -1.], across)
+
+
+def grasp_handle(ctx, drawer, move, inward):
+    """Grasp ``drawer``'s handle within the first of HANDLE_ANGLES of straight at it that reaches."""
+    for limit in HANDLE_ANGLES:
+        try:
+            return skills.grasp(ctx, 'cabinet', f'{body(drawer)}.handle', then=move, approach=inward,
+                                max_angle=limit)
+        except ExpertFailed as failure:
+            if failure.reason != 'no reachable grasp' or limit == HANDLE_ANGLES[-1]:
+                raise
+
+
 def move_drawer(ctx, drawer, opening):
     """Grasp the handle, slide the drawer to ``opening``, let go; where the hand cannot follow the
     handle all the way (the wrist bends to its limit as the handle nears the body), it slides it
     part way, grasps again and goes on."""
     for _ in range(PULLS):
+        skills.make_room(ctx, handle_poses(ctx, drawer, opening))
         move = pull(ctx, drawer, opening - ctx.joint('cabinet', slide(drawer)))
         # Straight at the drawer face: pivoting fingers pinching the handle's ends from above (even
         # 15 degrees) slip off.
         inward = ctx.pose('cabinet', body(drawer))[:3, 1]
-        held = skills.grasp(ctx, 'cabinet', f'{body(drawer)}.handle', then=move, approach=inward,
-                            max_angle=HANDLE_ANGLE)
+        held = grasp_handle(ctx, drawer, move, inward)
         housing = ctx.pose('cabinet')[:3, 3]
         moved = skills.move_by_displacement(ctx, held['arm'], *move, drag=('cabinet', body(drawer)), least=PULL_LEAST)
         ctx.note('slid', drawer=drawer, opening=ctx.joint('cabinet', slide(drawer)), moved=moved,
@@ -126,14 +164,22 @@ def put_in_drawer(ctx, drawer):
     surface = frame @ np.r_[np.c_[np.eye(3), [0., 0., floor]], [[0., 0., 0., 1.]]]
     # Nearest the middle of the front wall: the hand coming down keeps clear of the drawers above,
     # whose fronts and handles stand out over the open part.
-    skills.retry(ctx, lambda: skills.place(ctx, 'pen', (surface, (x0, y0), (x1, y1)),
-                                           near=(frame @ [(x0 + x1) / 2, y0, floor, 1.])[:3]))
+    near = (frame @ [(x0 + x1) / 2, y0, floor, 1.])[:3]
+    skills.make_room(ctx, [above(near, frame[:3, 1])])
+    skills.retry(ctx, lambda: skills.place(ctx, 'pen', (surface, (x0, y0), (x1, y1)), near=near))
     local = (np.linalg.inv(frame) @ ctx.pose('pen', 'body'))[:3, 3]
     if not (x0 <= local[0] <= x1 and y0 <= local[1] <= rear and local[2] < floor + .03):
         ctx.fail('pen not in the drawer', pen_in_drawer=local.tolist())
 
 
+def take_out(ctx):
+    pen = ctx.pose('pen', 'body')
+    skills.make_room(ctx, [above(pen[:3, 3], np.cross([0., 0., 1.], pen[:3, 0]))])
+    skills.pick(ctx, 'pen')
+
+
 def put_on_table(ctx):
+    skills.make_room(ctx, [])       # the spots are in front of the robot where it stood
     region, keep_out = table_region(ctx)
     skills.place(ctx, 'pen', region, keep_out=keep_out, near=ctx.pose('pen', 'body')[:3, 3])
 
@@ -143,7 +189,7 @@ def solve(ctx):
     with ctx.subtask('open the top drawer of the cabinet'):
         skills.retry(ctx, lambda: open_drawer(ctx, TOP))
     with ctx.subtask('take the pen out of the top drawer'):
-        skills.retry(ctx, lambda: skills.pick(ctx, 'pen'))
+        skills.retry(ctx, lambda: take_out(ctx))
     with ctx.subtask('put the pen on the table'):
         skills.retry(ctx, lambda: put_on_table(ctx))
     with ctx.subtask('close the top drawer'):
@@ -151,6 +197,7 @@ def solve(ctx):
     with ctx.subtask('open the bottom drawer of the cabinet'):
         skills.retry(ctx, lambda: open_drawer(ctx, BOTTOM))
     with ctx.subtask('pick up the pen from the table'):
+        skills.make_room(ctx, [])
         skills.retry(ctx, lambda: skills.pick(ctx, 'pen', approach=pick_from_above(ctx)))
     with ctx.subtask('put the pen into the bottom drawer'):
         put_in_drawer(ctx, BOTTOM)

@@ -63,6 +63,10 @@ IK screens them (``MAX_PLACE_IK``), and the first of those that has a motion
 (``MAX_PLACES`` planned) is taken: above it, straight down to ``clearance`` over the
 surface, then :func:`release`.
 
+**make_room** -- move the base (backed off along its start heading, turned) to the
+least move from where given TCP poses are reachable with every joint a margin inside
+its limits (``move_base`` drives it straight and turns it in place).
+
 **retry** -- a step run again when it fails (``ATTEMPTS`` in all), the arms that hold
 nothing back at their start pose first, so that its choices start afresh.
 
@@ -92,6 +96,15 @@ SUPPORT_DISTANCE = .003 # m, planning objects this close to the grasped one supp
 PLACE_ABOVE = .08       # m, place comes down from this high above the release pose
 PLACE_CLEARANCE = .01   # m between the held object and the surface at the release
 ATTEMPTS = 3            # tries of a step under retry
+# The base drives at most BASE_SPEED (m/s) and turns at most BASE_TURN (rad/s), proportionally to the
+# error (BASE_GAIN) until within BASE_TOLERANCE (m, rad), then settles for BASE_SETTLE s. make_room
+# tries it BASE_BACKS (m) behind its start and turned by BASE_TURNS (deg), for every joint
+# BASE_MARGIN (rad) inside its limits.
+BASE_SPEED, BASE_TURN, BASE_GAIN = .15, .4, 2.
+BASE_TOLERANCE, BASE_SETTLE = (.005, np.radians(1.)), .5
+BASE_BACKS = (0., .05, .10, .15, .20)
+BASE_TURNS = (0., 10., -10., 20., -20.)
+BASE_MARGIN = .25
 MAX_PLACES = 8          # placements whose motion place plans
 MAX_PLACE_IK = 150      # placements place checks by IK
 PLACE_STEP = .02        # m between the positions place samples in its region
@@ -158,6 +171,7 @@ class Skills:
                                                                    merged=ctx.geometry[name].solid)]
                     solver.world.allow(parts, parts)
         self.home = self.model.q.copy()     # the arms' poses at the start, to return to (see ready)
+        self.start_base = self.base_pose() if ctx.spec.base else None
         self.held = {}      # arm -> {'target', 'supports', 'grasp'}
         self.log, self.rejected = [], {}
 
@@ -575,6 +589,100 @@ class Skills:
         options.sort(key=lambda option: (round(option[0] / step), option[1]))
         return [(pose, spot) for _, _, pose, spot in options]
 
+    # -- the base --------------------------------------------------------------------------
+    def base_pose(self):
+        return np.asarray(self.ctx.env.obs['agent']['base_pose'][0], dtype=float)
+
+    def move_base(self, forward=0., turn=0.):
+        """Drive the base straight by ``forward`` (m along its heading, back when negative), then turn
+        it in place by ``turn`` (rad); the arms keep their joints."""
+        ctx = self.ctx
+        x, y, yaw = self.base_pose()
+        goal, heading = np.array([x, y]) + forward * np.array([np.cos(yaw), np.sin(yaw)]), yaw + turn
+
+        def wrapped(angle):
+            return float((angle + np.pi) % (2 * np.pi) - np.pi)
+
+        limit = steps(abs(forward) / BASE_SPEED + abs(turn) / BASE_TURN + BASE_SETTLE)
+        for _ in range(limit):
+            x, y, now = self.base_pose()
+            along = float((goal - [x, y]) @ [np.cos(now), np.sin(now)])
+            if abs(along) < BASE_TOLERANCE[0]:
+                break
+            ctx.step({'base': [[np.clip(BASE_GAIN * along, -BASE_SPEED, BASE_SPEED),
+                                np.clip(BASE_GAIN * wrapped(yaw - now), -BASE_TURN, BASE_TURN)]]})
+        for _ in range(limit):
+            error = wrapped(heading - self.base_pose()[2])
+            if abs(error) < BASE_TOLERANCE[1]:
+                break
+            ctx.step({'base': [[0., np.clip(BASE_GAIN * error, -BASE_TURN, BASE_TURN)]]})
+        ctx.step({'base': [[0., 0.]]})
+        ctx.hold(BASE_SETTLE)
+        for solver in self.solvers.values():
+            solver.sync()
+        ctx.note('base moved', forward=forward, turn=turn, pose=self.base_pose().tolist())
+
+    def base_for(self, poses, arms=None):
+        """``(back, turn)`` from the episode's start pose of the base (backed off along its start
+        heading, then turned) from where one of ``arms`` reaches every world TCP pose of ``poses``
+        with each joint ``BASE_MARGIN`` inside its limits; the least move that does, else the
+        widest margin."""
+        model, arms = self.model, [a for a in (arms or self.arms) if a not in self.held]
+        actual = model.base.copy()
+        best, widest = None, -np.inf
+        try:
+            for back, turn in sorted(((b, t) for b in BASE_BACKS for t in np.radians(BASE_TURNS)),
+                                     key=lambda option: option[0] / .05 + abs(option[1]) / np.radians(10.)):
+                model.base = self.base_at(back, turn)
+                margin = -np.inf
+                for arm in arms:
+                    self.solvers[arm].sync()
+                    indices = model.arm_indices(arm)
+                    worst = np.inf
+                    for pose in poses:
+                        status, q = model.ik(arm, pose, world=True, lift=True, attempts=IK_ATTEMPTS)
+                        if status != 'Success':
+                            worst = -np.inf
+                            break
+                        worst = min(worst, float(np.min(np.minimum(q[indices] - model.limits[indices, 0],
+                                                                   model.limits[indices, 1] - q[indices]))))
+                    margin = max(margin, worst)
+                if margin >= BASE_MARGIN:
+                    return back, turn
+                if margin > widest:
+                    best, widest = (back, turn), margin
+        finally:
+            model.base = actual
+            for solver in self.solvers.values():
+                solver.sync()
+        return best
+
+    def base_at(self, back, turn):
+        """World pose of the root link with the base ``back`` behind its start pose, turned by ``turn``."""
+        x, y, yaw = self.start_base
+        transform = self.model.base.copy()
+        transform[:3, :3] = Rotation.from_euler('z', yaw + turn).as_matrix()
+        transform[:2, 3] = np.array([x, y]) - back * np.array([np.cos(yaw), np.sin(yaw)])
+        return transform
+
+    def make_room(self, poses, arms=None):
+        """Move the base (see :meth:`base_for`) to where ``poses`` are reachable with a margin:
+        back to the start heading, along it, then turned."""
+        if not self.ctx.spec.base:
+            return
+        chosen = self.base_for(poses, arms)
+        if chosen is None:
+            return
+        back, turn = chosen
+        x, y, yaw = self.base_pose()
+        x0, y0, yaw0 = self.start_base
+        now_back = float(([x0, y0] - np.array([x, y])) @ [np.cos(yaw0), np.sin(yaw0)])
+        now_turn = float((yaw - yaw0 + np.pi) % (2 * np.pi) - np.pi)
+        if abs(now_back - back) < BASE_TOLERANCE[0] * 2 and abs(now_turn - turn) < BASE_TOLERANCE[1] * 2:
+            return
+        self.move_base(0., -now_turn)
+        self.move_base(now_back - back, turn)
+
     def ready(self):
         """Back to the start pose with each arm holding nothing (a planned move; skipped where it
         does not plan), the fingers open."""
@@ -641,6 +749,11 @@ class Skills:
 
 def _skills(ctx):
     return ctx.skills()
+
+
+def make_room(ctx, poses, arms=None):
+    """Move the base to where the world TCP ``poses`` are reachable with a margin (see :meth:`Skills.make_room`)."""
+    _skills(ctx).make_room(poses, arms)
 
 
 def retry(ctx, step, attempts=ATTEMPTS):
