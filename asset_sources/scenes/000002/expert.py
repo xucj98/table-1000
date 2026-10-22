@@ -88,7 +88,7 @@ def move_drawer(ctx, drawer, opening):
     handle all the way (the wrist bends to its limit as the handle nears the body), it slides it
     part way, grasps again and goes on."""
     for _ in range(PULLS):
-        skills.make_room(ctx, handle_poses(ctx, drawer, opening))
+        skills.make_room(ctx, handle_poses(ctx, drawer, opening), path=True)
         move = pull(ctx, drawer, opening - ctx.joint('cabinet', slide(drawer)))
         # Straight at the drawer face: pivoting fingers pinching the handle's ends from above (even
         # 15 degrees) slip off.

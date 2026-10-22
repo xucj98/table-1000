@@ -645,11 +645,12 @@ class Skills:
             solver.sync()
         ctx.note('base moved', forward=forward, turn=turn, pose=self.base_pose().tolist())
 
-    def base_for(self, poses, arms=None, need=None):
+    def base_for(self, poses, arms=None, need=None, path=False):
         """``(back, turn)`` from the episode's start pose of the base (backed off along its start
         heading, then turned) from where one of ``arms`` (default the free ones) reaches ``need``
-        (default all) of the world TCP ``poses`` (in turn, each solved from the one before) with
-        each joint ``BASE_MARGIN`` inside its limits;
+        (default all) of the world TCP ``poses`` with each joint ``BASE_MARGIN`` inside its limits
+        (``path``: the poses of one straight move, each solved from the one before at the torso
+        height of the first);
         the least move that does, else the one reaching most, with the widest margin."""
         model = self.model
         arms = list(arms) if arms else [a for a in self.arms if a not in self.held]
@@ -663,10 +664,16 @@ class Skills:
                 for arm in arms:
                     self.solvers[arm].sync()
                     indices = model.arm_indices(arm)
-                    # Each pose from the solution of the one before: a path through them stays on one branch.
+                    # Along a path, each pose from the solution of the one before (one branch) with the
+                    # torso lift where the first put it (a straight move moves the arm alone).
                     margins, q = [], None
-                    for pose in poses:
-                        status, q = model.ik(arm, pose, q, world=True, lift=True, attempts=IK_ATTEMPTS)
+                    for index, pose in enumerate(poses):
+                        chained = path and index > 0
+                        if chained and q is None:
+                            margins.append(-np.inf)
+                            continue
+                        status, q = model.ik(arm, pose, q if path else None, world=True, lift=not chained,
+                                             attempts=IK_ATTEMPTS)
                         q = None if status != 'Success' else q
                         margins.append(-np.inf if status != 'Success' else float(np.min(np.minimum(
                             q[indices] - model.limits[indices, 0], model.limits[indices, 1] - q[indices]))))
@@ -690,12 +697,12 @@ class Skills:
         transform[:2, 3] = np.array([x, y]) - back * np.array([np.cos(yaw), np.sin(yaw)])
         return transform
 
-    def make_room(self, poses, arms=None, need=None):
+    def make_room(self, poses, arms=None, need=None, path=False):
         """Move the base (see :meth:`base_for`) to where ``poses`` are reachable with a margin:
         back to the start heading, along it, then turned."""
         if not self.ctx.spec.base:
             return
-        chosen = self.base_for(poses, arms, need)
+        chosen = self.base_for(poses, arms, need, path)
         if chosen is None:
             return
         back, turn = chosen
@@ -799,9 +806,9 @@ def _skills(ctx):
     return ctx.skills()
 
 
-def make_room(ctx, poses, arms=None):
+def make_room(ctx, poses, arms=None, path=False):
     """Move the base to where the world TCP ``poses`` are reachable with a margin (see :meth:`Skills.make_room`)."""
-    _skills(ctx).make_room(poses, arms)
+    _skills(ctx).make_room(poses, arms, path=path)
 
 
 def retry(ctx, step, attempts=ATTEMPTS, budget=RETRY_BUDGET):
