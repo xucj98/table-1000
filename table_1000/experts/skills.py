@@ -649,13 +649,14 @@ class Skills:
     def base_for(self, poses, arms=None, need=None, path=False):
         """``(back, turn)`` from the episode's start pose of the base (backed off along its start
         heading, then turned) from where one of ``arms`` (default the free ones) reaches ``need``
-        (default all) of the world TCP ``poses`` with each joint ``BASE_MARGIN`` inside its limits
-        (``path``: the poses of one straight move, each solved from the one before at the torso
-        height of the first);
-        the least move that does, else the one reaching most, with the widest margin."""
+        (default all) of ``poses`` with each joint ``BASE_MARGIN`` inside its limits; the least move
+        that does, else the one reaching most, with the widest margin. Each of ``poses`` is a world
+        TCP pose or a list of them along a straight move, each solved from the one before at the
+        torso height of the first (``path``: ``poses`` are one such list)."""
         model = self.model
         arms = list(arms) if arms else [a for a in self.arms if a not in self.held]
-        need = len(poses) if need is None else need
+        groups = [list(poses)] if path else [[pose] if np.ndim(pose) == 2 else list(pose) for pose in poses]
+        need = len(groups) if need is None else need
         actual = model.base.copy()
         best, most = None, (-1, -np.inf)
         try:
@@ -664,20 +665,7 @@ class Skills:
                 model.base = self.base_at(back, turn)
                 for arm in arms:
                     self.solvers[arm].sync()
-                    indices = model.arm_indices(arm)
-                    # Along a path, each pose from the solution of the one before (one branch) with the
-                    # torso lift where the first put it (a straight move moves the arm alone).
-                    margins, q = [], None
-                    for index, pose in enumerate(poses):
-                        chained = path and index > 0
-                        if chained and q is None:
-                            margins.append(-np.inf)
-                            continue
-                        status, q = model.ik(arm, pose, q if path else None, world=True, lift=not chained,
-                                             attempts=IK_ATTEMPTS)
-                        q = None if status != 'Success' else q
-                        margins.append(-np.inf if status != 'Success' else float(np.min(np.minimum(
-                            q[indices] - model.limits[indices, 0], model.limits[indices, 1] - q[indices]))))
+                    margins = [self.path_margin(arm, group) for group in groups]
                     reached = sum(margin >= BASE_MARGIN for margin in margins)
                     if reached >= need:
                         return back, turn
@@ -689,6 +677,20 @@ class Skills:
             for solver in self.solvers.values():
                 solver.sync()
         return best
+
+    def path_margin(self, arm, poses):
+        """Least distance (rad) of ``arm``'s joints to their limits through ``poses`` (world TCP), each
+        solved from the one before (one branch) at the torso height of the first, as a straight move
+        does; -inf where one has no IK."""
+        model, indices = self.model, self.model.arm_indices(arm)
+        q, margin = None, np.inf
+        for index, pose in enumerate(poses):
+            status, q = model.ik(arm, pose, q, world=True, lift=index == 0, attempts=IK_ATTEMPTS)
+            if status != 'Success':
+                return -np.inf
+            margin = min(margin, float(np.min(np.minimum(q[indices] - model.limits[indices, 0],
+                                                         model.limits[indices, 1] - q[indices]))))
+        return margin
 
     def base_at(self, back, turn):
         """World pose of the root link with the base ``back`` behind its start pose, turned by ``turn``."""
@@ -791,7 +793,7 @@ class Skills:
         if result['planned'] == 0 and ctx.spec.base:
             releases = [translated(placed, [0., 0., clearance]) @ np.linalg.inv(tcp_object)
                         for placed, _ in options[:ROOM_PLACES]]
-            self.make_room(releases, [arm], need=1)
+            self.make_room([[release, translated(release, [0., 0., above])] for release in releases], [arm], need=1)
             current = ctx.poses()[target.body]
             options = self.placements(target, current, region, np.asarray(near, dtype=float)[:3], keep_out, step, margin)
             result = self.put_down(arm, options, tcp_object, clearance, above)
