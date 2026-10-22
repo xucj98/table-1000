@@ -41,6 +41,34 @@ def pose_error(a, b):
     return float(np.linalg.norm(a[:3, 3] - b[:3, 3])), float(rotation)
 
 
+def rigid_pairs(urdf, moving):
+    """Pairs of links with collision geometry in ``urdf`` that no joint of ``moving`` moves
+    relative to each other: a plan of those joints cannot change whether they touch."""
+    import xml.etree.ElementTree as ET
+    root = ET.parse(urdf).getroot()
+    parent = {joint.find('child').get('link'): (joint.find('parent').get('link'), joint.get('name'))
+              for joint in root.findall('joint')}
+
+    def chain(link):
+        """``{link or ancestor: active joints between it and link}``."""
+        path, joints = {link: frozenset()}, frozenset()
+        while link in parent:
+            link, joint = parent[link]
+            joints = joints | ({joint} & set(moving))
+            path[link] = joints
+        return path
+
+    links = [link.get('name') for link in root.findall('link') if link.find('collision') is not None]
+    chains = {link: chain(link) for link in links}
+    pairs = []
+    for i, link in enumerate(links):
+        for other in links[i + 1:]:
+            common = next(ancestor for ancestor in chains[link] if ancestor in chains[other])
+            if not chains[link][common] and not chains[other][common]:
+                pairs.append((link, other))
+    return pairs
+
+
 class RobotModel:
     """Planning model of one robot; ``output`` receives the planning URDF and SRDF."""
 
@@ -69,6 +97,8 @@ class RobotModel:
             group = [self.joints[i] for i in planner.move_group_joint_indices]
             if group != [*spec.lift, *spec.arms[name].joints]:
                 raise RuntimeError(f'unexpected move group for {name}: {group}')
+            for link, other in rigid_pairs(urdf, group):
+                planner.planning_world.get_allowed_collision_matrix().set_entry(link, other, True)
         self.q = np.zeros(len(self.joints))
         self.base = np.eye(4)
 
@@ -143,12 +173,14 @@ class RobotModel:
             planner.robot.set_qpos(self.q, True)
 
     def self_collisions(self, q=None):
-        """Robot body pairs in collision at ``q`` (default: current)."""
-        planner = next(iter(self.planners.values()))
-        planner.robot.set_qpos(self.q if q is None else q, True)
-        pairs = sorted({tuple(sorted((c.link_name1, c.link_name2))) for c in planner.check_for_self_collision()})
-        planner.robot.set_qpos(self.q, True)
-        return pairs
+        """Robot body pairs in collision at ``q`` (default: current); each arm's planner skips the
+        pairs its own joints cannot move, so all are asked."""
+        pairs = set()
+        for planner in self.planners.values():
+            planner.robot.set_qpos(self.q if q is None else q, True)
+            pairs |= {tuple(sorted((c.link_name1, c.link_name2))) for c in planner.check_for_self_collision()}
+            planner.robot.set_qpos(self.q, True)
+        return sorted(pairs)
 
     def look_at(self, point, camera, q=None, world=True):
         """Head joint values that point ``camera``'s optical +Z at ``point``."""

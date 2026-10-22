@@ -68,32 +68,37 @@ def _transform(element):
 
 
 def _merge_convex(link, directory, output, tolerance=1.2):
-    """Replace ``link``'s mesh collisions by one mesh of their common convex hull (written under
-    ``output``) when that hull is at most ``tolerance`` times their summed volume: checks cost
-    per pair of shapes, and an arm segment or a finger made of a dozen convex pieces is about
-    convex as a whole."""
+    """Replace ``link``'s mesh collisions by fewer meshes (written under ``output``): largest first,
+    each piece joins the first group whose common convex hull stays within ``tolerance`` times the
+    group's summed volume. Checks cost per pair of shapes, and an arm segment made of a dozen
+    convex pieces, or a chassis with sensors on its faces, is about convex."""
     collisions = link.findall('collision')
     meshes = [collision.find('geometry/mesh') for collision in collisions]
     if len(collisions) < 2 or any(mesh is None or mesh.get('scale') for mesh in meshes):
         return
-    points, volume = [], 0.
+    pieces = []
     for collision, mesh in zip(collisions, meshes):
         hull = trimesh.load(directory / mesh.get('filename'), force='mesh').convex_hull
         transform = _transform(collision)
-        points.append(hull.vertices @ transform[:3, :3].T + transform[:3, 3])
-        volume += hull.volume
-    hull = trimesh.convex.convex_hull(np.vstack(points))
-    if hull.volume > tolerance * volume:
+        pieces.append((hull.vertices @ transform[:3, :3].T + transform[:3, 3], hull.volume))
+    groups = []     # [points, summed volume]
+    for points, volume in sorted(pieces, key=lambda piece: -piece[1]):
+        for group in groups:
+            joined = np.vstack([group[0], points])
+            if trimesh.convex.convex_hull(joined).volume <= tolerance * (group[1] + volume):
+                group[0], group[1] = joined, group[1] + volume
+                break
+        else:
+            groups.append([points, volume])
+    if len(groups) == len(pieces):
         return
-    name = Path('merged') / f'{link.get("name")}.stl'
-    (output / name).parent.mkdir(parents=True, exist_ok=True)
-    hull.export(output / name)
-    for collision in collisions[1:]:
+    for collision in collisions:
         link.remove(collision)
-    collision = collisions[0]
-    if collision.find('origin') is not None:
-        collision.remove(collision.find('origin'))
-    collision.find('geometry/mesh').set('filename', name.as_posix())
+    for index, (points, _) in enumerate(groups):
+        name = Path('merged') / f'{link.get("name")}_{index}.stl'
+        (output / name).parent.mkdir(parents=True, exist_ok=True)
+        trimesh.convex.convex_hull(points).export(output / name)
+        ET.SubElement(ET.SubElement(ET.SubElement(link, 'collision'), 'geometry'), 'mesh', filename=name.as_posix())
 
 
 def _merge_finger(link, directory, output, groups=4):
@@ -176,7 +181,7 @@ def write_planning_urdf(source, output, active, frozen, tcp, padding=0., unpadde
         name = Path(mesh.get('filename'))
         # Meshes of a base robot (../<base>/meshes/...) are copied inside the output directory too.
         copy = Path(*['up' if part == '..' else part for part in name.parts])
-        if name.parts[0] == 'merged':   # written by _merge_convex
+        if name.parts[0] == 'merged':   # written by _merge_convex or _merge_finger
             mesh_file = output.parent / name
         else:
             (output.parent / copy).parent.mkdir(parents=True, exist_ok=True)

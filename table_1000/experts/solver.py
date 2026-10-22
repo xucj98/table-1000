@@ -119,14 +119,27 @@ class MotionSolver:
         closer = self.model.collisions(self.arm.name, self.model.q) if kind == 'rrt' else []
         if closer:
             self.world.set_padding(0.)
+        # The robot's planning links are grown, so they may overlap where the bare links do not (an
+        # elbow by the torso after a pull): a straight move starting so is planned with them allowed.
+        robot = self.planner.robot.get_name()
+        overlaps = [(link, other) for link, name, other in self.model.collisions(self.arm.name, self.model.q)
+                    if name == robot] if kind == 'screw' else []
+        for link, other in overlaps:
+            self.world.allow([link], [other])
         started = time.perf_counter()
-        result = function()
+        try:
+            result = function()
+        finally:
+            for link, other in overlaps:
+                self.world.allow([link], [other], False)
         elapsed = time.perf_counter() - started
         self.timings['planning_s'] += elapsed
         entry = {'subtask': self.ctx.current, 'step': self.ctx.steps, 'kind': kind, 'status': result['status'],
                  'planning_s': elapsed}
         if closer:
             entry['unpadded'] = closer
+        if overlaps:
+            entry['self_overlaps'] = overlaps
         self.log.append(entry)
         if result['status'] != 'Success':
             entry.update({key: value for key, value in result.items()
