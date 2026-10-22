@@ -648,7 +648,8 @@ class Skills:
     def base_for(self, poses, arms=None, need=None):
         """``(back, turn)`` from the episode's start pose of the base (backed off along its start
         heading, then turned) from where one of ``arms`` (default the free ones) reaches ``need``
-        (default all) of the world TCP ``poses`` with each joint ``BASE_MARGIN`` inside its limits;
+        (default all) of the world TCP ``poses`` (in turn, each solved from the one before) with
+        each joint ``BASE_MARGIN`` inside its limits;
         the least move that does, else the one reaching most, with the widest margin."""
         model = self.model
         arms = list(arms) if arms else [a for a in self.arms if a not in self.held]
@@ -662,9 +663,11 @@ class Skills:
                 for arm in arms:
                     self.solvers[arm].sync()
                     indices = model.arm_indices(arm)
-                    margins = []
+                    # Each pose from the solution of the one before: a path through them stays on one branch.
+                    margins, q = [], None
                     for pose in poses:
-                        status, q = model.ik(arm, pose, world=True, lift=True, attempts=IK_ATTEMPTS)
+                        status, q = model.ik(arm, pose, q, world=True, lift=True, attempts=IK_ATTEMPTS)
+                        q = None if status != 'Success' else q
                         margins.append(-np.inf if status != 'Success' else float(np.min(np.minimum(
                             q[indices] - model.limits[indices, 0], model.limits[indices, 1] - q[indices]))))
                     reached = sum(margin >= BASE_MARGIN for margin in margins)

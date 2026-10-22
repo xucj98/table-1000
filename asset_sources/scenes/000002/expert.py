@@ -59,11 +59,12 @@ def tcp_pose(position, approach, closing):
 
 
 def handle_poses(ctx, drawer, opening):
-    """Hand poses on ``drawer``'s handle straight at it, before and after sliding it to ``opening``."""
+    """Hand poses on ``drawer``'s handle straight at it, before, halfway and after sliding it to ``opening``."""
     frame = ctx.pose('cabinet', body(drawer))
     box, _ = ctx.part_box('cabinet', f'{body(drawer)}.handle', body(drawer))
     grasp = tcp_pose(box[:3, 3], frame[:3, 1], frame[:3, 0])
-    return [grasp, translated(grasp, pull(ctx, drawer, opening - ctx.joint('cabinet', slide(drawer))))]
+    move = pull(ctx, drawer, opening - ctx.joint('cabinet', slide(drawer)))
+    return [grasp, translated(grasp, move / 2), translated(grasp, move)]
 
 
 def above(position, across):
@@ -93,6 +94,8 @@ def move_drawer(ctx, drawer, opening):
         # 15 degrees) slip off.
         inward = ctx.pose('cabinet', body(drawer))[:3, 1]
         held = grasp_handle(ctx, drawer, move, inward)
+        # Closing on the handle straight on may have pushed the drawer in a little.
+        move = pull(ctx, drawer, opening - ctx.joint('cabinet', slide(drawer)))
         housing = ctx.pose('cabinet')[:3, 3]
         moved = skills.move_by_displacement(ctx, held['arm'], *move, drag=('cabinet', body(drawer)), least=PULL_LEAST)
         ctx.note('slid', drawer=drawer, opening=ctx.joint('cabinet', slide(drawer)), moved=moved,
