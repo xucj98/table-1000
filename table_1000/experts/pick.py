@@ -181,10 +181,12 @@ class Picker:
         ctx.hold(.2)
         after = ctx.poses()[key]
         rise = float(after[2, 3] - before[2, 3])
+        chosen = {'pose': grasp.pose.tolist(), 'open_gap': grasp.open_gap, 'width': grasp.width,
+                  'backoff': grasp.backoff, 'cost': grasp.cost, **grasp.info}
         if rise < MIN_RISE:
-            ctx.fail('object not lifted', rise=rise, finger_gap=solver.finger_gap())
-        result = {'arm': arm, 'grasp': {'pose': grasp.pose.tolist(), 'open_gap': grasp.open_gap, 'width': grasp.width,
-                                        'backoff': grasp.backoff, 'cost': grasp.cost, **grasp.info},
+            ctx.fail('object not lifted', rise=rise, finger_gap=solver.finger_gap(), arm=arm, grasp=chosen,
+                     object_before=before.tolist())
+        result = {'arm': arm, 'grasp': chosen,
                   'supports': supports,
                   'finger_gap': solver.finger_gap(), 'rise': rise, 'regrasps': regrasps,
                   'choice_s': time.perf_counter() - started,

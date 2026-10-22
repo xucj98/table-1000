@@ -78,6 +78,11 @@ def worker(args):
                     side = 1. if placement['x'] >= 0 else -1.
                     target = [placement['x'], placement['y'], .80]
                     eye = [placement['x'] + side * .35, placement['y'] + .30, 1.05]
+                    obstacles = placement.get('obstacles', {})
+                    if obstacles:   # look from the open side, past the walls
+                        if 'wall_side' in obstacles:
+                            side = -1. if obstacles['wall_side'][0][3] > placement['x'] else 1.
+                        eye = [placement['x'] + side * .3, placement['y'] - .12, 1.15]
                     camera.set_world_poses_from_view(torch.tensor([eye], dtype=torch.float32),
                                                      torch.tensor([target], dtype=torch.float32))
                     shutil.rmtree(work / 'frames', ignore_errors=True)
@@ -158,6 +163,7 @@ def main(argv=None):
     parser.add_argument('--objects', nargs='+', help='test objects of the random trials (default: all)')
     parser.add_argument('--case', nargs=5, action='append', metavar=('NAME', 'X', 'Y', 'YAW', 'POSE'))
     parser.add_argument('--seed', type=int, default=0)
+    parser.add_argument('--select', type=int, nargs='+', help='run only these trial indices (to re-run or record some)')
     parser.add_argument('--scenario', default='open', choices=('open', 'box', 'side', 'back', 'corner'),
                         help='obstacles around the object')
     parser.add_argument('--gap', type=float, default=.12, help='robot base to table edge (m)')
@@ -183,7 +189,7 @@ def main(argv=None):
         worker(args)
         return
     from table_1000.scenes.batch import run_parts, split
-    indices = [index for index, _, _ in tasks(args)]
+    indices = [index for index, _, _ in tasks(args) if args.select is None or index in args.select]
     if not indices:
         parser.error('give --trials or --case')
     shutil.rmtree(args.output, ignore_errors=True)
