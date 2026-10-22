@@ -97,7 +97,12 @@ def move_drawer(ctx, drawer, opening):
         # Closing on the handle straight on may have pushed the drawer in a little.
         move = pull(ctx, drawer, opening - ctx.joint('cabinet', slide(drawer)))
         housing = ctx.pose('cabinet')[:3, 3]
-        moved = skills.move_by_displacement(ctx, held['arm'], *move, drag=('cabinet', body(drawer)), least=PULL_LEAST)
+        try:
+            moved = skills.move_by_displacement(ctx, held['arm'], *move, drag=('cabinet', body(drawer)),
+                                                least=PULL_LEAST)
+        except ExpertFailed:
+            skills.release(ctx, held['arm'])    # so that it can be tried again
+            raise
         ctx.note('slid', drawer=drawer, opening=ctx.joint('cabinet', slide(drawer)), moved=moved,
                  cabinet_shift=float(np.linalg.norm(ctx.pose('cabinet')[:3, 3] - housing)),
                  finger_gap=ctx.solver(held['arm']).finger_gap())

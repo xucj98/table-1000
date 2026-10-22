@@ -447,7 +447,8 @@ class Skills:
         # Six arm joints alone may run into a limit along the line: part of it, else all of it with
         # the torso lift as well (which follows its path less closely).
         options = [(f, False) for f in PARTIALS if f >= least] + [(1., True)]
-        if failed.reason in ('joint_limit', 'no_progress', 'iteration_limit'):
+        # (A limit or the body, an elbow by the torso, may also be hit only near the end of the line.)
+        if failed.reason in ('joint_limit', 'no_progress', 'iteration_limit', 'collision'):
             for fraction, lift in options:
                 try:
                     solver.move_to_pose_with_screw(translated(start, displacement * fraction), lift=lift)
