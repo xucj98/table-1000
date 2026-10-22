@@ -475,8 +475,8 @@ class RobotEnv:
         # reset: resetting first converts with the current orientation.
         composer = self.env.scene[name].permanent_wrench_composer
         composer.reset()
-        if np.any(force):
-            force = torch.as_tensor(force, dtype=torch.float32, device=self.device).repeat(self.num_envs, 1, 1)
+        force = torch.as_tensor(force, dtype=torch.float32, device=self.device).repeat(self.num_envs, 1, 1)
+        if force.any():
             composer.set_forces_and_torques(forces=force, torques=torch.zeros_like(force), is_global=True)
 
     def link_pose(self, link):
