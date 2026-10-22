@@ -166,7 +166,6 @@ def put_in_drawer(ctx, drawer):
     frame, (x0, y0), (x1, y1), floor, rear = drawer_box(ctx, drawer)
     surface = frame @ np.r_[np.c_[np.eye(3), [0., 0., floor]], [[0., 0., 0., 1.]]]
     near = (frame @ [(x0 + x1) / 2, (y0 + y1) / 2, floor, 1.])[:3]
-    skills.make_room(ctx, [above(near, frame[:3, 1])])
     skills.retry(ctx, lambda: skills.place(ctx, 'pen', (surface, (x0, y0), (x1, y1)), near=near))
     local = (np.linalg.inv(frame) @ ctx.pose('pen', 'body'))[:3, 3]
     if not (x0 <= local[0] <= x1 and y0 <= local[1] <= rear and local[2] < floor + .03):

@@ -111,6 +111,7 @@ BASE_TURNS = (0., 10., -10., 20., -20.)
 BASE_MARGIN = .25
 MAX_PLACES = 8          # placements whose motion place plans
 MAX_PLACE_IK = 150      # placements place checks by IK
+ROOM_PLACES = 10        # first placements the base moves to reach when none is in reach
 PLACE_STEP = .02        # m between the positions place samples in its region
 PLACE_TURN_STEP = 15.   # deg between the turns place samples
 PLACE_TURNS = 4         # turns place tries per position, the least first
@@ -514,21 +515,23 @@ class Skills:
                                       attempts=IK_ATTEMPTS, check_collision=False)
             if status != 'Success':
                 continue
+            # The fingertips push the part and may touch the rest of its body (a drawer's front).
+            touched = [name for name, obj in solver.world.objects.items() if obj.body == target.body] or target.names
             try:
                 solver.close_gripper()
                 solver.move_to_pose_with_RRTConnect(None, lift=True, goals=[q_pre])
-                solver.allow(target.names)
+                solver.allow(touched)
                 solver.move_to_pose_with_screw(contact)
                 break
             except PlanningFailed as error:
-                solver.allow(target.names, False)
+                solver.allow(touched, False)
                 ctx.note('next push', arm=candidate, tilt=float(tilt), reason=error.reason, **collisions(error))
         else:
             ctx.fail('no reachable push', target=target.names)
         try:
             self.move_by_displacement(candidate, direction * distance, drag=(target.obj, target.body.split(':', 1)[1]))
         finally:
-            solver.allow(target.names, False)
+            solver.allow(touched, False)
         moved = float((ctx.poses()[target.body][:3, 3] - before) @ direction)
         # Back off: straight back or up, else along a planned path. The push is done either way.
         tcp = solver.tcp()
@@ -642,35 +645,34 @@ class Skills:
             solver.sync()
         ctx.note('base moved', forward=forward, turn=turn, pose=self.base_pose().tolist())
 
-    def base_for(self, poses, arms=None):
+    def base_for(self, poses, arms=None, need=None):
         """``(back, turn)`` from the episode's start pose of the base (backed off along its start
-        heading, then turned) from where one of ``arms`` reaches every world TCP pose of ``poses``
-        with each joint ``BASE_MARGIN`` inside its limits; the least move that does, else the
-        widest margin."""
-        model, arms = self.model, [a for a in (arms or self.arms) if a not in self.held]
+        heading, then turned) from where one of ``arms`` (default the free ones) reaches ``need``
+        (default all) of the world TCP ``poses`` with each joint ``BASE_MARGIN`` inside its limits;
+        the least move that does, else the one reaching most, with the widest margin."""
+        model = self.model
+        arms = list(arms) if arms else [a for a in self.arms if a not in self.held]
+        need = len(poses) if need is None else need
         actual = model.base.copy()
-        best, widest = None, -np.inf
+        best, most = None, (-1, -np.inf)
         try:
             for back, turn in sorted(((b, t) for b in BASE_BACKS for t in np.radians(BASE_TURNS)),
                                      key=lambda option: option[0] / .05 + abs(option[1]) / np.radians(10.)):
                 model.base = self.base_at(back, turn)
-                margin = -np.inf
                 for arm in arms:
                     self.solvers[arm].sync()
                     indices = model.arm_indices(arm)
-                    worst = np.inf
+                    margins = []
                     for pose in poses:
                         status, q = model.ik(arm, pose, world=True, lift=True, attempts=IK_ATTEMPTS)
-                        if status != 'Success':
-                            worst = -np.inf
-                            break
-                        worst = min(worst, float(np.min(np.minimum(q[indices] - model.limits[indices, 0],
-                                                                   model.limits[indices, 1] - q[indices]))))
-                    margin = max(margin, worst)
-                if margin >= BASE_MARGIN:
-                    return back, turn
-                if margin > widest:
-                    best, widest = (back, turn), margin
+                        margins.append(-np.inf if status != 'Success' else float(np.min(np.minimum(
+                            q[indices] - model.limits[indices, 0], model.limits[indices, 1] - q[indices]))))
+                    reached = sum(margin >= BASE_MARGIN for margin in margins)
+                    if reached >= need:
+                        return back, turn
+                    score = (reached, max(margins, default=np.inf))
+                    if score > most:
+                        best, most = (back, turn), score
         finally:
             model.base = actual
             for solver in self.solvers.values():
@@ -685,12 +687,12 @@ class Skills:
         transform[:2, 3] = np.array([x, y]) - back * np.array([np.cos(yaw), np.sin(yaw)])
         return transform
 
-    def make_room(self, poses, arms=None):
+    def make_room(self, poses, arms=None, need=None):
         """Move the base (see :meth:`base_for`) to where ``poses`` are reachable with a margin:
         back to the start heading, along it, then turned."""
         if not self.ctx.spec.base:
             return
-        chosen = self.base_for(poses, arms)
+        chosen = self.base_for(poses, arms, need)
         if chosen is None:
             return
         back, turn = chosen
@@ -721,6 +723,35 @@ class Skills:
             except PlanningFailed as error:
                 self.ctx.note('not ready', arm=arm, reason=error.reason)
 
+    def put_down(self, arm, options, tcp_object, clearance, above):
+        """Move the held object down at the first of ``options`` (``(object pose, spot)``) in reach
+        (IK above and at the release) whose motion plans; ``{'done', 'spot', 'ik_checked',
+        'planned', 'last', ...collisions}``."""
+        ctx, solver = self.ctx, self.solvers[arm]
+        result = {'done': False, 'spot': None, 'ik_checked': 0, 'planned': 0, 'last': 'no placement in reach'}
+        for placed, spot in options:
+            if result['ik_checked'] >= MAX_PLACE_IK or result['planned'] >= MAX_PLACES:
+                break
+            result['ik_checked'] += 1
+            release = translated(placed, [0., 0., clearance]) @ np.linalg.inv(tcp_object)
+            status, q_above = self.ik(arm, translated(release, [0., 0., above]), self.model.q)
+            if status != 'Success':
+                continue
+            # The way down ends clear too (the hand and arm low by a wall).
+            status, _ = self.model.ik(arm, release, q_above, world=True, attempts=IK_ATTEMPTS)
+            if status != 'Success':
+                continue
+            result['planned'] += 1
+            try:
+                solver.move_to_pose_with_RRTConnect(None, lift=True, goals=[q_above])
+                solver.move_to_pose_with_screw(release)
+                result.update(done=True, spot=spot)
+                return result
+            except PlanningFailed as error:
+                result.update(last=error.reason, **collisions(error))
+                ctx.note('next placement', arm=arm, spot=spot.tolist(), reason=error.reason, **collisions(error))
+        return result
+
     def place(self, obj, region, arm=None, near=None, keep_out=(), clearance=PLACE_CLEARANCE, above=PLACE_ABOVE,
               step=PLACE_STEP, margin=PLACE_MARGIN):
         """Put the held ``obj`` down in ``region`` and release it; see the module docstring.
@@ -741,32 +772,19 @@ class Skills:
         options = self.placements(target, current, region, np.asarray(near, dtype=float)[:3], keep_out, step, margin)
         if not options:
             ctx.fail('no room', region=[frame.tolist(), low.tolist(), high.tolist()])
-        # IK first (cheap) over many, then motion for those that have it.
-        tried, planned, last, details, done = 0, 0, 'no placement in reach', {}, False
-        for placed, spot in options:
-            if tried >= MAX_PLACE_IK or planned >= MAX_PLACES:
-                break
-            tried += 1
-            release = translated(placed, [0., 0., clearance]) @ np.linalg.inv(tcp_object)
-            status, q_above = self.ik(arm, translated(release, [0., 0., above]), self.model.q)
-            if status != 'Success':
-                continue
-            # The way down ends clear too (the hand and arm low by a wall).
-            status, _ = self.model.ik(arm, release, q_above, world=True, attempts=IK_ATTEMPTS)
-            if status != 'Success':
-                continue
-            planned += 1
-            try:
-                solver.move_to_pose_with_RRTConnect(None, lift=True, goals=[q_above])
-                solver.move_to_pose_with_screw(release)
-                done = True
-                break
-            except PlanningFailed as error:
-                last, details = error.reason, collisions(error)
-                ctx.note('next placement', arm=arm, spot=spot.tolist(), reason=error.reason, **details)
-        if not done:
-            ctx.fail('no placement', arm=arm, last=last, options=len(options), ik_checked=tried, planned=planned,
-                     **details)
+        # IK first (cheap) over many, then motion for those that have it. Where none is in reach,
+        # the base moves to reach the first ones, and they are screened again.
+        result = self.put_down(arm, options, tcp_object, clearance, above)
+        if result['planned'] == 0 and ctx.spec.base:
+            releases = [translated(placed, [0., 0., clearance]) @ np.linalg.inv(tcp_object)
+                        for placed, _ in options[:ROOM_PLACES]]
+            self.make_room(releases, [arm], need=1)
+            current = ctx.poses()[target.body]
+            options = self.placements(target, current, region, np.asarray(near, dtype=float)[:3], keep_out, step, margin)
+            result = self.put_down(arm, options, tcp_object, clearance, above)
+        if not result['done']:
+            ctx.fail('no placement', arm=arm, options=len(options), **{k: v for k, v in result.items() if k != 'done'})
+        spot = result['spot']
         self.release(arm)
         ctx.hold(.3)
         return {'arm': arm, 'spot': spot.tolist(), 'object': ctx.poses()[target.body].tolist()}
