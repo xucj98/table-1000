@@ -74,7 +74,8 @@ alike, out of the way of the other arm).
 
 **retry** -- a step run again when it fails (``ATTEMPTS`` in all, within
 ``RETRY_BUDGET`` s of the episode, or of its step), the arms that hold nothing back at their start pose
-first, so that its choices start afresh.
+first, so that its choices start afresh; not when nothing was in reach (``Unreachable``: the
+planners sampled their candidates already, a high share of it points at the planning).
 
 Each choice of another candidate is noted (``ctx.note``). A skill that finds nothing in reach
 (no grasp, push or placement) fails with :class:`~table_1000.experts.context.Unreachable`.
@@ -143,10 +144,13 @@ def ready(ctx):
 def retry(ctx, step, attempts=ATTEMPTS, budget=RETRY_BUDGET):
     """``step()``, again up to ``attempts`` times in all when it fails (each choice of grasp, path
     and spot starts afresh from where things are), the free arms back at their start pose first;
-    not once the episode has run ``budget`` s (wall clock)."""
+    not once the episode (or its step) has run ``budget`` s (wall clock), nor when nothing was in
+    reach (:class:`Unreachable`)."""
     for attempt in range(1, attempts + 1):
         try:
             return step()
+        except Unreachable:
+            raise       # the planners tried their candidates already: nothing to gain from the same again
         except ExpertFailed as failure:
             if attempt == attempts or ctx.elapsed() > budget:
                 raise

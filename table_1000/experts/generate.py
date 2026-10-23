@@ -23,7 +23,7 @@ import traceback
 
 import numpy as np
 
-from table_1000.experts.context import Context, ExpertFailed
+from table_1000.experts.context import Context, ExpertFailed, Unreachable
 from table_1000.scenes import INSTRUCTION, load
 from table_1000.scenes.initial import read_tree, write_tree
 from table_1000.sim import CONTROL_HZ, PHYSICS_DT
@@ -156,6 +156,7 @@ class Generator:
             report['status'] = 'success'
         except ExpertFailed as error:
             report.update(status='failed', failure={'subtask': error.subtask, 'reason': error.reason,
+                                                    'unreachable': isinstance(error, Unreachable),
                                                     'details': error.details})
         except Exception:   # an error in the expert's code is reported with the episode
             report.update(status='error', failure={'subtask': ctx.current, 'reason': 'error',
@@ -237,8 +238,12 @@ def summarize(reports, seeds):
         report = reports.get(seed)
         if report is None or report['status'] != 'success':
             failures.setdefault(PROCESS_EXITED if report is None else failure_key(report), []).append(seed)
+    unreachable = sorted(seed for seed, report in reports.items() if report.get('failure', {}).get('unreachable'))
     return {'seeds': seeds_record(seeds), 'succeeded': len(succeeded),
             'success_rate': len(succeeded) / len(seeds) if seeds else None,
+            # Nothing in reach: a high share points at the planning (parameters, collisions) or at the
+            # state the step before left.
+            'unreachable': unreachable, 'unreachable_rate': len(unreachable) / len(seeds) if seeds else None,
             'failures': dict(sorted(failures.items(), key=lambda item: (-len(item[1]), item[0]))),
             'mean_duration_s': float(np.mean([report['duration_s'] for report in succeeded])) if succeeded else None,
             'mean_wall_s': float(np.mean([report['wall_s'] for report in reports.values()])) if reports else None}
