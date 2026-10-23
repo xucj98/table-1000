@@ -155,15 +155,21 @@ class Grasping:
                         self.rejected['pre-grasp IK'] += 1
                         continue
                     if then is not None:
-                        status, _ = self.model.ik(arm, translated(grasp.pose, then), q_grasp, world=True, lift=lift,
-                                                  attempts=IK_ATTEMPTS)
+                        end = translated(grasp.pose, then)
+                        status, q_end = self.model.ik(arm, end, q_grasp, world=True, lift=lift, attempts=IK_ATTEMPTS)
                         if status == 'Success' and not upward:
                             # All the way along, as the move goes: an arm folding into itself half way (a
                             # drawer pulled out towards the body) makes it stop there. (A lift up has the
-                            # torso lift rise where the arm alone stops.)
+                            # torso lift rise where the arm alone stops.) Then, as the hand lets go there,
+                            # straight back out the way it came in: a hand that pulled a drawer up to the
+                            # body may have no room left to leave it. (The dragged part stays where it is in
+                            # the planning world: this checks the arm's kinematics and the body, not the part.)
                             solver.allow([*target.names, *supports])
-                            status = self.model.plan_screw(arm, translated(grasp.pose, then), q_grasp, world=True,
-                                                           time_step=DT, lift=lift)['status']
+                            status = self.model.plan_screw(arm, end, q_grasp, world=True, time_step=DT,
+                                                           lift=lift)['status']
+                            if status == 'Success':
+                                status = self.model.plan_screw(arm, standoff(end, APPROACH), q_end, world=True,
+                                                               time_step=DT, lift=lift)['status']
                             solver.allow([*target.names, *supports], False)
                         # Close to the body the hand may not reach higher; then the torso must rise that far.
                         headroom = self.model.limits[self.model.lift_indices(), 1] - q_grasp[self.model.lift_indices()]
@@ -275,6 +281,8 @@ class Grasping:
                 path = [standoff(grasp.pose, APPROACH), grasp.pose]
                 if then is not None:
                     path.append(translated(grasp.pose, then))
+                    if np.linalg.norm(np.asarray(then, dtype=float)[:2]) > 1e-9 or then[2] <= 0.:
+                        path.append(standoff(path[-1], APPROACH))   # letting go there (see options)
                 paths[arm].append(path)
         return paths
 
