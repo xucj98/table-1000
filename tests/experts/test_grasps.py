@@ -28,3 +28,4 @@ def test_only_the_length_of_an_elongated_shape_is_not_squeezed():
     assert lengthwise(list(Cylinder(.01, .18).closings(step))) == .18
     assert lengthwise(list(Box((.12, .048, .015)).closings(step))) is None       # a flat handle, every way
     assert lengthwise(list(Cylinder(.04, .05).closings(step))) is None
+    assert lengthwise(list(Box((.048, .01, .012)).closings(step))) is None       # a drawer handle, by its ends
