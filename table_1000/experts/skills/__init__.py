@@ -24,16 +24,22 @@ frame, also for a scene primitive that is not an asset). Every asset of the scen
 is in each arm's planning world, one planning object per part (``<object>:<part>``);
 the table too.
 
-**grasp** -- (where none is in reach, the base first moves to reach the first ones) candidates of the shape at its live pose
+Each skill reaches with the least of the robot it can, in this order: one arm with the torso
+lift where it is, the other arm so, the torso lift moving too, then the base moving
+(:func:`make_room`); a free-space plan (RRTConnect) that may move the torso lift holds it first
+where its goal leaves it where it is.
+
+**grasp** -- candidates of the shape at its live pose
 (:func:`~table_1000.experts.grasps.grasp_candidates`, cheapest first: close to the
 ``approach`` direction, default reaching out and down from the arm's shoulder;
 centred on ``point``, default the shape's centre) are tried per arm, the arm whose
-shoulder is nearer first. Every other planning object is an obstacle of the
+shoulder is nearer first, in the order above (where none is in reach, the base first moves
+to reach the first ones). Every other planning object is an obstacle of the
 candidates' hand; the ones within ``SUPPORT_DISTANCE`` of the shape are its supports,
 which the hand may touch (overlapping them by at most ``-SUPPORT_CLEARANCE``). A
 candidate is kept when the grasp and a pre-grasp ``APPROACH`` behind it have
 collision-free IK solutions, and so does the grasp moved by ``then`` (the motion that
-follows, if given). The hand plans (RRTConnect, the torso lift with the arm) to the
+follows, if given). The hand plans (RRTConnect) to the
 pre-grasp with the fingers open to the object's width plus a margin, moves straight
 in (the only move in which the fingers may touch the object), and closes; the finger
 gap must stop within ``HELD_TOLERANCE`` of the gap at which the pads touch the object, else it backs out, re-observes the
@@ -64,10 +70,13 @@ IK screens them above and at the release (``MAX_PLACE_IK``), and the first of th
 (``MAX_PLACES`` planned) is taken: above it, straight down to ``clearance`` over the
 surface, then :func:`release`.
 
-**make_room** -- move the base (backed off along its start heading, turned) to the
-least move from where given TCP poses are reachable with every joint a margin inside
-its limits, the free arms back at their start pose first (``move_base`` drives it
-straight and turns it in place).
+**make_room** -- move the base to where given TCP poses (each a pose, or the poses along a
+straight move) are reachable with every joint a margin inside its limits: where it stands
+if they are, else the base pose that it gets to soonest among poses sampled around them
+(facing them, at a distance), the robot clear of the planning world there and on the way
+(the table's legs included). The free arms go back to their start pose first; the base turns
+in place, drives straight and turns in place. Given no poses, the base goes back to where it
+started.
 
 **ready** -- the arms that hold nothing back at their start pose (each step then starts
 alike, out of the way of the other arm).
@@ -120,6 +129,7 @@ class Skills(Grasping, Motion, Placing, Base):
         self.start_base = np.asarray(ctx.start['base_pose'], dtype=float) if ctx.spec.base else None
         self.held = {}      # arm -> {'target', 'supports', 'grasp'}
         self.log, self.rejected = [], {}
+        self.reaches = {}   # arm -> its reach (see Base.arm_reach)
 
 
 def _skills(ctx):

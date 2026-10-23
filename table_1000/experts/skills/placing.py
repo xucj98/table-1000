@@ -83,32 +83,49 @@ class Placing:
         """Move the held object down at the first of ``options`` (``(object pose, spot)``) in reach
         (IK above and at the release) whose motion plans; ``{'done', 'spot', 'ik_checked',
         'planned', 'last', ...collisions}``."""
-        ctx, solver = self.ctx, self.solvers[arm]
         result = {'done': False, 'spot': None, 'ik_checked': 0, 'planned': 0, 'last': 'no placement in reach'}
-        for placed, spot in options:
-            if result['ik_checked'] >= MAX_PLACE_IK or result['planned'] >= MAX_PLACES:
-                break
-            result['ik_checked'] += 1
-            release = translated(placed, [0., 0., clearance]) @ np.linalg.inv(tcp_object)
-            # Where it is let go (the hand and arm low by a wall), then above it at that torso height:
-            # the way down moves the arm alone.
-            status, q_release = self.ik(arm, release, self.model.q)
-            if status != 'Success':
-                continue
-            status, q_above = self.model.ik(arm, translated(release, [0., 0., above]), q_release, world=True,
-                                            attempts=IK_ATTEMPTS)
-            if status != 'Success':
-                continue
-            result['planned'] += 1
-            try:
-                solver.move_to_pose_with_RRTConnect(None, lift=True, goals=[q_above], attempts=CANDIDATE_PLANS)
-                solver.move_to_pose_with_screw(release)
-                result.update(done=True, spot=spot)
-                return result
-            except PlanningFailed as error:
-                result.update(last=error.reason, **collisions(error))
-                ctx.note('next placement', arm=arm, spot=spot.tolist(), reason=error.reason, **collisions(error))
+        # The torso lift where it is first, then moving too.
+        planned = set()
+        for lift in (False, True):
+            checked = 0
+            for index, (placed, spot) in enumerate(options):
+                if checked >= MAX_PLACE_IK or result['planned'] >= MAX_PLACES:
+                    break
+                if index in planned:
+                    continue
+                checked += 1
+                count = result['planned']
+                if self.lower(arm, placed, spot, tcp_object, clearance, above, lift, result):
+                    return result
+                if result['planned'] > count:
+                    planned.add(index)
         return result
+
+    def lower(self, arm, placed, spot, tcp_object, clearance, above, lift, result):
+        """Down at one of :meth:`put_down`'s options if it is in reach (``lift``: the torso lift
+        moving too) and its motion plans; whether it is, counted in ``result``."""
+        ctx, solver = self.ctx, self.solvers[arm]
+        result['ik_checked'] += 1
+        release = translated(placed, [0., 0., clearance]) @ np.linalg.inv(tcp_object)
+        # Where it is let go (the hand and arm low by a wall), then above it at that torso height:
+        # the way down moves the arm alone.
+        status, q_release = self.model.ik(arm, release, self.model.q, world=True, lift=lift, attempts=IK_ATTEMPTS)
+        if status != 'Success':
+            return False
+        status, q_above = self.model.ik(arm, translated(release, [0., 0., above]), q_release, world=True,
+                                        attempts=IK_ATTEMPTS)
+        if status != 'Success':
+            return False
+        result['planned'] += 1
+        try:
+            solver.move_to_pose_with_RRTConnect(None, lift=True, goals=[q_above], attempts=CANDIDATE_PLANS)
+            solver.move_to_pose_with_screw(release)
+            result.update(done=True, spot=spot)
+            return True
+        except PlanningFailed as error:
+            result.update(last=error.reason, **collisions(error))
+            ctx.note('next placement', arm=arm, spot=spot.tolist(), reason=error.reason, **collisions(error))
+            return False
 
     def place(self, obj, region, arm=None, near=None, keep_out=(), clearance=PLACE_CLEARANCE, above=PLACE_ABOVE,
               step=PLACE_STEP, margin=PLACE_MARGIN):

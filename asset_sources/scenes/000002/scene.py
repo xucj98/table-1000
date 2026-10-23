@@ -44,10 +44,9 @@ VIEWS = {
 # Cabinet origin: CABINET_AHEAD in front of the robot's centre and up to CABINET_SIDE across. The
 # top drawer pulled out keeps clear of the folded hands, and the pen in it stays within the reach
 # of a grasp from above (an IK sweep: about 0.68 m ahead of the centre); the bottom drawer pulled
-# out keeps clear of the chest (about 0.48 m ahead at its height). Further than CABINET_SIDE across,
-# the hand holding the pen no longer reaches down into the bottom drawer (the expert's step alone,
-# 20 seeds: none in reach beyond 0.24 m).
-CABINET_AHEAD, CABINET_SIDE = (.80, .86), .22
+# out keeps clear of the chest (about 0.48 m ahead at its height). Across, the base moves to where
+# the arms reach.
+CABINET_AHEAD, CABINET_SIDE = (.80, .86), .35
 CABINET_TURN = math.radians(15)
 # Pen in the top drawer (drawer frame = cabinet frame while closed): its centre over this region
 # of the drawer floor, turned from the drawer's width by up to PEN_TURN, either way round. The

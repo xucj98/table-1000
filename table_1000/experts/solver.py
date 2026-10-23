@@ -30,10 +30,20 @@ ARRIVAL_TOLERANCE = .01   # rad, final joint error before a move counts as done
 SETTLE_LIMIT = .5         # s of extra holding allowed to reach it
 GRIPPER_TIME = .6         # s for the fingers to close or open
 OPEN_GAP = .08            # m
+TORSO_STILL = .001        # m of torso lift travel below which a path leaves it where it was
 
 
 class PlanningFailed(ExpertFailed):
     pass
+
+
+def note_torso(ctx, path):
+    """Note a move of the torso lift along ``path`` (rows of its joints) where it moved at all: its
+    travel (m, summed over the path) and where it ended."""
+    path = np.asarray(path, dtype=float)
+    travel = float(np.abs(np.diff(path, axis=0)).sum())
+    if travel > TORSO_STILL:
+        ctx.note('torso moved', travel=travel, lift=path[-1].tolist())
 
 
 class MotionSolver:
@@ -53,10 +63,17 @@ class MotionSolver:
         self.world.add(*box_object(name, size, transform))
 
     def add_table(self):
+        """The table's top (``table``) and legs (``table.leg1`` ...), as the simulation builds them."""
         table = self.ctx.scene.TABLE
+        (width, depth), (cx, cy), leg = table['size'], table['center'], table['leg_size']
+        under = table['height'] - table['top_thickness']
         top = np.eye(4)
-        top[:3, 3] = [*table['center'], table['height'] - table['top_thickness'] / 2]
-        self.add_box('table', (*table['size'], table['top_thickness']), top)
+        top[:3, 3] = [cx, cy, table['height'] - table['top_thickness'] / 2]
+        self.add_box('table', (width, depth, table['top_thickness']), top)
+        for i, (sx, sy) in enumerate(((-1, -1), (1, -1), (-1, 1), (1, 1))):
+            post = np.eye(4)
+            post[:3, 3] = [cx + sx * (width - leg) / 2, cy + sy * (depth - leg) / 2, under / 2]
+            self.add_box(f'table.leg{i + 1}', (leg, leg, under), post)
 
     def add_object(self, name, group, padded=lambda part: True, merged=lambda part: False):
         """Planning objects of asset object ``name`` from its collision geometry: ``group(body, part)``
@@ -175,7 +192,23 @@ class MotionSolver:
         """Plan to an IK goal of world TCP pose ``target`` (or to ``goals``, full configurations of
         the planning model) with RRTConnect and follow it; an approximate or colliding path is
         re-planned up to ``attempts`` times, each with twice the time of the one before. ``lift``
-        moves the torso lift as well."""
+        lets the torso lift move as well: where the goal leaves it where it is (or ``target`` has
+        an IK solution that does), the plan holds it first, once, and frees it only if that fails."""
+        free = [lift]
+        if lift:
+            here = self.model.q[self.model.lift_indices()]
+            if goals is None or all(np.allclose(np.asarray(goal)[self.model.lift_indices()], here, atol=1e-4)
+                                    for goal in goals):
+                free = [False, True]
+        for moving in free[:-1]:
+            try:
+                return self._rrt(target, planning_time, 1, moving, goals)
+            except PlanningFailed as error:
+                if not error.reason.startswith(('RRTConnect', 'path collision', 'IK Failed')):
+                    raise
+        self._rrt(target, planning_time, attempts, free[-1], goals)
+
+    def _rrt(self, target, planning_time, attempts, lift, goals):
         for attempt in range(attempts):
             try:
                 result = self._plan('rrt', lambda: self._validated(self.model.plan_rrt(
@@ -230,6 +263,8 @@ class MotionSolver:
             held += 1
         self.log[-1].update(max_tracking_error_rad=worst, settle_steps=held)
         self.timings['executing_s'] += time.perf_counter() - started
+        if lift is not None:
+            note_torso(self.ctx, lift)
 
     def gripper(self, gap, seconds=GRIPPER_TIME):
         for _ in range(steps(seconds)):

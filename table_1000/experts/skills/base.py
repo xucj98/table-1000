@@ -1,5 +1,7 @@
 """The base: driving it, and choosing where it stands so that poses are reached; the free arms back home."""
 
+import time
+
 import numpy as np
 from scipy.spatial.transform import Rotation
 
@@ -8,14 +10,58 @@ from table_1000.experts.skills.common import IK_ATTEMPTS
 from table_1000.experts.solver import PlanningFailed
 
 # The base drives at most BASE_SPEED (m/s) and turns at most BASE_TURN (rad/s), proportionally to the
-# error (BASE_GAIN) until within BASE_TOLERANCE (m, rad), then settles for BASE_SETTLE s. make_room
-# tries it BASE_BACKS (m) behind its start and turned by BASE_TURNS (deg), for every joint
-# BASE_MARGIN (rad) inside its limits.
+# error (BASE_GAIN) until within BASE_TOLERANCE (m, rad), then settles for BASE_SETTLE s.
 BASE_SPEED, BASE_TURN, BASE_GAIN = .15, .4, 2.
 BASE_TOLERANCE, BASE_SETTLE = (.005, np.radians(1.)), .5
-BASE_BACKS = (0., .05, .10, .15, .20)
-BASE_TURNS = (0., 10., -10., 20., -20.)
+# make_room samples BASE_SAMPLES poses of the base BASE_DISTANCES (m) from the poses to reach, facing
+# them within BASE_FACING (rad); in the order the base gets there (turn, drive straight, turn), at
+# most BASE_CHECKS of those the robot stands clear at and its arms may reach, each at least
+# BASE_SPREAD (m or rad) from those checked before, are checked by IK (BASE_IK_ATTEMPTS restarts,
+# the torso lift free) for every joint BASE_MARGIN (rad) inside its limits. The way there is
+# checked every BASE_PATH_STEP (m, rad).
+BASE_SAMPLES, BASE_CHECKS = 500, 20
+BASE_DISTANCES, BASE_FACING = (.3, 1.), np.radians(60.)
 BASE_MARGIN = .25
+BASE_IK_ATTEMPTS = 5
+BASE_PATH_STEP = (.05, np.radians(10.))
+BASE_SPREAD = (.05, np.radians(10.))
+REACH_SAMPLES = 500     # random arm poses whose TCP distance from the shoulder bounds the arm's reach
+
+
+def wrapped(angle):
+    return float((angle + np.pi) % (2 * np.pi) - np.pi)
+
+
+def drive(start, goal):
+    """``(first turn, distance, last turn)`` taking the base from ``start`` to ``goal`` (x, y, yaw):
+    turned in place, straight forward or back (whichever turns less), turned in place."""
+    delta = np.asarray(goal[:2], dtype=float) - start[:2]
+    distance = float(np.linalg.norm(delta))
+    if distance < BASE_TOLERANCE[0]:
+        return 0., 0., wrapped(goal[2] - start[2])
+    first = wrapped(np.arctan2(delta[1], delta[0]) - start[2])
+    if abs(first) > np.pi / 2:
+        first, distance = wrapped(first + np.pi), -distance
+    return first, distance, wrapped(goal[2] - start[2] - first)
+
+
+def drive_time(start, goal):
+    first, distance, last = drive(start, goal)
+    return abs(distance) / BASE_SPEED + (abs(first) + abs(last)) / BASE_TURN
+
+
+def drive_path(start, goal):
+    """Base poses along :func:`drive` from ``start`` to ``goal``, ``BASE_PATH_STEP`` apart."""
+    first, distance, last = drive(start, goal)
+    x, y, yaw = start
+    path = [(x, y, yaw + first * k / n) for n in [int(np.ceil(abs(first) / BASE_PATH_STEP[1]))] for k in range(1, n + 1)]
+    yaw += first
+    count = int(np.ceil(abs(distance) / BASE_PATH_STEP[0]))
+    path += [(x + distance * k / count * np.cos(yaw), y + distance * k / count * np.sin(yaw), yaw)
+             for k in range(1, count + 1)]
+    x, y = (x + distance * np.cos(yaw), y + distance * np.sin(yaw))
+    path += [(x, y, yaw + last * k / n) for n in [int(np.ceil(abs(last) / BASE_PATH_STEP[1]))] for k in range(1, n + 1)]
+    return path
 
 
 class Base:
@@ -31,10 +77,6 @@ class Base:
         ctx = self.ctx
         x, y, yaw = self.base_pose()
         goal, heading = np.array([x, y]) + forward * np.array([np.cos(yaw), np.sin(yaw)]), yaw + turn
-
-        def wrapped(angle):
-            return float((angle + np.pi) % (2 * np.pi) - np.pi)
-
         limit = steps(abs(forward) / BASE_SPEED + abs(turn) / BASE_TURN + BASE_SETTLE)
         for _ in range(limit):
             x, y, now = self.base_pose()
@@ -55,78 +97,178 @@ class Base:
         ctx.note('base moved', forward=forward, turn=turn, pose=self.base_pose().tolist())
 
     def base_for(self, poses, arms=None, need=None, path=False):
-        """``(back, turn)`` from the episode's start pose of the base (backed off along its start
-        heading, then turned) from where one of ``arms`` (default the free ones) reaches ``need``
-        (default all) of ``poses`` with each joint ``BASE_MARGIN`` inside its limits; the least move
-        that does, else the one reaching most, with the widest margin. Each of ``poses`` is a world
-        TCP pose or a list of them along a straight move, each solved from the one before at the
-        torso height of the first (``path``: ``poses`` are one such list)."""
-        model = self.model
-        arms = list(arms) if arms else [a for a in self.arms if a not in self.held]
-        groups = [list(poses)] if path else [[pose] if np.ndim(pose) == 2 else list(pose) for pose in poses]
-        need = len(groups) if need is None else need
-        actual = model.base.copy()
-        best, most = None, (-1, -np.inf)
+        """World pose ``(x, y, yaw)`` of the base from where one of ``arms`` (default the free ones)
+        reaches ``need`` (default all) of ``poses`` with each joint ``BASE_MARGIN`` inside its limits:
+        where it stands if they are reached from there, else the sampled pose (see the constants)
+        the base gets to soonest, the robot clear of the planning world there and on its way; else
+        the one reaching most, with the widest margin (None when none is clear and in reach of the
+        arms). No poses: its start pose. Each of ``poses`` is a world TCP pose or a list of them
+        along a straight move, each solved from the one before at the torso height of the first
+        (``path``: ``poses`` are one such list); ``{arm: poses}`` gives each arm its own."""
+        model, ctx = self.model, self.ctx
+        if not isinstance(poses, dict):
+            arms = list(arms) if arms else [a for a in self.arms if a not in self.held]
+            poses = dict.fromkeys(arms, poses)
+        groups = {arm: [list(own)] if path else [[pose] if np.ndim(pose) == 2 else list(pose) for pose in own]
+                  for arm, own in poses.items() if len(own)}
+        if not groups:
+            return self.start_base
+        need = max(map(len, groups.values())) if need is None else need
+        current = self.base_pose()
+        # Sampled around the poses to reach, facing them.
+        centre = np.mean([group[0][:2, 3] for own in groups.values() for group in own], axis=0)
+        distance = ctx.rng.uniform(*BASE_DISTANCES, BASE_SAMPLES)
+        bearing = ctx.rng.uniform(-np.pi, np.pi, BASE_SAMPLES)
+        facing = ctx.rng.uniform(-BASE_FACING, BASE_FACING, BASE_SAMPLES)
+        samples = np.c_[centre + distance[:, None] * np.c_[np.cos(bearing), np.sin(bearing)],
+                        [wrapped(angle) for angle in bearing + np.pi + facing]]
+        samples = sorted(samples, key=lambda pose: drive_time(current, pose))
+        q = model.q.copy()          # the free arms in (see make_room)
+        for arm in self.arms:
+            if arm not in self.held:
+                q[model.arm_indices(arm)] = self.home[model.arm_indices(arm)]
+        actual, world_poses, started = model.base.copy(), ctx.poses(), time.perf_counter()
+        chosen, best, most, checked, spread = None, None, (-1, -np.inf), [], np.array(BASE_SPREAD)
+        rejected = {'out of reach': 0, 'collision': 0, 'IK': 0, 'way': 0, 'collisions': {}}
         try:
-            for back, turn in sorted(((b, t) for b in BASE_BACKS for t in np.radians(BASE_TURNS)),
-                                     key=lambda option: option[0] / .05 + abs(option[1]) / np.radians(10.)):
-                model.base = self.base_at(back, turn)
-                for arm in arms:
-                    self.solvers[arm].sync()
-                    margins = [self.path_margin(arm, group) for group in groups]
-                    reached = sum(margin >= BASE_MARGIN for margin in margins)
-                    if reached >= need:
-                        return back, turn
-                    score = (reached, max(margins, default=np.inf))
-                    if score > most:
-                        best, most = (back, turn), score
+            for index, pose in enumerate([current, *samples]):
+                if len(checked) >= BASE_CHECKS:
+                    break
+                if any(np.all(np.abs([*(pose[:2] - other[:2]), wrapped(pose[2] - other[2])]) < spread[[0, 0, 1]])
+                       for other in checked):
+                    continue
+                self.put_base(pose, world_poses)
+                if index and not self.in_reach(groups, need):
+                    rejected['out of reach'] += 1
+                    continue
+                if index and not self.clear(q):
+                    rejected['collision'] += 1
+                    for pair in self.touching(q)[:3]:
+                        key = f'{pair[0]} / {pair[1]}'
+                        rejected['collisions'][key] = rejected['collisions'].get(key, 0) + 1
+                    continue
+                checked.append(pose)
+                reached, margin = self.reached(groups, need)
+                if reached < need:
+                    rejected['IK'] += 1
+                    if (reached, margin) > most:
+                        best, most = pose, (reached, margin)
+                    continue
+                if not index:
+                    return current
+                if all(self.put_base(along, world_poses) or self.clear(q) for along in drive_path(current, pose)):
+                    chosen = pose
+                    break
+                rejected['way'] += 1
         finally:
             model.base = actual
             for solver in self.solvers.values():
                 solver.sync()
-        return best
+        ctx.note('base choice', checked=len(checked), rejected=rejected, most=list(most), choice_s=time.perf_counter() - started,
+                 chosen=None if chosen is None else chosen.tolist(), best=None if best is None else np.asarray(best).tolist())
+        return chosen if chosen is not None else best
 
-    def path_margin(self, arm, poses):
+    def put_base(self, pose, world_poses):
+        """The planning model's base at ``pose`` (x, y, yaw), the planning worlds following."""
+        transform = self.model.base.copy()
+        transform[:3, :3] = Rotation.from_euler('z', pose[2]).as_matrix()
+        transform[:2, 3] = pose[:2]
+        self.model.base = transform
+        for solver in self.solvers.values():
+            solver.world.set_frame(np.linalg.inv(transform))
+            solver.world.update(world_poses)
+
+    def touching(self, q):
+        """``[(link, object, object link)]`` the robot at full configuration ``q`` touches in the
+        planning worlds (what the arms hold included)."""
+        return [pair for arm in list(self.held) or self.arms[:1] for pair in self.model.object_collisions(arm, q)]
+
+    def clear(self, q):
+        return not self.touching(q)
+
+    def arm_reach(self, arm):
+        """``(shoulder, radius)``: ``arm``'s shoulder in the root frame and the farthest its TCP gets from it."""
+        if arm not in self.reaches:
+            model, indices = self.model, self.model.arm_indices(arm)
+            link = self.ctx.spec.arms[arm].joints[1].replace('joint', 'link')
+            q = model.q.copy()
+            radius = 0.
+            for values in np.random.default_rng(0).uniform(*model.limits[indices].T, (REACH_SAMPLES, len(indices))):
+                q[indices] = values
+                radius = max(radius, float(np.linalg.norm(model.tcp(arm, q)[:3, 3] - model.fk(link, q)[:3, 3])))
+            self.reaches[arm] = (model.fk(link)[:3, 3], radius)
+        return self.reaches[arm]
+
+    def in_reach(self, groups, need):
+        """Whether ``need`` of an arm's ``groups`` (``{arm: groups}``) are within its reach (horizontally)."""
+        for arm, own in groups.items():
+            shoulder, radius = self.arm_reach(arm)
+            shoulder = (self.model.base @ np.r_[shoulder, 1.])[:2]
+            if sum(all(np.linalg.norm(pose[:2, 3] - shoulder) <= radius for pose in group) for group in own) >= need:
+                return True
+        return False
+
+    def reached(self, groups, need):
+        """``(groups, margin)``: the most of an arm's ``groups`` (``{arm: groups}``) it reaches with
+        ``BASE_MARGIN`` (see :meth:`path_margin`), and its widest margin."""
+        most = (0, -np.inf)
+        for arm, own in groups.items():
+            # The hand reaching the poses touches what it reaches (a handle, an object to grasp).
+            world, fingers = self.solvers[arm].world, self.ctx.spec.arms[arm].finger_links
+            touched = [(name, finger) for name in world.objects for finger in fingers
+                       if frozenset((name, finger)) not in world.permissions]
+            for name, finger in touched:
+                world.allow([name], [finger])
+            try:
+                reached, margins = 0, []
+                for group in own:
+                    margins.append(self.path_margin(arm, group, attempts=BASE_IK_ATTEMPTS))
+                    reached += margins[-1] >= BASE_MARGIN
+                    if reached >= need:
+                        return reached, max(margins)
+                most = max(most, (reached, max(margins, default=-np.inf)))
+            finally:
+                for name, finger in touched:
+                    world.allow([name], [finger], False)
+        return most
+
+    def path_margin(self, arm, poses, attempts=IK_ATTEMPTS):
         """Least distance (rad) of ``arm``'s joints to their limits through ``poses`` (world TCP), each
         solved from the one before (one branch) at the torso height of the first, as a straight move
-        does; -inf where one has no IK."""
+        does; -inf where one has no IK (``attempts`` restarts each)."""
         model, indices = self.model, self.model.arm_indices(arm)
         q, margin = None, np.inf
         for index, pose in enumerate(poses):
-            status, q = model.ik(arm, pose, q, world=True, lift=index == 0, attempts=IK_ATTEMPTS)
+            status, q = model.ik(arm, pose, q, world=True, lift=index == 0, attempts=attempts)
             if status != 'Success':
                 return -np.inf
             margin = min(margin, float(np.min(np.minimum(q[indices] - model.limits[indices, 0],
                                                          model.limits[indices, 1] - q[indices]))))
         return margin
 
-    def base_at(self, back, turn):
-        """World pose of the root link with the base ``back`` behind its start pose, turned by ``turn``."""
-        x, y, yaw = self.start_base
-        transform = self.model.base.copy()
-        transform[:3, :3] = Rotation.from_euler('z', yaw + turn).as_matrix()
-        transform[:2, 3] = np.array([x, y]) - back * np.array([np.cos(yaw), np.sin(yaw)])
-        return transform
-
     def make_room(self, poses, arms=None, need=None, path=False):
-        """Move the base (see :meth:`base_for`) to where ``poses`` are reachable with a margin:
-        back to the start heading, along it, then turned."""
+        """Move the base (see :meth:`base_for`) to where ``poses`` are reachable with a margin: the
+        free arms in, turned in place, straight on, turned in place."""
         if not self.ctx.spec.base:
             return
         chosen = self.base_for(poses, arms, need, path)
         self.ctx.note('room', chosen=None if chosen is None else [float(v) for v in chosen])
         if chosen is None:
             return
-        back, turn = chosen
-        x, y, yaw = self.base_pose()
-        x0, y0, yaw0 = self.start_base
-        now_back = float(([x0, y0] - np.array([x, y])) @ [np.cos(yaw0), np.sin(yaw0)])
-        now_turn = float((yaw - yaw0 + np.pi) % (2 * np.pi) - np.pi)
-        if abs(now_back - back) < BASE_TOLERANCE[0] * 2 and abs(now_turn - turn) < BASE_TOLERANCE[1] * 2:
+        before = self.base_pose()
+        first, distance, last = drive(before, chosen)
+        if abs(distance) < BASE_TOLERANCE[0] * 2 and abs(first) + abs(last) < BASE_TOLERANCE[1] * 2:
             return
         self.ready()        # the free arms in, so that they sweep nothing as the base turns
-        self.move_base(0., -now_turn)
-        self.move_base(now_back - back, turn)
+        self.move_base(0., first)
+        self.move_base(distance, last)
+        self.note_relocated(before)
+
+    def note_relocated(self, before):
+        """Note a move of the base from ``before`` (x, y, yaw): how far it went and turned."""
+        after = self.base_pose()
+        self.ctx.note('base relocated', travel=float(np.linalg.norm(after[:2] - before[:2])),
+                      turn=float(abs((after[2] - before[2] + np.pi) % (2 * np.pi) - np.pi)), pose=after.tolist())
 
     def ready(self):
         """Back to the start pose with each arm holding nothing (a planned move; skipped where it

@@ -5,7 +5,7 @@ import numpy as np
 from table_1000.experts.context import Unreachable, steps
 from table_1000.experts.grasps import standoff, translated
 from table_1000.experts.skills.common import CANDIDATE_PLANS, IK_ATTEMPTS, RETREATS, SUPPORT_DISTANCE, collisions, normalized
-from table_1000.experts.solver import PlanningFailed
+from table_1000.experts.solver import PlanningFailed, note_torso
 
 PARTIALS = (.75, .5, .25)     # fractions of a straight move tried when all of it does not plan
 SHORT_RETREAT = .02     # m back along the approach that takes the fingers off what they held
@@ -102,6 +102,7 @@ class Motion:
         for k in range(1, count + 1):
             ctx.step({'lift': (lift + (target - lift) * k / count)[None]})
         ctx.hold(.3)
+        note_torso(ctx, [lift, target])
         rest = rise - float(np.min(target - lift))
         if rest < .005:
             return 1.
@@ -139,16 +140,23 @@ class Motion:
                     pose[:3, 3] = face - approach * tip
                     options.append((candidate, tilt, pose))
         before = ctx.poses()[target.body][:3, 3]
-        for candidate, tilt, contact in options:
+        # Either arm with the torso lift where it is (all the way through the push), then moving it too.
+        tried = set()
+        for lift, (index, (candidate, tilt, contact)) in ((lift, option) for lift in (False, True)
+                                                          for option in enumerate(options)):
+            if index in tried:
+                continue
             solver = self.solvers[candidate]
             start = self.model.vector(ctx.spec.arms[candidate].finger_targets(0.))
-            status, q_pre = self.ik(candidate, translated(contact, -direction * PUSH_GAP), start)
+            status, q_pre = self.model.ik(candidate, translated(contact, -direction * PUSH_GAP), start, world=True,
+                                          lift=lift, attempts=IK_ATTEMPTS)
             if status != 'Success':
                 continue
             status, _ = self.model.ik(candidate, translated(contact, direction * distance), q_pre, world=True,
-                                      attempts=IK_ATTEMPTS, check_collision=False)
+                                      lift=lift, attempts=IK_ATTEMPTS, check_collision=False)
             if status != 'Success':
                 continue
+            tried.add(index)
             # The fingertips push the part and may touch the rest of its body (a drawer's front).
             touched = [name for name, obj in solver.world.objects.items() if obj.body == target.body] or target.names
             try:
@@ -188,14 +196,14 @@ class Motion:
             solver.detach(name)
         solver.sync()
         tcp = solver.tcp()
-        # Straight out (with the torso lift too, if the arm alone runs into a limit or the body),
+        # Straight out (with the torso lift too, if the arm alone runs into a limit or the body at either distance),
         # else out along a planned path, else out just clear of the fingers' grip and up, else up.
         def out_and_up():
             solver.move_to_pose_with_screw(standoff(tcp, SHORT_RETREAT))
             solver.first_reachable([translated(solver.tcp(), [0., 0., d]) for d in RETREATS])
 
         moves = [lambda d=d, lift=lift: solver.move_to_pose_with_screw(standoff(tcp, d), lift=lift)
-                 for d in RETREATS for lift in (False, True)]
+                 for lift in (False, True) for d in RETREATS]
         moves.append(lambda: solver.move_to_pose_with_RRTConnect(standoff(tcp, RETREATS[0]), lift=True))
         moves.append(out_and_up)
         moves += [lambda d=d: solver.move_to_pose_with_screw(translated(tcp, [0., 0., d])) for d in RETREATS]

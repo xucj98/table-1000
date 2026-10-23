@@ -1,5 +1,6 @@
 """Grasp and pick: candidates of a target, their IK and motion, the base moved where none is in reach."""
 
+import itertools
 import time
 
 import numpy as np
@@ -14,9 +15,25 @@ LIFT = .10              # m, pick's lift
 HELD_TOLERANCE = .005   # m the closed gap may fall short of the gap at which the pads touch the object
 MAX_REGRASPS = 2
 MAX_IK = 60             # candidates checked by IK per arm and choice
-MAX_PLANS = 6           # candidates whose motion is tried per grasp attempt
+MAX_PLANS = 6           # candidates whose motion is tried per grasp attempt, with the torso lift held and moving
+# With the torso lift held, only grasps approaching within HELD_SLACK (deg) of the closest a candidate
+# of either arm comes to the approach: a worse grasp is not worth sparing the torso.
+HELD_SLACK = 15.
 MIN_RISE = .05          # m the object must rise in pick's lift
 WHY_LIMIT = 20          # rejected grasps per choice whose collisions are counted for the report
+
+
+class Replayed:
+    """An iterator's items, made as first asked for and replayed from the first on each pass."""
+
+    def __init__(self, items):
+        self.items, self.made = iter(items), []
+
+    def __iter__(self):
+        yield from self.made
+        for item in self.items:
+            self.made.append(item)
+            yield item
 
 
 class Grasping:
@@ -77,61 +94,69 @@ class Grasping:
             obstacles.append((body, SUPPORT_CLEARANCE if support else 0.))
         return obstacles, supports
 
-    def options(self, target, arms, skip, point=None, approach=None, then=None, max_angle=None):
-        """Feasible ``(arm, grasp, supports, q_grasp, q_pre)``, in the order tried; ``skip`` holds the
-        ids of candidates already used. ``self.rejected`` counts the candidates dropped, by reason."""
+    def options(self, target, arms, skip, point=None, approach=None, then=None, max_angle=None, tried=None):
+        """Feasible ``(arm, grasp, supports, q_grasp, q_pre)``, in the order tried: those of either
+        arm (the nearer first) with the torso lift where it is (also through ``then``), then those
+        moving it too; ``skip`` holds the ids of candidates already used, ``tried`` (``{lift: count}``)
+        those whose motion was tried, up to ``MAX_PLANS`` each. ``self.rejected`` counts the
+        candidates dropped, by reason."""
+        tried = {False: 0, True: 0} if tried is None else tried
         self.rejected = {'grasp IK': 0, 'pre-grasp IK': 0, 'then': 0, 'collisions': {}}
         transform = self.ctx.poses()[target.body] @ target.offset
         centre = transform[:3, 3]
         then = None if then is None else np.asarray(then, dtype=float)
         upward = then is not None and np.linalg.norm(then[:2]) < 1e-9 and then[2] > 0.
-        for arm in sorted(arms, key=lambda arm: np.linalg.norm((self.shoulder(arm) - centre)[:2])):
-            solver, side = self.solvers[arm], self.ctx.spec.arms[arm]
+        arms = sorted(arms, key=lambda arm: np.linalg.norm((self.shoulder(arm) - centre)[:2]))
+        found = {}
+        for arm in arms:
             preferred = approach if approach is not None else normalized(centre - self.shoulder(arm)) + [0., 0., -1.]
             obstacles, supports = self.obstacles(arm, target, transform)
-            candidates = grasp_candidates(target.shape, transform, self.hands[arm], obstacles, preferred,
-                                          center_of_mass=point, approach_distance=APPROACH)
-            checked = 0
-            for index, grasp in enumerate(candidates):
-                if (arm, index) in skip:
-                    continue
-                if checked >= MAX_IK or (max_angle is not None and grasp.info['approach_deg'] > np.degrees(max_angle) + 1e-6):
-                    break
-                checked += 1
-                start = self.model.vector(side.finger_targets(grasp.open_gap))
-                solver.sync()
-                # The fingers touch the object and come closer to its supports than the padding.
-                solver.allow([*target.names, *supports])
-                status, q_grasp = self.ik(arm, grasp.pose, start)
-                solver.allow([*target.names, *supports], False)
-                if status != 'Success':
-                    self.rejected['grasp IK'] += 1
-                    if self.rejected['grasp IK'] <= WHY_LIMIT:
-                        self.why(arm, grasp.pose, start, [*target.names, *supports])
-                    continue
-                status, q_pre = self.model.ik(arm, standoff(grasp.pose, APPROACH), q_grasp, world=True,
-                                              attempts=IK_ATTEMPTS)
-                if status != 'Success':
-                    self.rejected['pre-grasp IK'] += 1
-                    continue
-                if then is not None:
-                    status, _ = self.model.ik(arm, translated(grasp.pose, then), q_grasp, world=True, lift=True,
-                                              attempts=IK_ATTEMPTS)
-                    # Close to the body the hand may not reach higher; then the torso must rise that far.
-                    headroom = self.model.limits[self.model.lift_indices(), 1] - q_grasp[self.model.lift_indices()]
-                    if status != 'Success' and not (upward and np.min(headroom) >= then[2]):
-                        self.rejected['then'] += 1
+            found[arm] = supports, Replayed(grasp_candidates(target.shape, transform, self.hands[arm], obstacles,
+                                                             preferred, center_of_mass=point, approach_distance=APPROACH))
+        closest = min((grasp.info['approach_deg'] for _, candidates in found.values()
+                       for grasp in itertools.islice(candidates, MAX_IK)), default=0.)
+        for lift in (False, True):
+            limit = np.degrees(max_angle) if max_angle is not None else np.inf
+            if not lift:
+                limit = min(limit, closest + HELD_SLACK)
+            for arm in arms:
+                solver, side = self.solvers[arm], self.ctx.spec.arms[arm]
+                supports, candidates = found[arm]
+                checked = 0
+                for index, grasp in enumerate(candidates):
+                    if tried[lift] >= MAX_PLANS:
+                        break
+                    if (arm, index) in skip:
                         continue
-                skip.add((arm, index))
-                yield arm, grasp, supports, q_grasp, q_pre
-
-    def ik(self, arm, pose, start):
-        """IK of world ``pose`` keeping the torso lift where it is, else moving it too (a far lift
-        counts little among the arm's angles, and a raised torso makes later plans longer)."""
-        status, q = self.model.ik(arm, pose, start, world=True, attempts=IK_ATTEMPTS)
-        if status == 'Success':
-            return status, q
-        return self.model.ik(arm, pose, start, world=True, lift=True, attempts=IK_ATTEMPTS)
+                    if checked >= MAX_IK or grasp.info['approach_deg'] > limit + 1e-6:
+                        break
+                    checked += 1
+                    start = self.model.vector(side.finger_targets(grasp.open_gap))
+                    solver.sync()
+                    # The fingers touch the object and come closer to its supports than the padding.
+                    solver.allow([*target.names, *supports])
+                    status, q_grasp = self.model.ik(arm, grasp.pose, start, world=True, lift=lift, attempts=IK_ATTEMPTS)
+                    solver.allow([*target.names, *supports], False)
+                    if status != 'Success':
+                        self.rejected['grasp IK'] += 1
+                        if self.rejected['grasp IK'] <= WHY_LIMIT:
+                            self.why(arm, grasp.pose, start, [*target.names, *supports])
+                        continue
+                    status, q_pre = self.model.ik(arm, standoff(grasp.pose, APPROACH), q_grasp, world=True,
+                                                  attempts=IK_ATTEMPTS)
+                    if status != 'Success':
+                        self.rejected['pre-grasp IK'] += 1
+                        continue
+                    if then is not None:
+                        status, _ = self.model.ik(arm, translated(grasp.pose, then), q_grasp, world=True, lift=lift,
+                                                  attempts=IK_ATTEMPTS)
+                        # Close to the body the hand may not reach higher; then the torso must rise that far.
+                        headroom = self.model.limits[self.model.lift_indices(), 1] - q_grasp[self.model.lift_indices()]
+                        if status != 'Success' and not (lift and upward and np.min(headroom) >= then[2]):
+                            self.rejected['then'] += 1
+                            continue
+                    skip.add((arm, index))
+                    yield arm, grasp, supports, q_grasp, q_pre, lift
 
     def why(self, arm, pose, start, allowed):
         """Count, in ``self.rejected['collisions']``, what an IK solution of ``pose`` that ignores
@@ -161,8 +186,8 @@ class Grasping:
                 # None in reach from here: the base moves to reach the first candidates, then again.
                 roomed = True
                 paths = self.grasp_paths(target, arms, point, approach, then, max_angle)
-                if paths:
-                    self.make_room(paths, arms, need=1)
+                if any(paths.values()):
+                    self.make_room(paths, need=1)
                     skip = set()
                     reached = self.reach(target, arms, skip, point, approach, then, max_angle)
             if reached is None:
@@ -196,11 +221,11 @@ class Grasping:
         return result
 
     def grasp_paths(self, target, arms, point=None, approach=None, then=None, max_angle=None):
-        """The world TCP poses of the first ``ROOM_PLACES`` grasp candidates per arm, each with its
-        pre-grasp before it (and the ``then`` move after it): what the base moves to reach."""
+        """``{arm: paths}``: the world TCP poses of the first ``ROOM_PLACES`` grasp candidates of each
+        arm, each with its pre-grasp before it (and the ``then`` move after it): what the base moves to reach."""
         transform = self.ctx.poses()[target.body] @ target.offset
         centre = transform[:3, 3]
-        paths = []
+        paths = {arm: [] for arm in arms}
         for arm in arms:
             preferred = approach if approach is not None else normalized(centre - self.shoulder(arm)) + [0., 0., -1.]
             obstacles, _ = self.obstacles(arm, target, transform)
@@ -214,17 +239,16 @@ class Grasping:
                 path = [standoff(grasp.pose, APPROACH), grasp.pose]
                 if then is not None:
                     path.append(translated(grasp.pose, then))
-                paths.append(path)
+                paths[arm].append(path)
         return paths
 
     def reach(self, target, arms, skip, point, approach, then, max_angle=None):
         """Move to the first grasp of :meth:`options` whose motion plans, fingers open around the
         object; ``(arm, grasp, supports)``, or None when no candidate is left."""
-        ctx = self.ctx
-        for tried, (arm, grasp, supports, q_grasp, q_pre) in enumerate(
-                self.options(target, arms, skip, point, approach, then, max_angle)):
-            if tried >= MAX_PLANS:
-                return None
+        ctx, tried = self.ctx, {False: 0, True: 0}
+        for arm, grasp, supports, q_grasp, q_pre, lift in self.options(target, arms, skip, point, approach, then,
+                                                                      max_angle, tried):
+            tried[lift] += 1
             solver = self.solvers[arm]
             try:
                 solver.open_gripper(grasp.open_gap)
