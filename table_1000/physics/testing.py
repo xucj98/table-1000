@@ -61,7 +61,9 @@ class TestContext:
             settings.set_bool('/physics/updateVelocitiesToUsd', True)
         self.world = SimulationContext(SimulationCfg(
             device='cpu' if physics == 'cpu' else 'cuda:0', dt=.004, render_interval=10,
-            use_fabric=physics == 'gpu',
+            # CPU PhysX does not mirror tensor-written kinematic poses to USD.
+            # Render through native Fabric; keep no-render CPU runs unchanged.
+            use_fabric=render or physics == 'gpu',
             physx=PhysxCfg(solver_type=1, enable_ccd=physics == 'cpu',
                            enable_external_forces_every_iteration=physics == 'gpu',
                            min_position_iteration_count=64 if physics == 'gpu' else 1,
@@ -142,6 +144,12 @@ class TestContext:
         if self.initialized:
             return
         started = time.perf_counter()
+        # Attach the render product before reset initializes PhysX/Fabric.
+        # Attaching it to an already initialized scene after prior disposable
+        # contexts can leave tensor-driven GPU kinematics without contacts.
+        if self.render and self.camera_config:
+            from table_1000.physics.video import Camera
+            self.camera_instance = Camera(self.session.stage, self.camera_config)
         if self.app:
             for _ in range(5): self.app.update()
         from pxr import Gf, UsdGeom
@@ -353,8 +361,6 @@ class TestContext:
             self.action_values.clear()
             self.sample()
             if self.render and self.camera_config:
-                from table_1000.physics.video import Camera
-                self.camera_instance = Camera(self.session.stage,self.camera_config)
                 start = time.perf_counter();self.camera_instance.capture(self);self.preparation_seconds += time.perf_counter()-start
                 self.video_started = time.perf_counter()
                 self.images.append(self.camera_instance.capture(self))

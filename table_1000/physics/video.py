@@ -31,13 +31,13 @@ class Camera:
     def capture(self, ctx):
         runtime = ctx.session
         from PIL import Image, ImageDraw
-        if ctx.physics == 'gpu':
+        before = {key: {field: value[field].copy() for field in ('position', 'quaternion', 'velocity')}
+                  for key, value in runtime.states.items()}
+        if ctx.world.is_fabric_enabled():
             ctx.world.forward()
         else:
             from omni.physx import get_physx_interface
             get_physx_interface().update_transformations(True, True, True, False)
-        before = {key: {field: value[field].copy() for field in ('position', 'quaternion', 'velocity')}
-                  for key, value in runtime.states.items()}
         # A newly attached annotator can return an empty 1-D buffer while
         # Hydra compiles/activates the render product. Render only (no step)
         # until this product has a real frame, with a bounded startup cost.

@@ -52,7 +52,7 @@ cap_ball1..3 [rigid]
 
 按[第二章教程](../../../../docs/tutorials/02-physics-assets.md)显式选择本ID构建，加载产物目录的 `object.usdz`。`object.py` / `physics.py` / `physics_test.py` 分别保留逐款几何、质量和实验协议参数，共享实现来自同版本 `table_1000.modeling.pen_detents`、`table_1000.physics.pen_assets`、`table_1000.physics.pen_tests`；源码快照重建依赖同版本包。身份字段不扩展。
 
-实际正式RTF（无渲染三轮 / 独立含视频；960×480、25FPS）：
+历史CPU候选RTF（旧框架，仅供追溯；无渲染三轮 / 独立含视频；960×480、25FPS）：
 
 |实验|无渲染RTF|含视频RTF|
 |---|---:|---:|
@@ -64,3 +64,29 @@ cap_ball1..3 [rigid]
 |low_drop|0.227523|0.176346|
 
 循环动态拔力随三次状态变化（1.23/0.931/0.753N）；低落最大瞬时几何穿地1.503mm，不外推真实冲击。白色轮廓在浅背景对比度有限，完整媒体和关键帧均已实际审查。
+
+### 2026-10-23 定向修复与当前结果
+
+六项正式合同CPU1/GPU4均completed，全部视频与曲线本组审查通过，待总控独立验收。GPU自由反作用及翻转采用已批准PGS例外、关闭每迭代重复外力；保留1ms、scene64/16、rigid32/8及全部断言。GPU低落沿用原PGS，拔盖/合盖/循环仍TGS；GPU scene CCD关，CPU TGS、scene1/0、CCD开。此前“32/8、CCD开”简写不代表GPU场景条件。
+
+free_reaction从座合帽开始，0.2s后才施加载荷；PGS四环境动量相对误差最大1.13e-6、闲置末速最大6.49e-6m/s。翻转中四环境松帽最终开口约218.186mm，紧帽全程最大开口0.2294mm，原>30mm分离及<0.5mm保持条件不变。PGS是数值workaround，尚未定位PhysX内部故障。
+
+拔盖夹具在原1.2s下降段按帽碰撞凸包与COM选择约15°稳定支撑面，使用原生夹具转动/下降；按原时刻释放，保留2.4s稳定段、0.5s尾窗及0.01m/s/1mm门槛，没有瞬移或改变帽/卡扣物性。GPU最大尾速0.003416m/s、最大跨度0.003832mm。CPU拔盖已重测；free/gravity也在当前初始化路径复验，其他三项新版输入/调用路径不受本轮修正影响。全部机构、质量、材料、Drive、载荷与UUID保持，工程参数未经实物标定。
+
+当前完整原始结果：`assets/objects/pen/000011/physics_test/`。媒体/逐环境检查入口：`outputs/asset-physics/pen/framework-gpu-2026-10-22/media-review/000011-complete-review.json`。两次长命令以143中断的日志已单独归档，之后按单后端/单项补测正常完成；未将中断当物理通过，也未认定为运行器死锁。正式性能通过统一队列单次提交；功能录像RTF不替代无渲染基准。
+
+本轮关键实测（Isaac Sim 5.1，未经实物标定）：
+
+| 物理量 | CPU1 | GPU4（聚合口径见指标） | 来源 |
+|---|---:|---:|---|
+| 紧帽分离末施加载荷 (N) | 0.87825 | 1.1925 | pull_comparison / tight_pull |
+| 松帽分离末施加载荷 (N) | 0.034 | 0.03425 | pull_comparison / loose_pull |
+| 撤力后开口 (mm) | 0.04191548 | 0.04240162 | close / released_opening |
+| 紧帽全程最大开口 (mm) | 0.1715839 | 0.2239686 | gravity_rotation / held_opening |
+| 完整拔插次数 (1) | 3 | 3 | cycles / cycles |
+| 动量相对误差（env0） (1) | 4.208211e-05 | 1.294805e-07 | free_reaction / momentum_error |
+| 最大几何穿地 (mm) | 1.503309 | 1.143086 | low_drop / penetration |
+
+历史GPU失败及中断原始证据保留在本轮结果索引的`before/`与`runs/`，不计为当前通过。旧接触查询只覆盖env0；以初始化后四环境接触库存为准。逆环境位置诊断没有实际改变view初态，不能作为排除位置因素的依据。
+
+当前正式性能任务`6f7db69cecc0561f`已单次进入统一队列；尚待本次测量及新媒体审核。前述历史候选CPU性能仅供旧版本参考，不代表当前框架正式性能。功能和媒体本组审核通过，总控独立验收尚未完成。

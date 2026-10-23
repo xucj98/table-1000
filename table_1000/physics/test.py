@@ -1,15 +1,19 @@
 """Run asset physics TESTS on one or more backends and summarize each asset."""
 import argparse
 import csv
+import datetime
+import faulthandler
 import importlib.util
 import json
 import math
 import os
 from pathlib import Path
 import shutil
+import signal
 import statistics
 import subprocess
 import sys
+import threading
 import time
 import traceback
 
@@ -19,6 +23,29 @@ def load_tests(path):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module.TESTS
+
+
+def stage_event(stage, **details):
+    """Emit a timestamped breadcrumb for locating stalls in Isaac workers."""
+    event={'utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),
+           'monotonic_s':time.monotonic(),'pid':os.getpid(),
+           'thread':threading.current_thread().name,'stage':stage,**details}
+    print('PHYSICS_TEST_STAGE '+json.dumps(event,ensure_ascii=False,default=repr),flush=True)
+
+
+def run_selected_cases(selected, run):
+    """Run each selected case even after a prior case fails; return failure state."""
+    failed=False
+    for name,test in selected.items():
+        stage_event('case.begin',test=name)
+        try:
+            run(name,test)
+            stage_event('case.return',test=name,status='completed')
+        except Exception:
+            failed=True
+            stage_event('case.return',test=name,status='failed')
+            traceback.print_exc()
+    return failed
 
 
 def ground_clearance(model, rows, instance_names, ground_z):
@@ -269,13 +296,18 @@ def run_video(asset,name,test,output,app,startup,rtf,gpu,physics="cpu",num_envs=
     from table_1000.physics.plots import plots
     directory=output/name
     started=time.perf_counter()
+    stage_event('video.context.construct.begin',test=name,backend=physics)
     ctx=TestContext(asset,name=name,render=True,app=app,physics=physics,num_envs=num_envs)
     ctx.utilization=utilization
     construction=time.perf_counter()-started
+    stage_event('video.context.construct.return',test=name,backend=physics,seconds=construction)
     try:
+        stage_event('video.experiment.begin',test=name)
         test(ctx)
+        stage_event('video.experiment.return',test=name,status='completed',steps=ctx.session.steps)
         replica_deviation=max(instance.view.replica_deviation() for instance in ctx.session.instances.values())
         frames=directory/'frames';frames.mkdir()
+        stage_event('video.media.write.begin',test=name,frames=len(ctx.images),samples=len(ctx.rows))
         for i,image in enumerate(ctx.images):image.save(frames/f'{i:05}.jpg',quality=95)
         columns=list(ctx.rows[0])
         with (directory/'trace.csv').open('w') as stream:
@@ -284,8 +316,13 @@ def run_video(asset,name,test,output,app,startup,rtf,gpu,physics="cpu",num_envs=
         subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-y','-framerate',str(fps),'-i',str(frames/'%05d.jpg'),
                         '-c:v','libx264','-pix_fmt','yuv420p','-crf','20',str(output/(name+'.mp4'))],check=True)
         wall=time.perf_counter()-ctx.video_started
+        stage_event('video.media.write.return',test=name,seconds=wall)
+        stage_event('video.utilization.summary.begin',test=name)
         video_utilization=utilization.summary() if utilization else None
+        stage_event('video.utilization.summary.return',test=name,
+                    status=video_utilization.get('status') if video_utilization else 'not_configured')
         plots(ctx.rows,ctx.plot_columns,directory,ctx.units)
+        stage_event('video.plots.return',test=name)
         # Fresh independent input executions, not subtraction of render costs.
         errors=[max(abs(float(row[key])-float(ctx.rows[-1][key])) for key in row.keys() & ctx.rows[-1].keys() if key!='time')
                 for round in rtf['rounds'] for row in round['final_states']] if rtf else []
@@ -317,13 +354,18 @@ def run_video(asset,name,test,output,app,startup,rtf,gpu,physics="cpu",num_envs=
             result['ground_contact']=ground_clearance(json.loads((asset.parent/'model.json').read_text()),
                 ctx.rows,ctx.session.instances,ctx.ground_config['z'])
         (directory/'result.json').write_text(json.dumps(result,indent=2)+'\n')
+        stage_event('video.result.write.return',test=name)
         print('PHYSICS_TEST_COMPLETED',name,flush=True)
         return result
     except Exception:
+        stage_event('video.exception.capture.begin',test=name)
         capture_failure(ctx,asset,name,directory,physics=physics,num_envs=num_envs,phase='video',gpu=gpu)
+        stage_event('video.exception.capture.return',test=name)
         raise
     finally:
+        stage_event('video.context.close.begin',test=name)
         close_context(ctx)
+        stage_event('video.context.close.return',test=name)
 
 
 def clear(output,name):
@@ -339,11 +381,18 @@ def run_case(asset,name,test,output,app,startup,gpu,physics="cpu",num_envs=1,uti
     rtf = None
     phase = 'benchmark' if standard else 'video'
     try:
+        stage_event('run_case.begin',test=name,backend=physics,standard=standard)
+        stage_event('run_case.benchmark.begin',test=name)
         rtf=benchmark(asset,name,test,app,physics=physics,num_envs=num_envs,utilization=utilization,diagnostics_directory=directory) if standard else None
+        stage_event('run_case.benchmark.return',test=name,status='completed' if standard else 'skipped')
         phase = 'video'
-        return run_video(asset,name,test,output,app,startup,rtf,gpu,physics=physics,num_envs=num_envs,utilization=utilization)
+        stage_event('run_case.video.begin',test=name)
+        result=run_video(asset,name,test,output,app,startup,rtf,gpu,physics=physics,num_envs=num_envs,utilization=utilization)
+        stage_event('run_case.video.return',test=name,status=result.get('execution_status','completed'))
+        return result
     except Exception:
         error=traceback.format_exc()
+        stage_event('run_case.exception',test=name,phase=phase)
         failure={}
         # clear() removed prior results; only merge this run's diagnostics.
         if (directory/'result.json').exists():
@@ -358,6 +407,7 @@ def run_case(asset,name,test,output,app,startup,gpu,physics="cpu",num_envs=1,uti
             failure['performance'] = {'no_render':rtf}
             failure['benchmark_status'] = 'completed'
         (directory/'result.json').write_text(json.dumps(failure,indent=2)+'\n')
+        stage_event('run_case.failure_result.write.return',test=name,phase=failure['failed_phase'])
         raise
 
 
@@ -419,6 +469,7 @@ def run_backend(asset,backend,*,gpu,script,tests=None,num_envs=None,benchmark=Fa
     num_envs=num_envs or (4 if physics=='gpu' else 1)
     output=asset.parent/'physics_test'/backend
     output.mkdir(parents=True,exist_ok=True)
+    stage_event('backend.begin',asset=str(asset),backend=backend,gpu=gpu,tests=tests)
     started=time.perf_counter()
     gpu_info={'physical_index':gpu,'before_process_start':subprocess.run(
         ['nvidia-smi','--query-gpu=index,name,driver_version,memory.used,utilization.gpu','--format=csv'],
@@ -428,6 +479,13 @@ def run_backend(asset,backend,*,gpu,script,tests=None,num_envs=None,benchmark=Fa
     app=start_app(gpu=gpu, device='cpu' if physics=='cpu' else 'cuda:0',
                   extra_args=(*RT2_ARGS,'--/rtx/post/motionblur/enabled=False'))
     startup=time.perf_counter()-started
+    stage_event('backend.app.ready',asset=str(asset),backend=backend,startup_s=startup)
+    if hasattr(signal,'SIGUSR1'):
+        try:
+            faulthandler.register(signal.SIGUSR1,file=sys.stderr,all_threads=True,chain=False)
+            stage_event('backend.thread_dump.registered',signal='SIGUSR1')
+        except (RuntimeError,ValueError,OSError) as error:
+            stage_event('backend.thread_dump.unavailable',error=f'{type(error).__name__}: {error}')
     failed=False
     try:
         selected=load_tests(script)
@@ -446,22 +504,23 @@ def run_backend(asset,backend,*,gpu,script,tests=None,num_envs=None,benchmark=Fa
         utilization=Utilization(gpu)
         try:
             with threadpool_limits(limits=1, user_api='blas'):
-                for name,test in selected.items():
-                    try:
-                        run_case(asset,name,test,output,app,startup,gpu_info,physics=physics,num_envs=num_envs,
-                                 utilization=utilization,standard=benchmark)
-                    except Exception:
-                        # run_case recorded the failure; the remaining tests still run.
-                        failed=True
-                        traceback.print_exc()
+                def run(name,test):
+                    return run_case(asset,name,test,output,app,startup,gpu_info,physics=physics,num_envs=num_envs,
+                                    utilization=utilization,standard=benchmark)
+                failed=run_selected_cases(selected,run)
         finally:
+            stage_event('backend.utilization.close.begin',asset=str(asset),backend=backend)
             utilization.close()
+            stage_event('backend.utilization.close.return',asset=str(asset),backend=backend,
+                        status=getattr(utilization,'close_status',None))
     except BaseException:
         failed=True
         traceback.print_exc()
         raise
     finally:
+        stage_event('backend.app.close.begin',asset=str(asset),backend=backend,failed=failed)
         app.close(exit_code=int(failed))
+        stage_event('backend.app.close.return',asset=str(asset),backend=backend,failed=failed)
 
 
 def run_jobs(jobs,gpus):

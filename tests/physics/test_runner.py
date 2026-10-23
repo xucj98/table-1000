@@ -5,10 +5,21 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from table_1000.physics.test import main, run_case, run_jobs, summary
+from table_1000.physics.test import main, run_case, run_jobs, run_selected_cases, summary
 
 
 class CaseResultsTests(unittest.TestCase):
+    def test_failed_case_does_not_prevent_later_case(self):
+        calls=[]
+        def run(name,test):
+            calls.append(name)
+            if name=='pull':
+                raise AssertionError('pull failed')
+        with patch('table_1000.physics.test.traceback.print_exc'):
+            failed=run_selected_cases({'pull':None,'close':None},run)
+        self.assertTrue(failed)
+        self.assertEqual(calls,['pull','close'])
+
     def test_definition_import_failure_closes_kit_with_nonzero_status(self):
         # Kit's close() normally terminates the process before Python can
         # propagate an exception. It must receive the failure explicitly.

@@ -116,7 +116,7 @@ def low_drop(ctx: TestContext):
     ctx.initial(position=(0, 0, .030))
     ctx.initial(instances[1], position=(.04, 0, .036), rotation=(0, 1, 0, 0))
     ctx.initial(instances[2], position=(.08, 0, .04275), rotation=(SQRT_HALF, 0, SQRT_HALF, 0))
-    ctx.camera(position=(.16, -.22, .13), target=(.04, 0, .005))
+    ctx.camera(position=(.184, -.264, .155), target=(.04, 0, .024))
     ctx.video_annotation = lambda: '30 mm lowest-point release; feet / crown / side'
     ctx.plots(*[f'{name}.speed' for name in ('asset', 'crown', 'side')],
               *[f'{name}.{BODY}.position.z' for name in ('asset', 'crown', 'side')])

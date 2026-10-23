@@ -1,10 +1,42 @@
 """Regressions for mixed rigid/articulated assets and startup render buffers."""
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 import unittest
 import numpy as np
 from table_1000.physics.simulation import Asset
 from table_1000.physics.video import Camera, MAX_CAPTURE_RENDERS
+from table_1000.physics.testing import TestContext
+
+
+class RenderInitializationTests(unittest.TestCase):
+    def test_render_product_is_attached_before_physics_reset(self):
+        # Stop at reset: the regression concerns scene initialization order,
+        # before any simulator state restoration or experiment steps.
+        ctx = TestContext.__new__(TestContext)
+        ctx.initialized = False
+        ctx.render = True
+        ctx.camera_config = {'resolution': (80, 60)}
+        ctx.app = Mock()
+        ctx.session = SimpleNamespace(stage=object(), instances={}, replicate=Mock())
+        events = []
+        ctx.world = Mock()
+        def reset():
+            events.append('reset')
+            raise RuntimeError('reset boundary')
+        ctx.world.reset.side_effect = reset
+        camera = object()
+        def attach(stage, config):
+            events.append('camera')
+            self.assertIs(stage, ctx.session.stage)
+            self.assertIs(config, ctx.camera_config)
+            return camera
+        with patch.dict('sys.modules', {'pxr': SimpleNamespace(Gf=Mock(), UsdGeom=Mock())}), \
+             patch('table_1000.physics.video.Camera', side_effect=attach):
+            with self.assertRaisesRegex(RuntimeError, 'reset boundary'):
+                ctx.ensure_initialized()
+        self.assertEqual(events, ['camera', 'reset'])
+        self.assertIs(ctx.camera_instance, camera)
+        ctx.world.step.assert_not_called()
 
 
 class MixedRestoreTests(unittest.TestCase):
@@ -59,6 +91,35 @@ class CameraReadinessTests(unittest.TestCase):
         self.assertEqual(result.getpixel((40, 59)), (123, 123, 123))
         self.assertEqual(camera.capture_render_counts, [4])
         self.assertEqual(ctx.world.render.call_count, 4)
+        ctx.world.step.assert_not_called()
+
+    def test_cpu_fabric_capture_flushes_kinematic_transforms_without_stepping(self):
+        camera, ctx = self.make([np.zeros((60, 80, 4), dtype=np.uint8)])
+        ctx.physics = 'cpu'
+        ctx.world.is_fabric_enabled.return_value = True
+        camera.capture(ctx)
+        ctx.world.forward.assert_called_once_with()
+        ctx.world.step.assert_not_called()
+        self.assertEqual(ctx.session.time, 0.)
+
+    def test_native_sync_must_not_change_physical_velocity(self):
+        camera, ctx = self.make([np.zeros((60, 80, 4), dtype=np.uint8)])
+        ctx.physics = 'cpu'
+        ctx.world.is_fabric_enabled.return_value = True
+        ctx.world.forward.side_effect = lambda: ctx.session.states['body']['velocity'].__setitem__(0, 1.)
+        with self.assertRaisesRegex(RuntimeError, 'Rendering advanced physical state'):
+            camera.capture(ctx)
+        ctx.world.step.assert_not_called()
+
+    def test_cpu_without_fabric_keeps_native_usd_sync(self):
+        camera, ctx = self.make([np.zeros((60, 80, 4), dtype=np.uint8)])
+        ctx.physics = 'cpu'
+        ctx.world.is_fabric_enabled.return_value = False
+        interface = Mock()
+        with patch.dict('sys.modules', {'omni.physx': SimpleNamespace(get_physx_interface=lambda: interface)}):
+            camera.capture(ctx)
+        interface.update_transformations.assert_called_once_with(True, True, True, False)
+        ctx.world.forward.assert_not_called()
         ctx.world.step.assert_not_called()
 
     def test_permanently_empty_capture_fails_instead_of_fabricating_frame(self):

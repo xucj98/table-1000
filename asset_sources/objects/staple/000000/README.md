@@ -1,5 +1,16 @@
 # 24/6（12#）订书针条候选
 
+## 2026-10-23 总控补拍复核通过
+
+accepted_with_conditions：总控已独立复核CPU/GPU low_drop补拍，62帧和12曲线面板通过，首帧字幕遮挡已消除；全部轨迹与旧基准一致，CPU1/GPU4原穿透/落稳判据通过。旧三轮性能保留原版本归属，新含视频RTF单独记录。当前无返修阻塞，原组可收口。
+
+保留CPU4ms、GPU落放0.5ms/其余4ms及整条刚体近似；不包含分针、弯脚、穿纸或组合装订。下方旧needs_changes/待总控结论为历史，以本段为当前状态。
+
+## 2026-10-22 总控独立验收
+
+独立审查完成，needs_changes_media_only：数值/性能通过，CPU/GPU low_drop首帧侧放样本被字幕遮挡，需仅相机取景修正和在线补拍。其余证据保留，不重复全套。
+
+
 ![preview](three_quarter.jpg)
 
 银灰色 U 形订书针，50 枚组成一条，外形 25.5 × 12.7 × 6 mm。原点位于脚尖平面中心，+X 为条长、+Y 为钉冠宽度、+Z 指向冠部。
@@ -77,7 +88,7 @@ TGS 至少 64/16、CCD 关闭、每迭代外力开启。不同后端的条件不
 
 ## 正式三轮性能与新媒体（2026-10-21）
 
-队列 605dbc7439fc1fe1 已完成；CPU1/GPU4 各五项物理实验三轮均≥10 s，完整独立实验预热累计≥1 s。每个独立重复和录像末态最大标量差均为 0。新 10 段完整视频（310 帧）与 10 张曲线已实际审查，本组自审通过，仍待总控独立验收。
+队列 605dbc7439fc1fe1 已完成；CPU1/GPU4 各五项物理实验三轮均≥10 s，完整独立实验预热累计≥1 s。每个独立重复和录像末态最大标量差均为 0。新 10 段完整视频（310 帧）与 10 张曲线已实际审查，原组自审通过；2026-10-22总控独立审查发现low_drop首帧遮挡，媒体待定向返修，见顶部最新结论。
 
 | 实验 | CPU1 三轮 RTF / 含视频 | GPU4 三轮 RTF / 含视频 |
 | --- | --- | --- |
@@ -92,3 +103,37 @@ RTF 为仿真时间/墙钟时间；GPU 四环境总吞吐为 RTF 的四倍。无
 测量采用共享主机、分配的 GPU 与 CPU 亲和性，非整机独占或严格空闲等价参考。实际 Kit/TBB/PhysX 为32/32/4、原生数学线程池各1（OPENBLAS环境变量读回32但实际线程池1）。RT2为960×480/25 FPS、每捕获2遍、直接照明2 spp、Dome2/TAA8、bounce12、无运动模糊；非严格1 spp。GPU利用率/显存为设备级读数；机器与资源分配详情仅保留本地报告。
 
 进程CPU、主机负载、两类GPU利用率、准备成本、冻结版本和来源哈希详见本组本地 outputs/asset-physics/staple/adaptation-2026-10-21/benchmark-report.md 与 benchmark-audit.json。交付入口 outputs/asset-physics/staple/delivery-current.json；原始结果在 outputs/asset-physics/coordinator-benchmarks/605dbc7439fc1fe1/snapshot/assets/objects/staple/000000/physics_test/。冻结结果只读，审查写本组目录。
+
+
+## 2026-10-22 low_drop 在线补拍复验
+
+仅修改 low_drop 相机 position=(0.184,-0.264,0.155)、target=(0.04,0,0.024)，
+焦距28 mm、分辨率960×480、25 FPS不变；首帧和全部轨迹完整保留。CPU1仍为4 ms，
+GPU4仍为0.5 ms，30 mm落高、七盒体整条刚体、全部质量/材料/原判据不变。
+两后端各31帧完整编码视频与各6个曲线面板已实际审查；首帧三姿态完整，侧放样本
+顶部约y=142，位于字幕底y=54下方约88 px。后续全部帧无遮挡、无裁切，无删帧或改时戳。
+当前为本组补拍自审通过，等待总控独立媒体验收；原needs_changes报告与旧媒体保留。
+
+| low_drop证据 | CPU1 | GPU4 |
+| --- | ---: | ---: |
+| 新录像仿真时间 (s) | 1.2 | 1.2 |
+| 新录像端到端墙钟时间 (s) | 4.752941679 | 24.303073768 |
+| 新录像端到端RTF | 0.252475221 | 0.049376470 |
+| 与旧冻结逐步CSV全部数值最大差 | 0 | 0 |
+| 旧无渲染三轮RTF（复用，未重测） | 1.356789 / 1.366224 / 1.394405 | 0.062895 / 0.062966 / 0.063130 |
+
+新录像RTF来自本次标准CLI的官方run_video performance.video_end_to_end，包含捕获、
+标注、图像写入和编码；不是从旧值复制。原始新result中的no_render是同次视频运行
+扣除捕获的功能估算，不作为三轮性能。旧三轮仅引用原队列605dbc7439fc1fe1，
+两批不同运行明确分开，未拼改原result。相机语句外测试AST相同，几何/物理输入未变，
+CPU301行、GPU2401行全列逐步轨迹及末态完全相同，物理条件读回相同，支持复用。
+当前公共test.py的阶段日志/运行流程和utilization.py的采样进程清理已有改动；
+simulation.py/testing.py/video.py及求解路径哈希不变。新视频采用当前依赖实测，
+旧无渲染性能仅代表原冻结依赖与原共享主机条件，不声称当前框架重新测得或性能等价。
+
+原始补拍视频、frames/、CSV、result及日志保存在本组本地
+outputs/asset-physics/staple/media-fix-2026-10-22/recapture/isaac-cpu 与 isaac-gpu；
+标准assets/objects/staple/000000/physics_test目录亦保留本次结果。输入依赖哈希见
+recapture-inputs.json；相机AST与逐步轨迹复用依据见camera-only-equivalence.json、
+trajectory-performance-equivalence.json；全片审查见media-review.json。
+其他五项测试及其330个证据文件未改，未重跑或新增benchmark队列。

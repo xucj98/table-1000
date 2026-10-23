@@ -4,6 +4,7 @@ A full button compression arms one toggle, completed only on button return.
 Native finite-force drives carry reaction to the free shell. Not a ratchet model.
 """
 from omni.kit.scripting import BehaviorScript
+import numpy as np
 
 class ClickBehavior(BehaviorScript):
     def on_init(self):
@@ -12,6 +13,10 @@ class ClickBehavior(BehaviorScript):
         self.armed = self.extended = False
         self.toggle_count = self.callback_count = 0
         self.error = None
+        path = str(self.prim_path)
+        self.replica = '/env_' in path and '/env_0/' not in path
+        if self.replica:
+            return
         # Build the Isaac views while stopped, before articulation startup.
         import omni.usd
         from table_1000.physics.simulation import session_for
@@ -20,47 +25,65 @@ class ClickBehavior(BehaviorScript):
 
     def on_play(self):
         # The official component also calls on_play when resuming a pause.
-        if self.subscription is not None:
+        if self.replica or self.subscription is not None:
             return
         from omni.physx import get_physx_interface
         self.extended = bool(self.session.stage.GetPrimAtPath(self.prim_path).GetAttribute('table1000:click:initialExtended').Get())
+        self.extended_by_environment = np.full(self.session.envs, self.extended, dtype=bool)
+        self.armed_by_environment = np.zeros(self.session.envs, dtype=bool)
+        self.toggles_by_environment = np.zeros(self.session.envs, dtype=int)
         self.armed = False
         self.toggle_count = self.callback_count = 0
         self.error = None
-        self._target()
         self.subscription = get_physx_interface().subscribe_physics_on_step_events(self._step, True, 0)
 
     def _target(self):
-        from pxr import UsdPhysics
-        UsdPhysics.DriveAPI(self.instance.joint('refill_slide'), 'linear').GetTargetPositionAttr().Set(-.003 if self.extended else 0.)
+        from table_1000.sim.isaaclab.asset_views import TensorView
+        articulation = self.instance.articulation
+        view = TensorView(articulation.view, articulation.device)
+        names = view.shared_metatype.dof_names
+        target = view.get_dof_position_targets()
+        target[:, names.index(self.instance.joint('refill_slide').GetName())] = np.where(self.extended_by_environment, -.003, 0.)
+        view.set_dof_position_targets(target, np.arange(self.session.envs, dtype=np.int32))
 
     def _step(self, dt):
-        if not self.session.active or not self.session.ready:
+        if self.replica or not self.session.active or not self.session.ready:
             return
         try:
-            from table_1000.physics.joints import frames
-            q = frames(self.instance, 'button_press')['position']
-            if q <= -.0027:
-                self.armed = True
-            elif self.armed and q >= -.0003:
-                self.extended = not self.extended
-                self.armed = False
-                self.toggle_count += 1
-                self._target()
+            from table_1000.sim.isaaclab.asset_views import TensorView
+            articulation = self.instance.articulation
+            view = TensorView(articulation.view, articulation.device)
+            index = view.shared_metatype.dof_names.index(self.instance.joint('button_press').GetName())
+            q = view.get_dof_positions()[:, index]
+            self.armed_by_environment |= q <= -.0027
+            toggle = self.armed_by_environment & (q >= -.0003)
+            self.extended_by_environment ^= toggle
+            self.armed_by_environment[toggle] = False
+            self.toggles_by_environment += toggle
+            self.extended = bool(self.extended_by_environment[0])
+            self.armed = bool(self.armed_by_environment[0])
+            self.toggle_count = int(self.toggles_by_environment[0])
+            self._target()
             self.callback_count += 1
         except Exception as error:
             self.error = str(error)
             self.session.error = error
 
     def on_stop(self):
+        if self.replica:
+            return
         self.subscription = None
         self.armed = False
         self.toggle_count = self.callback_count = 0
         if self.instance is not None and self.session.stage.GetPrimAtPath(self.prim_path):
             self.extended = bool(self.session.stage.GetPrimAtPath(self.prim_path).GetAttribute('table1000:click:initialExtended').Get())
-            self._target()
+            self.extended_by_environment = np.full(self.session.envs,self.extended,dtype=bool)
+            self.armed_by_environment = np.zeros(self.session.envs,dtype=bool)
+            self.toggles_by_environment = np.zeros(self.session.envs,dtype=int)
 
     def on_destroy(self):
+        if self.replica:
+            return
         self.on_stop()
         if self.session is not None:
             self.session.unregister(str(self.prim_path))
