@@ -148,14 +148,25 @@ class Placing:
             near = frame @ np.r_[(low[:2] + high[:2]) / 2, 0., 1.]
         options = self.placements(target, current, region, np.asarray(near, dtype=float)[:3], keep_out, step, margin)
         options = [options[i] for i in np.unique(np.linspace(0, len(options) - 1, NEED_PLACES).astype(int))] if options else []
-        verdicts = {}
+        verdicts, obj_prefix = {}, f'{obj}:'
 
         def accepts(arm, tcp_object):
             rotation = Rotation.from_matrix(tcp_object[:3, :3]).as_rotvec()
             key = (arm, *np.round(tcp_object[:3, 3] / NEED_ROUND[0]).astype(int), *np.round(rotation / NEED_ROUND[1]).astype(int))
             if key not in verdicts:
-                reached = (self.in_reach_down(arm, placed, tcp_object, clearance, above) for placed, _ in options)
-                verdicts[key] = sum(itertools.islice((1 for ok in reached if ok), NEED_REACHED)) >= NEED_REACHED
+                # Held so (its parts carried with the hand), as it will be when it is put down.
+                solver, poses = self.solvers[arm], ctx.poses()
+                body = np.linalg.inv(poses[target.body])
+                parts = [name for name, obj in solver.world.objects.items() if name.startswith(obj_prefix)]
+                for name in parts:
+                    solver.attach_at(name, tcp_object @ body @ poses[solver.world.objects[name].body])
+                try:
+                    reached = (self.in_reach_down(arm, placed, tcp_object, clearance, above) for placed, _ in options)
+                    verdicts[key] = sum(itertools.islice((1 for ok in reached if ok), NEED_REACHED)) >= NEED_REACHED
+                finally:
+                    for name in parts:
+                        solver.detach(name)
+                    solver.world.update(poses)
             return verdicts[key]
         return InHand(obj, accepts, [arm for arm in self.arms if arm not in self.held])
 

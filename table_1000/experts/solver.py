@@ -101,10 +101,14 @@ class MotionSolver:
         """Carry planning object ``name`` with the TCP at its measured pose relative to it;
         returns that relative pose."""
         relative = np.linalg.inv(self.tcp()) @ object_world
+        self.attach_at(name, relative)
+        return relative
+
+    def attach_at(self, name, relative):
+        """Carry planning object ``name`` with the TCP at pose ``relative`` to it."""
         self.planner.planning_world.attach_object(
             name, self.planner.robot.get_name(), self.planner.link_name_2_idx[self.arm.tcp_link], pose(relative),
             list(self.arm.finger_links))
-        return relative
 
     def detach(self, name):
         self.planner.planning_world.detach_object(name, False)
