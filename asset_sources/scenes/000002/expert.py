@@ -22,8 +22,8 @@ OPEN_TOLERANCE = .02    # m short of OPENING still counts as open
 CLOSED = .005           # m
 PUSH_PAST = .003        # m pushed beyond the closed stop, so the drawer surely reaches it
 # The most a handle grasp may turn from straight at the drawer: tilted, pivoting fingers pinching the
-# handle's ends may slip off; a low handle is reached tilted down.
-HANDLE_ANGLES = np.radians([10., 30.])
+# handle's ends slip off at 30 degrees; where none is in reach, grasp moves the base first.
+HANDLE_ANGLES = np.radians([10., 20.])
 PULLS, PULL_LEAST = 3, .25  # grasps a drawer is slid open with at most; the least part of the rest one slides
 # Where the pen may go on the table: in front of the robot (SPOT_AHEAD of its centre, within the
 # reach of a grasp from above), clear of the cabinet and of the drawers' pull-out space by
