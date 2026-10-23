@@ -1,5 +1,7 @@
 """Place: the held object put down in a region of a surface."""
 
+import itertools
+
 import numpy as np
 from scipy.spatial import ConvexHull
 from scipy.spatial.transform import Rotation
@@ -17,10 +19,11 @@ PLACE_STEP = .02        # m between the positions place samples in its region
 PLACE_TURN_STEP = 15.   # deg between the turns place samples
 PLACE_TURNS = 8         # turns place tries per position, the least first
 PLACE_MARGIN = .01      # m the footprint keeps inside the region and off its keep-out areas
-# What a place needs of the hold (see Placing.need): NEED_PLACES of its placements, spread from the
-# nearest to the farthest, checked by IK (NEED_IK_ATTEMPTS restarts) at the release and above it, per
-# hold (arm, and the object in the hand rounded to NEED_ROUND m / rad).
-NEED_PLACES, NEED_IK_ATTEMPTS, NEED_ROUND = 24, 5, (.02, .1)
+# What a place needs of the hold (see Placing.need): NEED_REACHED of NEED_PLACES of its placements,
+# spread from the nearest to the farthest, in reach by IK (NEED_IK_ATTEMPTS restarts) at the release
+# and above it (more than one: the object may turn a little in the hand as it closes), per hold (arm,
+# and the object in the hand rounded to NEED_ROUND m / rad).
+NEED_PLACES, NEED_REACHED, NEED_IK_ATTEMPTS, NEED_ROUND = 24, 3, 5, (.02, .1)
 
 
 def overlaps(outline, low, high):
@@ -135,7 +138,7 @@ class Placing:
              step=PLACE_STEP, margin=PLACE_MARGIN):
         """What :meth:`place` with these arguments needs of the hand that will hold ``obj`` (not held
         yet, at its pose now): an :class:`~table_1000.experts.skills.chain.InHand` accepting the holds
-        from which one of its placements is in reach (IK at the release and above it)."""
+        from which ``NEED_REACHED`` of its placements are in reach (IK at the release and above it)."""
         from table_1000.experts.skills.chain import InHand
         ctx = self.ctx
         target = self.target(obj)
@@ -151,7 +154,8 @@ class Placing:
             rotation = Rotation.from_matrix(tcp_object[:3, :3]).as_rotvec()
             key = (arm, *np.round(tcp_object[:3, 3] / NEED_ROUND[0]).astype(int), *np.round(rotation / NEED_ROUND[1]).astype(int))
             if key not in verdicts:
-                verdicts[key] = any(self.in_reach_down(arm, placed, tcp_object, clearance, above) for placed, _ in options)
+                reached = (self.in_reach_down(arm, placed, tcp_object, clearance, above) for placed, _ in options)
+                verdicts[key] = sum(itertools.islice((1 for ok in reached if ok), NEED_REACHED)) >= NEED_REACHED
             return verdicts[key]
         return InHand(obj, accepts, [arm for arm in self.arms if arm not in self.held])
 
