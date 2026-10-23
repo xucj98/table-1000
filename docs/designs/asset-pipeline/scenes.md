@@ -52,6 +52,7 @@
 | 运动原语（与物体无关） | `ctx.solver(arm)` 的 `move_to_pose_with_RRTConnect`、`move_to_pose_with_screw`、`open_gripper`、`close_gripper`、`first_reachable`（依次尝试候选目标）；规划世界 `add_table`、`add_object`（由碰撞几何生成，可按部件分组）、`allow`（允许手指接触某部件）、`attach`/`detach`（手中物体）、`carry`/`release`（随手移动的关节部件，如被拉的抽屉）；`ctx.hold`、`ctx.step` |
 | 状态与几何查询 | `ctx.pose(物体, 刚体)`、`ctx.joint(物体, 关节)`、`ctx.center_of_mass`、`ctx.part_box`（部件在刚体坐标系中的包围盒）、`ctx.geometry[物体]`（部件包围盒、关节轴）、`ctx.tcp()` |
 | 抓取几何 | `table_1000.experts.grasps`：`build_grasp_pose`、`compute_grasp_info_by_obb`（ManiSkill 的同名函数）、`standoff`、`translated` |
+| 原子技能 | `table_1000.experts.skills`（见下文）：`grasp`、`pick`、`move_by_displacement`、`push`、`release`、`place`、`make_room`、`ready`、`retry` |
 | 子任务 | `with ctx.subtask('put the pen into the drawer'):` 标记这段步数属于哪条英文指令 |
 | 随机 | `ctx.rng`：需要变化的选择（抓取位置、顺序）用它，不用其他随机源 |
 
@@ -62,7 +63,27 @@
 - 可以重试，但要写明候选（后撤距离、抬起高度；物理上等价的抓法与放法，如对称的手腕转向、绕圆柱轴侧倾、物体放置的两个方向）或次数上限（重新抓取），用 `ctx.note` 记下换用的候选。其余失败用 `ctx.fail(原因)` 或规划异常结束，记录子任务与原因。
 - TCP 约定：+X 为接近方向，+Y 为手指张开方向。
 
-规划用 MPlib（ManiSkill 也用它）：自由空间用 RRTConnect 到 IK 解，规划路径按 1 cm 关节步长复查碰撞，不过就重新规划；接触动作用直线 screw 路径。规划好的路径每个控制步（25 Hz）发送一个关节位置。
+规划用 MPlib（ManiSkill 也用它）：自由空间用 RRTConnect 到 IK 解，规划路径按 1 cm 关节步长复查碰撞，不过就重新规划；接触动作用直线 screw 路径。规划好的路径每个控制步（25 Hz）发送一个关节位置。RRTConnect 规划时碰撞几何膨胀 1 cm，起点和终点处已有的接触只在本次规划中允许，路径再按未膨胀的几何复查。底盘移动后，规划世界随之更新坐标系。
+
+### 原子技能
+
+`table_1000.experts.skills` 在运动原语之上提供以物体为单位的技能，接口仿照 RoboTwin 2.0 的任务 API，但和 `solve` 一样阻塞：每个调用在仿真中执行完、检查结果后才返回，做不到时以 `ctx.fail`（原因如 `no reachable grasp`、`object not held`、`no placement`）或规划异常结束。技能按物体的实时位姿和资产几何自己选择手臂、抓取候选和路径，每次换用候选都用 `ctx.note` 记下。场景 [000002](../../../asset_sources/scenes/000002/expert.py) 只用这些技能写成。
+
+| 技能 | 作用 |
+| --- | --- |
+| `grasp(ctx, 物体, 部件)` | 抓住物体或其一个部件（如把手）。可给接近方向 `approach`、与它的最大夹角 `max_angle`、抓住后的位移 `then`（候选须让这段位移也有 IK 解）。先试肩部离物体近的手臂；闭合后没夹住（手指间隙小于物体宽度）就退出重选，至多 `MAX_REGRASPS` 次；可达范围内没有候选时先移动底盘 |
+| `pick(ctx, 物体)` | `grasp` 后抬起 `height`；物体没跟着抬起时松手并失败（`object not lifted`） |
+| `move_by_displacement(ctx, 手臂, x, y, z)` | TCP 沿直线移动。`drag` 指定随手移动的关节部件（拉抽屉）；`least` 允许整段规划不通时只走一部分，返回走过的比例 |
+| `push(ctx, 物体, 部件, direction, distance)` | 闭合指尖抵住部件的面推动（推抽屉关上） |
+| `release(ctx, 手臂)` | 张开手指并沿接近方向退出 |
+| `place(ctx, 物体, region, near, keep_out)` | 把手中物体放在表面上的矩形区域内：`region = (表面坐标系, 低角, 高角)`，表面为坐标系的 z = 0 平面；朝向不限，按离 `near` 的距离、再按转角排序采样；物体轮廓避开 `keep_out` 矩形。可达范围内没有可行位置时先移动底盘 |
+| `make_room(ctx, 位姿)` | 移动底盘（相对起始位姿后退、转向）到能以关节余量够到给定 TCP 位姿的最小移动处；`path=True` 表示这些位姿是一条直线运动上的连续位姿。机器人没有底盘时不动 |
+| `ready(ctx)` | 空着的手臂回到起始姿态 |
+| `retry(ctx, 步骤)` | 步骤失败时先 `ready` 再重试，至多 `ATTEMPTS` 次；回合墙钟时间超过 `RETRY_BUDGET` 后不再重试 |
+
+### 单步检查
+
+专家可以定义 `STAGES = {名字: 函数(ctx)}`，每个函数先用 `ctx.arrange(位姿, 关节值)` 把场景摆成某一步的起始状态（未给出的物体和机器人保持初态），再只运行这一步。`run_expert.py <场景> --stage <名字> --output <目录>` 从每个初态运行这一步，结果格式与完整批次相同，用来单独迭代某一步的成功率。
 
 ## 轨迹数据
 
@@ -115,4 +136,6 @@
 - 初始化的几何检查按资产静止构型（关节为 0）；用 `set_joint` 打开的部件不参与采样时的穿透检查，由复位后的静置检查兜底。
 - 支撑面只有桌面和物体碰撞包围盒的顶面；碗内底、抽屉内底等支撑面以后按需加入几何查询。
 - 笔的帽与钢珠一直有微米级抖动，不休眠（不影响任务）。
+- `retry` 的预算按墙钟时间计，机器负载不同时是否重试可能不同。
+- `make_room` 和技能内部的底盘选位只考虑相对起始位姿后退（0–0.2 m）和转向（±20°），不侧移或前进。场景 000002 因此把柜子的横向范围限制在 ±0.22 m。
 - 摆放由 seed 完全确定，静置后的状态以 `initial_states.hdf5` 为准。专家轨迹：MPlib 的随机数按 seed 设置，但 RRTConnect 有规划时限，负载不同时路径仍可能不同。复现轨迹以录制文件为准。
