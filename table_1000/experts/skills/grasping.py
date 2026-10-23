@@ -296,6 +296,10 @@ class Grasping:
             except PlanningFailed as error:
                 solver.allow([*target.names, *supports], False)
                 ctx.note('next grasp', arm=arm, cost=grasp.cost, reason=error.reason, **collisions(error))
+                if not lift and error.reason.startswith('RRTConnect'):
+                    # No way there at this torso height: the other candidates held so share the narrow
+                    # passage (a hand from high down to a low handle); on to those moving the lift.
+                    tried[False] = MAX_PLANS
         return None
 
     def pick(self, target, arm=None, point=None, approach=None, height=LIFT, max_angle=None, need=None, base=True):
