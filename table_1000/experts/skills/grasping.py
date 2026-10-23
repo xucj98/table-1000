@@ -71,6 +71,10 @@ class Grasping:
         return next((arm for arm, held in self.held.items() if held['target'].obj == obj), None)
 
     # -- choice ------------------------------------------------------------------------
+    def centre(self, target):
+        """World centre of ``target``'s shape."""
+        return (self.ctx.poses()[target.body] @ target.offset)[:3, 3]
+
     def shoulder(self, arm):
         return self.model.fk(self.ctx.spec.arms[arm].joints[1].replace('joint', 'link'), world=True)[:3, 3]
 
@@ -202,12 +206,17 @@ class Grasping:
         skip, regrasps, started, roomed, stowed = set(), 0, time.perf_counter(), False, False
         while True:
             reached = self.reach(target, arms, skip, point, approach, then, max_angle, need)
-            # Candidates, none in reach with the other arm out: again with it in, before the base moves.
+            # Candidates, none in reach with the other arm out: again with it in, before the base moves;
+            # first the arms but the nearest (which may then reach from where it is), then all.
             # (None at all within max_angle: the next, wider one is tried instead.)
             considered = skip or any(self.rejected[key] for key in ('grasp IK', 'pre-grasp IK', 'then', 'need'))
-            if reached is None and not stowed and considered and self.stow(why=self.rejected):
-                skip, stowed = set(), True
-                reached = self.reach(target, arms, skip, point, approach, then, max_angle, need)
+            if reached is None and considered and not stowed:
+                stowed = True
+                nearest = min(self.arms, key=lambda a: np.linalg.norm((self.shoulder(a) - self.centre(target))[:2]))
+                for out in ([a for a in self.arms if a != nearest], None):
+                    if reached is None and self.stow(out, why=self.rejected):
+                        skip = set()
+                        reached = self.reach(target, arms, skip, point, approach, then, max_angle, need)
             if reached is None and not roomed and ctx.spec.base and base:
                 # None in reach from here: the base moves to reach the first candidates, then again.
                 roomed = True
