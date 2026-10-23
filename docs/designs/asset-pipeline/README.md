@@ -64,7 +64,7 @@ assets/robots/x1pro/
 
 ```text
 asset_sources/scenes/000000/
-  scene.py            桌子、机器人、物体、录像视角、随机初始化、可选的终态（场景）
+  scene.py            桌子、机器人、物体、录像视角、随机初始化（布局 0）、可选的其他布局（场景）
   expert.py           专家程序（可以以后补）
   thumbnail.jpg       最小有效 seed 初态的机器人主相机图像，480 × 270
 assets/scenes/000000/            build_scene.py 的产出，与后端无关
@@ -72,10 +72,8 @@ assets/scenes/000000/            build_scene.py 的产出，与后端无关
   initial.json        初态检查：汇总与每次尝试的结果
   initial_states.jpg  可选，前 N × M 个有效初态的拼图
   initial/<seed>.jpg  可选，每个有效初态的相机原图
-  end_states.hdf5     --end-states：每个终态静置后的场景状态
-  end_states.json     终态检查：汇总、每个终态的好坏与说明、每次尝试的结果
-  end_states.jpg      可选，终态拼图
-  end_states/<name>.jpg  可选，每个终态的相机原图
+  layouts/<n>/        --layouts：布局 n 的同一套文件（initial.json 另记布局的好坏与说明）
+  layouts.jpg         可选，多个布局时每个布局最小有效 seed 的拼图
 data/scenes/000000/<后端>/        一批专家轨迹：run_expert.py 生成，render.py 补上录像
   summary.json        验收入口：提交、seed、成功率、失败的 seed、耗时、有录像的 seed
   trajectories.hdf5、trajectories_failed.hdf5    成功与失败的轨迹，每条 data/demo_<seed>

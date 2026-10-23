@@ -1,4 +1,4 @@
-"""Scene 000101: X1Pro at an electronics repair workbench, 62 objects; ten end states, five tidy and five not.
+"""Scene 000101: X1Pro at an electronics repair workbench, 62 objects; layouts 1–10 arrange them, five tidy and five not.
 
 Modelled after a photo of a cramped hobby electronics bench (reference.jpg: "Electronics workbench" by
 James Bastow, CC BY-SA 2.0, https://commons.wikimedia.org/wiki/File:Electronics_workbench.jpg):
@@ -18,7 +18,7 @@ The waste bin stands at the front left. The rest lies in the front area, y from 
 and the bin anywhere in front, the iron in its stand or lying about, a few tools left in the tray,
 a few small parts in the parts box, the drinks standing or knocked over, the top drawer sometimes
 open with something in it, the keyboard askew and everything else, litter included, strewn over
-the front area. ``END_STATES`` are arranged states of the same objects for judging tidiness.
+the front area. ``LAYOUTS`` are arrangements of the same objects for judging tidiness.
 """
 
 import math
@@ -269,7 +269,7 @@ def initialize(layout):
         layout.scatter(name, FRONT, yaw=(-math.pi, math.pi), onto=FLAT, tries=200)
 
 
-# -- end states ------------------------------------------------------------------------------
+# -- layouts ---------------------------------------------------------------------------------
 def messy_back_row(layout):
     back_row(layout, jitter=.05, turn=math.radians(30))
 
@@ -448,8 +448,8 @@ def knocked_over(layout):
         layout.scatter(name, ((-.25, -.25), (.25, -.12)), yaw=(-math.pi, math.pi), onto='table')
 
 
-END_STATES = {
-    'sorted_by_kind': {
+LAYOUTS = {
+    1: {
         'quality': 'good', 'arrange': sorted_by_kind,
         'description': 'Sorted by kind: meters and pliers side by side in the tool tray; batteries, the small '
                        'boards, tape and desoldering wick in the parts box compartments; screwdrivers and probes '
@@ -458,52 +458,52 @@ END_STATES = {
                        'the three drawers (closed), the coiled cables and the screwdriver set on the chest; all '
                        'litter in the bin with the empty bottle beside it; keyboard and mouse squared up at the '
                        'front, the calculators on the logbook at the front left, the two drinks at the front right.'},
-    'ready_to_solder': {
-        'quality': 'good', 'arrange': ready_to_solder,
-        'description': 'Ready to work on the board: the iron in its stand, reel and flux on the station; the board '
-                       'and the display module in front of the stand with the wick, tweezers, pliers, pocket meter '
-                       'and the two clip leads neatly at hand; the keyboard pushed to the right; everything else '
-                       'stored, the litter in the bin.'},
-    'chest_left': {
+    2: {
         'quality': 'good', 'arrange': chest_left,
         'description': 'The bench mirrored: the tool chest and third hand on the left, the soldering station and '
                        'iron stand in the middle, the tool tray on the right; everything stored as when sorted, the '
                        'bin and empty bottle at the front right, the calculators on the logbook in front of the tray, '
                        'the keyboard and mouse at the front left of the middle, the drinks at the front left.'},
-    'in_columns': {
+    3: {
+        'quality': 'good', 'arrange': ready_to_solder,
+        'description': 'Ready to work on the board: the iron in its stand, reel and flux on the station; the board '
+                       'and the display module in front of the stand with the wick, tweezers, pliers, pocket meter '
+                       'and the two clip leads neatly at hand; the keyboard pushed to the right; everything else '
+                       'stored, the litter in the bin.'},
+    4: {
         'quality': 'good', 'arrange': in_columns,
         'description': 'In columns: the tool tray turned lengthwise along the left edge with the meters and pliers, '
                        'the bin and empty bottle in front of the parts box, logbook and calculators in a column down '
                        'the middle, the keyboard and mouse at the front right, the soldering corner and the chest in '
                        'the back; gear in the drawers (closed).'},
-    'all_stored': {
+    5: {
         'quality': 'good', 'arrange': all_stored,
         'description': 'Everything put away and the rest lined up along the front edge: tools in the tray, small '
                        'parts in the parts box, screwdrivers and probes in the cup, the iron in its stand, gear in '
                        'the drawers (closed), cables and the screwdriver set on the chest, all litter in the bin; '
                        'the logbook with the calculators on it, the keyboard, the mouse and the two drinks in one '
                        'row at the front, the middle of the bench completely clear.'},
-    'pile': {
+    6: {
         'quality': 'bad', 'arrange': pile,
         'description': 'Everything, litter included, swept into one heap in the middle of the bench, the drinks '
                        'and the empty can and bottle standing beside it.'},
-    'wrong_places': {
+    7: {
         'quality': 'bad', 'arrange': wrong_places,
         'description': 'Things in the wrong places: the drinks and the iron in the tool tray, litter in the parts '
                        'box and the tool cup, batteries and a clip lead in the bin, the board and tweezers on top of '
                        'the chest, the rest strewn over the bench.'},
-    'half_done': {
+    8: {
         'quality': 'bad', 'arrange': half_done,
         'description': 'Only half tidied: the iron in its stand, the meters and pliers in the tray, the '
                        'screwdrivers in the cup, a few batteries boxed, the cables on the chest, a few labels in the '
                        'bin, keyboard and logbook on the left; the right half of the bench still strewn with '
                        'everything else, litter included.'},
-    'left_open': {
+    9: {
         'quality': 'bad', 'arrange': left_open,
         'description': 'Put away carelessly: tools tossed into the tray in a jumble, batteries thrown into the '
                        'parts box, the three drawers left open with things in them, the iron and the rest strewn '
                        'over the middle of the bench although the litter is in the bin.'},
-    'knocked_over': {
+    10: {
         'quality': 'bad', 'arrange': knocked_over,
         'description': 'Tidy except that the bin lies knocked over with its litter and the empty bottle spilled, the '
                        'tool cup lies on its side with the screwdrivers and probes spilled, both drinks lie on their '

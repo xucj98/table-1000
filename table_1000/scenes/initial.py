@@ -130,7 +130,7 @@ def strayed(env, layout):
 
 def initial_state(env, scene, assets, seed, attempts=ATTEMPTS, initialize=None):
     """Reset ``env`` to a checked, settled initial state of ``scene`` for ``seed``; ``initialize``
-    replaces ``scene.initialize`` (e.g. an end state's arrangement).
+    replaces ``scene.initialize`` (another layout's arrangement).
 
     Returns ``(layout, record)``; ``record`` lists every attempt with its problems,
     the accepted one with its settling report. Raises :class:`InitializationFailed`.
@@ -181,24 +181,22 @@ def read_tree(group):
 
 
 def write_states(path, states, attrs):
-    """Write ``{seed: (attempt, state)}`` (a state: nested dict of arrays) with file attributes ``attrs``;
-    a key may also be the name of an end state."""
+    """Write ``{seed: (attempt, state)}`` (a state: nested dict of arrays) with file attributes ``attrs``."""
     import h5py
     with h5py.File(path, 'w') as file:
         file.attrs.update(attrs)
-        for key, (attempt, state) in sorted(states.items(), key=lambda item: str(item[0]).zfill(12)):
-            group = file.create_group(str(key))
-            group.attrs.update(attempt=attempt, **{'seed' if isinstance(key, int) else 'state': key})
+        for seed, (attempt, state) in sorted(states.items()):
+            group = file.create_group(str(seed))
+            group.attrs.update(seed=seed, attempt=attempt)
             write_tree(group, state)
 
 
 def read_states(path):
-    """``(attrs, {seed: (attempt, state)})`` of an ``initial_states.hdf5`` file (or ``{name: ...}`` of an
-    ``end_states.hdf5`` one), states as nested NumPy dicts."""
+    """``(attrs, {seed: (attempt, state)})`` of an ``initial_states.hdf5`` file, states as nested NumPy dicts."""
     import h5py
     with h5py.File(path, 'r') as file:
-        return dict(file.attrs), {int(name) if name.isdigit() else name: (int(group.attrs['attempt']), read_tree(group))
-                                  for name, group in sorted(file.items(), key=lambda item: item[0].zfill(12))}
+        return dict(file.attrs), {int(name): (int(group.attrs['attempt']), read_tree(group))
+                                  for name, group in sorted(file.items(), key=lambda item: int(item[0]))}
 
 
 def summarize(records):

@@ -1,4 +1,4 @@
-"""Scene 000102: X1Pro at a dressing table, 30 objects; ten end states, five tidy and five not.
+"""Scene 000102: X1Pro at a dressing table, 30 objects; layouts 1–10 arrange them, five tidy and five not.
 
 Modelled after a photo of a vanity table (reference.jpg: "Vanity table adorned with perfumes,
 cosmetics, and a laptop in a cozy room setting" by Shixart1985, CC BY 2.0,
@@ -13,7 +13,7 @@ y from -0.47 to -0.10.
 
 ``initialize`` makes a messy dressing table: the back row jittered and turned, a few bottles left in
 the tray, the others standing or lying anywhere in front, brushes partly in the cup, lipsticks and
-nail polish scattered, the laptop somewhere in front, the top drawer sometimes open. ``END_STATES`` are arranged states of the same objects for judging tidiness.
+nail polish scattered, the laptop somewhere in front, the top drawer sometimes open. ``LAYOUTS`` are arrangements of the same objects for judging tidiness.
 """
 
 import math
@@ -143,7 +143,7 @@ def initialize(layout):
     scatter_front(layout, remaining(layout))
 
 
-# -- end states ------------------------------------------------------------------------------
+# -- layouts ---------------------------------------------------------------------------------
 def messy_back_row(layout):
     back_row(layout, jitter=.06, turn=math.radians(35))
 
@@ -265,55 +265,55 @@ def left_open(layout):
     scatter_front(layout, remaining(layout), region=((-.30, -.42), (.10, -.12)))
 
 
-END_STATES = {
-    'sorted_by_kind': {
+LAYOUTS = {
+    1: {
         'quality': 'good', 'arrange': sorted_by_kind,
         'description': 'Sorted by kind: the bottles standing in two rows in the tray, tall skincare, a perfume '
                        'and the diffuser at the back, perfumes and creams in front; brushes in the cup; lipsticks '
                        'and nail polish in the top drawer, comb and compact in the middle one, the hairbrush in '
                        'the bottom one (closed); pad jar and trinket dish in a column in front of the cup; the '
                        'laptop at the front.'},
-    'work_mode': {
-        'quality': 'good', 'arrange': work_mode,
-        'description': 'Cleared for work: the laptop alone in the middle front; every bottle, the diffuser and the '
-                       'pad jar in the tray, brushes in the cup, all small things, creams and the dish in the three '
-                       'drawers (closed), the hairbrush on top of the organiser; the vase moved to the front left '
-                       'corner.'},
-    'mirrored': {
+    2: {
         'quality': 'good', 'arrange': mirrored,
         'description': 'The back row mirrored, organiser on the left, tray on the right with the perfumes and '
                        'diffuser in its back row and the skincare in front; brushes in the cup; the creams, pad '
                        'jar and dish in one row on the desk; small things in the drawers (closed); laptop at the '
                        'front right.'},
-    'on_display': {
+    3: {
+        'quality': 'good', 'arrange': work_mode,
+        'description': 'Cleared for work: the laptop alone in the middle front; every bottle, the diffuser and the '
+                       'pad jar in the tray, brushes in the cup, all small things, creams and the dish in the three '
+                       'drawers (closed), the hairbrush on top of the organiser; the vase moved to the front left '
+                       'corner.'},
+    4: {
         'quality': 'good', 'arrange': on_display,
         'description': 'Perfumes on show: the four perfumes in a row at the back of the desk; the tray turned '
                        'lengthwise on the left holding the skincare and jars; tissue box, brush cup and the three '
                        'lipsticks in a row in the middle; the laptop at the front; the rest in the drawers '
                        '(closed).'},
-    'all_stored': {
+    5: {
         'quality': 'good', 'arrange': all_stored,
         'description': 'Everything stored: all bottles, the diffuser, creams and pad jar in the tray, brushes in '
                        'the cup, the small things, dish, hairbrush and deodorant in the drawers (closed), the laptop '
                        'put away on top of the organiser; the front of the table completely clear.'},
-    'pile': {
+    6: {
         'quality': 'bad', 'arrange': pile,
         'description': 'Everything swept into one heap in the middle of the table.'},
-    'wrong_places': {
+    7: {
         'quality': 'bad', 'arrange': wrong_places,
         'description': 'Things in the wrong places: hairbrush, comb and nail polish in the tray, a serum bottle '
                        'and a lipstick in the brush cup, the brushes shut in the drawer, the laptop on top of the '
                        'organiser, the bottles standing about the front of the table.'},
-    'half_done': {
+    8: {
         'quality': 'bad', 'arrange': half_done,
         'description': 'Only half tidied: a few bottles in the tray, brushes in the cup, the laptop on the left; '
                        'the right half of the table still strewn with everything else.'},
-    'knocked_over': {
-        'quality': 'bad', 'arrange': knocked_over,
-        'description': 'Mostly tidy, but a sweep of the arm has knocked over several bottles, the diffuser and '
-                       'the jars, which lie on their sides across the front right.'},
-    'left_open': {
+    9: {
         'quality': 'bad', 'arrange': left_open,
         'description': 'Put away carelessly: bottles tossed into the tray, some lying, the three drawers left '
                        'open with things in them, the rest strewn over the middle of the table.'},
+    10: {
+        'quality': 'bad', 'arrange': knocked_over,
+        'description': 'Mostly tidy, but a sweep of the arm has knocked over several bottles, the diffuser and '
+                       'the jars, which lie on their sides across the front right.'},
 }

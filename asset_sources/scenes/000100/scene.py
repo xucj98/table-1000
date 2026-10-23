@@ -1,4 +1,4 @@
-"""Scene 000100: X1Pro at a cluttered office desk, 38 objects; ten end states, five tidy and five not.
+"""Scene 000100: X1Pro at a cluttered office desk, 38 objects; layouts 1–10 arrange them, five tidy and five not.
 
 World frame: origin on the floor below the table centre, +Z up. The robot stands
 in front of the table's -Y edge facing +Y, 0.29 m behind it (its torso reaches 0.26 m
@@ -13,7 +13,7 @@ between them. The rest lies in the front area, y from -0.47 to -0.10.
 jars may stand anywhere), pens partly in the holders and partly strewn, notebooks
 dropped at random so that some overlap, clips and magnets partly in the jars, the
 top drawer sometimes open with a few small things in it, everything else strewn over
-the front area. ``END_STATES`` are arranged states of the same objects for judging
+the front area. ``LAYOUTS`` are arrangements of the same objects for judging
 tidiness; each has a short description of how it is arranged.
 """
 
@@ -193,7 +193,7 @@ def initialize(layout):
     scatter_front(layout, [name for name in OBJECTS if name not in layout.poses])
 
 
-# -- end states ------------------------------------------------------------------------------
+# -- layouts ---------------------------------------------------------------------------------
 def tidy_back_row(layout):
     back_row(layout)
     layout.place('jar', ((-.02, .05), (-.02, .05)))
@@ -343,54 +343,54 @@ def knocked_over(layout):
 
 
 NOTEBOOKS_IN_BASKET = 'notebooks in the basket (three flat in a stack, the A4 too wide to lie flat slanted over them)'
-END_STATES = {
-    'sorted_by_kind': {
+LAYOUTS = {
+    1: {
         'quality': 'good', 'arrange': sorted_by_kind,
         'description': f'Sorted by kind: {NOTEBOOKS_IN_BASKET}; pens standing in the two holders; eraser, USB '
                        'drive, staples and magnets in the top drawer, clips, tape and glue in the middle one, '
                        'screwdriver, knife, remote, charger and snack in the bottom one (all closed); only the '
                        'stapler, board eraser and the two small jars in one row on the desk.'},
-    'cabinet_left': {
+    2: {
         'quality': 'good', 'arrange': cabinet_left,
         'description': f'The back row mirrored, cabinet on the left and basket on the right: {NOTEBOOKS_IN_BASKET}; '
                        'pens in the two holders; clips and magnets in the large glass jar between them, the two '
                        'small jars in front of it; everything else in the three drawers (closed).'},
-    'ready_to_work': {
+    3: {
         'quality': 'good', 'arrange': ready_to_work,
         'description': 'Ready to work: the notebooks squarely stacked on the front left of the desk, the stapler '
                        'and tape lined up beside them; the basket empty; pens in the holders; clips and magnets in '
                        'the large glass jar; everything else, the two small jars too, in the three drawers '
                        '(closed).'},
-    'in_columns': {
+    4: {
         'quality': 'good', 'arrange': in_columns,
         'description': f'In three columns front to back: the basket turned lengthwise on the left, '
                        f'{NOTEBOOKS_IN_BASKET}; the pen cup, the pen holder and the large glass jar (clips and '
                        'magnets) one behind another, the two small jars, tape and stapler in a column beside them; '
                        'the cabinet alone on the right; everything else in the three drawers (closed).'},
-    'all_stored': {
+    5: {
         'quality': 'good', 'arrange': all_stored,
         'description': f'Everything stored: the basket in the middle next to the cabinet, {NOTEBOOKS_IN_BASKET}; '
                        'the large glass jar (clips) and the pen holders with their pens at the left end of the back '
                        'row; everything else, the two small jars too, in the three drawers (closed); nothing else on '
                        'the desk.'},
-    'pile': {
+    6: {
         'quality': 'bad', 'arrange': pile,
         'description': 'Everything swept into one heap in the middle of the desk.'},
-    'wrong_places': {
+    7: {
         'quality': 'bad', 'arrange': wrong_places,
         'description': 'Things in the wrong places: notebooks on top of the cabinet, pens mixed with the snack '
                        'and charger in the basket, tools in the pen cup, clips and magnets in the pen holder, '
                        'the rest strewn over the left of the desk.'},
-    'half_done': {
+    8: {
         'quality': 'bad', 'arrange': half_done,
         'description': 'Only half tidied: notebooks stacked and a few pens and tools in order on the left, the '
                        'right half of the desk still strewn with everything else.'},
-    'left_open': {
+    9: {
         'quality': 'bad', 'arrange': left_open,
         'description': 'Put away carelessly: the three drawers left open with things in them, the notebooks '
                        'dropped askew on top of the basket, the remaining tools, glue and jars strewn over the '
                        'middle of the desk.'},
-    'knocked_over': {
+    10: {
         'quality': 'bad', 'arrange': knocked_over,
         'description': 'Tidy except that both pen holders lie knocked over on their sides with the pens spilled '
                        'over the desk in front of them.'},
