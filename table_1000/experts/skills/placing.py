@@ -1,6 +1,7 @@
 """Place: the held object put down in a region of a surface."""
 
 import numpy as np
+from scipy.spatial import ConvexHull
 from scipy.spatial.transform import Rotation
 
 from table_1000.experts.context import ExpertFailed, Unreachable
@@ -16,6 +17,21 @@ PLACE_STEP = .02        # m between the positions place samples in its region
 PLACE_TURN_STEP = 15.   # deg between the turns place samples
 PLACE_TURNS = 8         # turns place tries per position, the least first
 PLACE_MARGIN = .01      # m the footprint keeps inside the region and off its keep-out areas
+
+
+def overlaps(outline, low, high):
+    """Whether the convex polygon ``outline`` (vertices in order) overlaps the rectangle
+    ``low``-``high``: no separating axis among the rectangle's and the polygon's edge normals (a
+    long, thin footprint may cross a corner with no vertex inside)."""
+    if np.any(outline.max(0) < low) or np.any(outline.min(0) > high):
+        return False
+    corners = np.array([low, [high[0], low[1]], high, [low[0], high[1]]])
+    for edge in np.roll(outline, -1, axis=0) - outline:
+        normal = np.array([-edge[1], edge[0]])
+        a, b = outline @ normal, corners @ normal
+        if a.max() < b.min() or b.max() < a.min():
+            return False
+    return True
 
 
 class Placing:
@@ -36,16 +52,16 @@ class Placing:
             points = (target.points @ rotation.T) @ local[:3, :3].T     # in the region frame, about the origin
             centre = (points[:, :2].min(0) + points[:, :2].max(0)) / 2
             spread = np.ptp(points[:, :2], axis=0) / 2
+            hull = points[ConvexHull(points[:, :2]).vertices]    # the footprint's outline
             first, last = low[:2] + spread + margin, high[:2] - spread - margin
             if np.any(first > last + 1e-9):
                 continue
             for x in np.arange(first[0], last[0] + 1e-9, step):
                 for y in np.arange(first[1], last[1] + 1e-9, step):
                     spot = frame @ [x, y, 0., 1.]
-                    footprint = points[:, :2] - centre + [x, y]
+                    footprint = hull[:, :2] - centre + [x, y]
                     world = (frame @ np.c_[footprint, np.zeros(len(footprint)), np.ones(len(footprint))].T).T
-                    if any(np.any(np.all((low_ <= (inv @ world.T).T[:, :2]) & ((inv @ world.T).T[:, :2] <= high_), axis=1))
-                           for inv, low_, high_ in boxes):
+                    if any(overlaps((inv @ world.T).T[:, :2], low_, high_) for inv, low_, high_ in boxes):
                         continue
                     pose = np.eye(4)
                     pose[:3, :3] = rotation
