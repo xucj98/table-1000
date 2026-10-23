@@ -12,7 +12,8 @@ is done. ``ctx`` offers
 - **subtasks** -- ``with ctx.subtask('open the bottom drawer of the cabinet'):``
   marks the steps of one English instruction; :class:`Step` groups subtasks into steps
   that start and end with the hands empty, each with a check of the state it leaves
-  (:func:`run_steps`);
+  (:func:`run_steps`); after each checked step the scene state is kept as a checkpoint
+  a later run resumes from (``ctx.only`` runs some of the steps);
 - ``ctx.rng`` -- the episode's random generator (from the seed), for choices that
   vary the trajectory.
 
@@ -52,8 +53,13 @@ class Step:
 
 
 def run_steps(ctx, steps):
-    """Run ``steps`` (:class:`Step`) in order, each checked when done."""
-    for step in steps:
+    """Run ``steps`` (:class:`Step`) in order, each checked when done and then kept as a checkpoint
+    (:meth:`Context.checkpoint`); only steps ``ctx.only`` (``(first, last)``, from 1) when set."""
+    first, last = ctx.only or (1, len(steps))
+    if not 1 <= first <= last <= len(steps):
+        raise ValueError(f'steps {first}-{last} of an expert with {len(steps)}')
+    ctx.step_names = [step.name for step in steps]
+    for index, step in enumerate(steps[first - 1:last], first):
         step.run(ctx)
         if step.check:
             ctx.current = step.name     # a failed check is the step's
@@ -61,6 +67,7 @@ def run_steps(ctx, steps):
                 step.check(ctx)
             finally:
                 ctx.current = None
+        ctx.checkpoint(index, step.name)
 
 
 class Unreachable(ExpertFailed):
@@ -71,8 +78,14 @@ def steps(seconds):
     return max(1, round(seconds / DT))
 
 
+def numpy_tree(tree):
+    """A scene state of environment 0 (tensors with the environment axis) as NumPy arrays, the axis kept."""
+    return {key: numpy_tree(value) if isinstance(value, dict) else value[:1].cpu().numpy().copy()
+            for key, value in tree.items()}
+
+
 class Context:
-    def __init__(self, env, model, scene, assets, rng):
+    def __init__(self, env, model, scene, assets, rng, start=None, only=None):
         self.env, self.model, self.scene, self.assets, self.rng = env, model, scene, Path(assets), rng
         self.spec = env.spec
         self.geometry = {name: AssetGeometry.of(assets, spec['asset']) for name, spec in scene.OBJECTS.items()}
@@ -83,6 +96,12 @@ class Context:
         self.origin = env.steps  # the episode starts here, after settling
         self.observers = []      # called after every step (e.g. video capture)
         self.started = time.perf_counter()
+        # The robot where the seed's episode began ({'qpos', 'base_pose'}): its arms' home and its
+        # base's start, also when this run resumes from a checkpoint.
+        self.start = start or self.robot_state()
+        self.only = only            # (first, last) steps to run (see run_steps)
+        self.step_names = None      # the expert's steps, once run_steps runs
+        self.checkpoints = []       # {'step', 'name', 'at', 'state'} after each checked step
         self.sync_model()
 
     # -- stepping ------------------------------------------------------------------
@@ -95,8 +114,12 @@ class Context:
         """Control steps since the episode started."""
         return self.env.steps - self.origin
 
-    def base_transform(self):
-        x, y, yaw = self.env.obs['agent']['base_pose'][0]
+    def robot_state(self):
+        return {'qpos': self.env.obs['agent']['qpos'][0].copy(), 'base_pose': self.env.obs['agent']['base_pose'][0].copy()}
+
+    def base_transform(self, pose=None):
+        """World pose of the robot's root, now or at the base ``pose`` ``(x, y, yaw)``."""
+        x, y, yaw = self.env.obs['agent']['base_pose'][0] if pose is None else pose
         transform = np.eye(4)
         transform[:3, :3] = Rotation.from_euler('z', yaw).as_matrix()
         transform[:2, 3] = x, y
@@ -148,20 +171,10 @@ class Context:
             self.current = None
             self.env.contacts.phase = None
 
-    def arrange(self, poses=None, joints=None, settle=.5):
-        """Set the scene where a step starts (checking that step alone): objects at world ``poses``
-        (``{object: 4x4}`` of its asset frame) and their ``joints`` (``{object: {joint: value}}``);
-        the rest stays, the robot too. Then ``settle`` s of holding still."""
-        layout = {name: self.pose(name) for name in self.scene.OBJECTS}
-        layout.update(poses or {})
-        values = {name: {joint: float(value[0]) for joint, value in items.items()}
-                  for name, items in self.env.privileged()['joints'].items()}
-        for name, items in (joints or {}).items():
-            values.setdefault(name, {}).update(items)
-        self.env.reset(layout, dict(zip(self.env.joints, map(float, self.env.obs['agent']['qpos'][0]))), values)
-        self.origin = self.env.steps
-        self.sync_model()
-        self.hold(settle)
+    def checkpoint(self, index, name):
+        """Keep the scene state after step ``index`` (``name``), at control step :attr:`steps`."""
+        state = numpy_tree(self.env.env.scene.get_state(is_relative=True))
+        self.checkpoints.append({'step': index, 'name': name, 'at': self.steps, 'state': state})
 
     def note(self, text, **values):
         self.events.append({'step': self.steps, 'subtask': self.current, 'note': text, **values})

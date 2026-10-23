@@ -84,3 +84,32 @@ def subtask(attrs, t, length):
         if entry['start'] <= t < (entry['end'] if entry['end'] is not None else length):
             return entry['instruction']
     return None
+
+
+def concatenate(sources, target, name):
+    """Write ``data/<name>`` in the open HDF5 file ``target``: the episodes ``sources``
+    (``[(group, length)]``, in order) one after the other, each cut to its first ``length`` steps;
+    the first's ``initial_state`` and attributes, ``num_samples`` the sum."""
+    import h5py
+    import numpy as np
+
+    def join(groups, out):
+        for key, value in groups[0][0].items():
+            if isinstance(value, h5py.Group):
+                join([(group[key], length) for group, length in groups], out.create_group(key))
+            else:
+                out.create_dataset(key, data=np.concatenate([group[key][:length] for group, length in groups]))
+
+    first = sources[0][0]
+    group = target['data'].create_group(name)
+    group.attrs.update(dict(first.attrs))
+    first.file.copy(first['initial_state'], group, 'initial_state')
+    for key in first:
+        if key != 'initial_state':
+            item = group.create_group(key) if isinstance(first[key], h5py.Group) else None
+            if item is None:
+                group.create_dataset(key, data=np.concatenate([source[key][:length] for source, length in sources]))
+            else:
+                join([(source[key], length) for source, length in sources], item)
+    group.attrs['num_samples'] = sum(length for _, length in sources)
+    return group
