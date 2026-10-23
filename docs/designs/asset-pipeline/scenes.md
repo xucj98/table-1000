@@ -79,15 +79,21 @@
 | `place(ctx, 物体, region, near, keep_out)` | 把手中物体放在表面上的矩形区域内：`region = (表面坐标系, 低角, 高角)`，表面为坐标系的 z = 0 平面；朝向不限，按离 `near` 的距离、再按转角排序采样；物体轮廓避开 `keep_out` 矩形。可达范围内没有可行位置时先移动底盘 |
 | `make_room(ctx, 位姿)` | 移动底盘（相对起始位姿后退、转向）到能以关节余量够到给定 TCP 位姿的最小移动处；`path=True` 表示这些位姿是一条直线运动上的连续位姿。机器人没有底盘时不动 |
 | `ready(ctx)` | 空着的手臂回到起始姿态 |
-| `retry(ctx, 步骤)` | 步骤失败时先 `ready` 再重试，至多 `ATTEMPTS` 次；回合墙钟时间超过 `RETRY_BUDGET` 后不再重试 |
+| `retry(ctx, 步骤)` | 步骤失败时先 `ready` 再重试，共至多 `ATTEMPTS`（3）次，不限时间；`Unreachable` 不重试：规划已经尝试过所有候选，这类失败比例高说明规划参数、碰撞或上一步留下的状态有问题，应优化规划而不是重试 |
 
 ### 步骤
 
-专家可以把子任务分成步骤：`Step(名字, run, check)`，`run(ctx)` 执行其中的子任务，`check(ctx)` 检查结束状态是否满足下一步的起始条件，不满足就 `ctx.fail`。步骤之间手里不拿东西。`solve` 写成 `run_steps(ctx, STEPS)`。
+专家可以把子任务分成步骤：`Step(名字, run, check)`，`run(ctx)` 执行其中的子任务，`check(ctx)` 检查结束状态是否满足下一步的起始条件，不满足就 `ctx.fail`。步骤之间手里不拿东西。步骤列表定义为模块级的 `STEPS`，`solve` 写成 `run_steps(ctx, STEPS)`（`run_expert.py --steps` 据此选择步骤）。
 
-### 单步检查
+### 逐步运行
 
-专家可以定义 `STAGES = {名字: 函数(ctx)}`，每个函数先用 `ctx.arrange(位姿, 关节值)` 把场景摆成某一步的起始状态（未给出的物体和机器人保持初态），再只运行这一步。`run_expert.py <场景> --stage <名字> --output <目录>` 从每个初态运行这一步，结果格式与完整批次相同，用来单独迭代某一步的成功率。
+由步骤组成的专家，每一步通过 `check` 后保存一个检查点：完整场景状态（`InteractiveScene.get_state`，格式同 `initial_state`：物体位姿与关节，机器人的底盘、躯干、手臂和夹爪），以及该 seed 回合开始时机器人的关节和底盘位姿。一批的检查点按步骤存为 `checkpoints/step<k>.hdf5`，每个 seed 一组（属性 `seed`、`attempt`、`at` 即这一步结束时的控制步；`state`、`start`），文件属性记录场景、机器人、后端、提交、步骤序号和名字。
+
+`run_expert.py <场景> --steps k[-m]` 只运行第 k 到 m 步：k 为 1 时从初态开始；k 大于 1 时须给 `--from <批次目录>`，从那一批第 k − 1 步的检查点开始，先静置 0.2 s。有检查点的 seed 都会运行，输出格式与完整批次相同（目录为场景批次下的 `<后端>/steps<k>-<m>/`；完整批次替换 `<后端>/` 时保留这些子目录），并写出新的检查点。恢复后，空闲手臂回到的姿态和底盘的起始位姿仍取该 seed 回合开始时的，而不是检查点处的。从第 k 步开始时 `ctx.rng` 为 `default_rng([seed, attempt, 1, k])`，MPlib 的随机数也随 k 改变。
+
+`summary.json` 的 `steps` 给出每步的起始 seed 数、完成数、成功率（完成 / 起始）和逐步完成率（progressive completion rate，ManiSkill-HAB 的统计方式：这一步及之前各步都完成的 seed 占第 1 步起始 seed 的比例）；从检查点开始的批次沿用来源批次前几步的行，分母也取来源批次的。
+
+`join_steps.py <批次> ...` 把逐步运行的各批按顺序接成完整轨迹，默认写成场景的批次 `<后端>/` 本身（保留其中的 `steps*/`）：拼接的轨迹与一次跑完的完整轨迹只是生产方式不同：每段在下一批开始用的检查点处截断，接上下一批同一 seed 的轨迹，`subtasks` 和 `steps` 平移到接好后的位置，`parts` 记录每段的批次、提交、步骤、起点和长度。输出目录的格式与一批轨迹相同，可直接渲染。逐步迭代的方法见[操作手册 05](../../tutorials/05-step-by-step-expert.md)。
 
 ## 轨迹数据
 
@@ -99,7 +105,7 @@
 | `actions` `[T, A]` | 每个控制步的动作；各动作组的区间见文件的 `env_args.action_layout` |
 | `states` | 每步之后的场景状态 |
 | `obs/*` | 每步之前的机器人观测（`qpos`、`qvel`、`base_pose`、`tcp_<arm>`） |
-| 属性 | `scene`、`seed`、`attempt`、`instruction`、`subtasks`（每段的指令与起止步）、`status`、`failure` |
+| 属性 | `scene`、`seed`、`attempt`、`instruction`、`subtasks`（每段的指令与起止步）、`status`、`failure`；由步骤组成的专家另有 `steps`（完成的步骤及其结束的控制步）和 `from`（开始用的检查点文件，从初态开始时为空） |
 
 `env.reset_to(initial_state)` 后依次执行动作可在物理中重放；`scene.reset_to(states[t])` 精确恢复第 t 步，用于渲染。每条轨迹开始前用 seed 设置 MPlib 的随机数（`mplib.pymp.set_global_seed`），专家的 `ctx.rng` 为 `default_rng([seed, attempt, 1])`；RRTConnect 有规划时限，负载不同时路径仍可能不同。
 
@@ -124,7 +130,7 @@
 **量化指标**（不设硬性门槛）：
 
 - 初态（`initial.json`）：无法初始化的 seed、平均尝试次数、静置时的最大移动；
-- 轨迹（批次的 `summary.json`）：成功率（分母为全部 seed），失败的 seed 按“子任务: 原因”列出，原因来自专家的检查（`ctx.fail`）、规划失败或专家代码出错，进程中途退出时没有结果的 seed 记为 `-: process exited`；成功轨迹的平均时长、每条墙钟耗时；
+- 轨迹（批次的 `summary.json`）：成功率（分母为全部 seed），失败的 seed 按“子任务: 原因”列出，原因来自专家的检查（`ctx.fail`）、规划失败或专家代码出错，进程中途退出时没有结果的 seed 记为 `-: process exited`；什么都够不着（`Unreachable`）的 seed 另列在 `unreachable`，及其比例 `unreachable_rate`；成功轨迹的平均时长、每条墙钟耗时；
 - 每条轨迹的报告：规划次数、换用的候选、手指碰过的部件。手指以外的接触不统计：密集摆放时手臂碰到物体是正常的。
 
 **评审**：
@@ -140,6 +146,5 @@
 - 初始化的几何检查按资产静止构型（关节为 0）；用 `set_joint` 打开的部件不参与采样时的穿透检查，由复位后的静置检查兜底。
 - 支撑面只有桌面和物体碰撞包围盒的顶面；碗内底、抽屉内底等支撑面以后按需加入几何查询。
 - 笔的帽与钢珠一直有微米级抖动，不休眠（不影响任务）。
-- `retry` 的预算按墙钟时间计，机器负载不同时是否重试可能不同。
 - `make_room` 和技能内部的底盘选位只考虑相对起始位姿后退（0–0.2 m）和转向（±20°），不侧移或前进。场景 000002 因此把柜子的横向范围限制在 ±0.22 m。
 - 摆放由 seed 完全确定，静置后的状态以 `initial_states.hdf5` 为准。专家轨迹：MPlib 的随机数按 seed 设置，但 RRTConnect 有规划时限，负载不同时路径仍可能不同。复现轨迹以录制文件为准。

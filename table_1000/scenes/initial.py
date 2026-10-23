@@ -115,34 +115,36 @@ def initial_state(env, scene, assets, seed, attempts=ATTEMPTS):
     raise InitializationFailed(seed, tried)
 
 
+def write_tree(group, tree):
+    """Write a nested dict of arrays into the HDF5 ``group``."""
+    for key, value in tree.items():
+        if isinstance(value, dict):
+            write_tree(group.create_group(key), value)
+        else:
+            group.create_dataset(key, data=np.asarray(value))
+
+
+def read_tree(group):
+    import h5py
+    return {key: read_tree(value) if isinstance(value, h5py.Group) else value[()] for key, value in group.items()}
+
+
 def write_states(path, states, attrs):
     """Write ``{seed: (attempt, state)}`` (a state: nested dict of arrays) with file attributes ``attrs``."""
     import h5py
-
-    def write(group, tree):
-        for key, value in tree.items():
-            if isinstance(value, dict):
-                write(group.create_group(key), value)
-            else:
-                group.create_dataset(key, data=np.asarray(value))
-
     with h5py.File(path, 'w') as file:
         file.attrs.update(attrs)
         for seed, (attempt, state) in sorted(states.items()):
             group = file.create_group(str(seed))
             group.attrs.update(seed=seed, attempt=attempt)
-            write(group, state)
+            write_tree(group, state)
 
 
 def read_states(path):
     """``(attrs, {seed: (attempt, state)})`` of an ``initial_states.hdf5`` file, states as nested NumPy dicts."""
     import h5py
-
-    def read(group):
-        return {key: read(value) if isinstance(value, h5py.Group) else value[()] for key, value in group.items()}
-
     with h5py.File(path, 'r') as file:
-        return dict(file.attrs), {int(name): (int(group.attrs['attempt']), read(group))
+        return dict(file.attrs), {int(name): (int(group.attrs['attempt']), read_tree(group))
                                   for name, group in sorted(file.items(), key=lambda item: int(item[0]))}
 
 

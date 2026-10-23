@@ -45,6 +45,26 @@ def merge(sources, target, keep=lambda source, seed: True):
     return len(episodes)
 
 
+STEPS_PREFIX = 'steps'      # <backend>/steps<k>-<m>/: batches of some steps of the expert
+
+
+def clear_batch(directory):
+    """Empty a batch directory for a new batch, keeping the step batches in it (:data:`STEPS_PREFIX`)."""
+    import shutil
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    for path in directory.iterdir():
+        if path.is_dir() and path.name.startswith(STEPS_PREFIX):
+            continue
+        shutil.rmtree(path) if path.is_dir() else path.unlink()
+
+
+def decoded_attrs(group):
+    """An episode group's attributes, JSON-encoded ones (lists, dicts) decoded."""
+    return {key: json.loads(value) if isinstance(value, str) and value[:1] in ('[', '{') else value
+            for key, value in group.attrs.items()}
+
+
 def demo_name(seed):
     return f'demo_{seed}'
 
@@ -84,3 +104,28 @@ def subtask(attrs, t, length):
         if entry['start'] <= t < (entry['end'] if entry['end'] is not None else length):
             return entry['instruction']
     return None
+
+
+def concatenate(sources, target, name):
+    """Write ``data/<name>`` in the open HDF5 file ``target``: the episodes ``sources``
+    (``[(group, length)]``, in order) one after the other, each cut to its first ``length`` steps;
+    the first's ``initial_state`` and attributes, ``num_samples`` the sum."""
+    import h5py
+    import numpy as np
+
+    def join(groups, out, skip=None):
+        for key, value in groups[0][0].items():
+            if key == skip:
+                continue
+            if isinstance(value, h5py.Group):
+                join([(group[key], length) for group, length in groups], out.create_group(key))
+            else:
+                out.create_dataset(key, data=np.concatenate([group[key][:length] for group, length in groups]))
+
+    first = sources[0][0]
+    group = target['data'].create_group(name)
+    group.attrs.update(dict(first.attrs))
+    first.file.copy(first['initial_state'], group, 'initial_state')
+    join(sources, group, skip='initial_state')
+    group.attrs['num_samples'] = sum(length for _, length in sources)
+    return group

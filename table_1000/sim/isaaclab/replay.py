@@ -11,7 +11,7 @@ import json
 import h5py
 import torch
 
-from table_1000.scenes.recordings import subtask
+from table_1000.scenes.recordings import decoded_attrs, subtask
 
 
 def read_tree(group, index=None):
@@ -32,8 +32,7 @@ class Episode:
 
     def __init__(self, group):
         self.group, self.name = group, group.name.rsplit('/', 1)[-1]
-        self.attrs = {key: json.loads(value) if isinstance(value, str) and value[:1] in '[{' else value
-                      for key, value in group.attrs.items()}
+        self.attrs = decoded_attrs(group)
         self.length = int(group.attrs['num_samples'])
 
     def state(self, t):

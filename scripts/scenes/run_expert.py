@@ -7,17 +7,24 @@ Runs ``expert.py`` from every initial state of ``<input>/<scene>/initial_states.
 split into ``--jobs`` contiguous parts, one process each, spread over ``--gpus`` or
 submitted through ``--launcher`` (see ``table_1000/common/batch.py``); seeds whose
 process stopped before their episode run again (``--retries``). Logs and the parts'
-files are in ``outputs/scenes/<scene>/<backend>/`` (``stages/<stage>/`` below it for a stage). The batch replaces
-``<output>/<scene>/<backend>/`` (``<output>`` = ``data/scenes``), renders included:
+files are in ``outputs/scenes/<scene>/<backend>[/steps<k>-<m>]/``. The batch replaces
+``<output>/<scene>/<backend>/`` (``<output>`` = ``data/scenes``), renders included, but keeps the
+batches of some steps in it; with ``--steps`` it is ``<backend>/steps<k>-<m>/``:
 
 - ``trajectories.hdf5``, ``trajectories_failed.hdf5``: succeeded and failed episodes,
   ``data/demo_<seed>`` in Isaac Lab's recorder format;
 - ``episodes/<seed>.json``: each episode's report;
+- ``checkpoints/step<k>.hdf5``: for an expert made of steps, the scene state of each seed
+  after step ``k`` passed its check;
 - ``summary.json``: commit, seeds, success rate, failed seeds by ``"subtask: reason"``
-  (``-: process exited`` for seeds a stopped process left without a result), mean durations.
+  (``-: process exited`` for seeds a stopped process left without a result), mean durations,
+  and per step the success rate and the progressive completion rate.
 
-``--stage <name>`` checks one step of the expert alone from every initial state
-(``expert.STAGES``, see ``table_1000/experts/generate.py``); give it its own ``--output``.
+``--steps k[-m]`` runs steps ``k`` to ``m`` of the expert (``m`` = ``k`` when left out):
+from the initial states for ``k`` = 1, else from the checkpoints of step ``k - 1`` of the
+batch ``--from <batch directory>``. Every seed with such a checkpoint runs; the progressive
+rates count from the seeds of that batch's first step. See
+``table_1000/experts/generate.py`` and ``scripts/scenes/join_steps.py``.
 
 Failed episodes are part of the result; the exit status is non-zero only when a
 seed has no episode. See ``table_1000/experts/generate.py``.
@@ -45,6 +52,14 @@ def scene_robot(scene, root):
     return load_spec(Path(load(scene, 'scene', root).ROBOT['asset']).name, root).name
 
 
+def step_range(text):
+    first, _, last = text.partition('-')
+    first, last = int(first), int(last or first)
+    if not 1 <= first <= last:
+        raise argparse.ArgumentTypeError(f'steps {text}: k[-m] with 1 <= k <= m')
+    return first, last
+
+
 def worker(args):
     """One part: the given seeds' episodes in this process, into ``args.work``."""
     work = args.work.resolve()
@@ -55,12 +70,15 @@ def worker(args):
     failed = False
     generator = None
     try:
-        from table_1000.experts.generate import Generator
+        from table_1000.experts.generate import Generator, read_checkpoints
         from table_1000.common.batch import parse_seeds
         from table_1000.scenes.initial import read_states
-        _, states = read_states(args.states)
+        if args.checkpoints:
+            _, states = read_checkpoints(args.states)
+        else:
+            states = {seed: (attempt, state, None) for seed, (attempt, state) in read_states(args.states)[1].items()}
         generator = Generator(args.scene, work, args.assets.resolve(), args.root.resolve(), physics=args.physics,
-                              stage=args.stage)
+                              steps=args.steps, source=str(args.states) if args.checkpoints else None)
         for seed in parse_seeds(args.seeds):
             report = generator.run(seed, *states[seed])
             print(seed, report['status'], report.get('failure', {}).get('reason', ''), f'{report["wall_s"]:.0f} s',
@@ -85,23 +103,45 @@ def main(argv=None):
                         help='the batch goes to <output>/<scene>/<backend>/ (replaced)')
     parser.add_argument('--root', type=Path, default=ROOT, help='repository root holding the scene and robot sources')
     parser.add_argument('--assets', type=Path, default=ROOT / 'assets')
-    parser.add_argument('--stage', help="check one step of the expert alone: expert.STAGES[<stage>] (see generate.py)")
+    parser.add_argument('--steps', type=step_range, help="k[-m]: run steps k to m of the expert (see run_steps)")
+    parser.add_argument('--from', dest='source', type=Path,
+                        help='a batch directory whose checkpoints of step k - 1 the steps start from')
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--seeds', nargs='+', help=argparse.SUPPRESS)
     parser.add_argument('--states', type=Path, help=argparse.SUPPRESS)
+    parser.add_argument('--checkpoints', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--work', type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.worker:
         worker(args)
         return
     import h5py
-    from table_1000.experts.generate import summarize
-    from table_1000.scenes.recordings import merge
+    from table_1000.experts.generate import checkpoint_path, merge_checkpoints, step_rates, summarize
+    from table_1000.scenes.recordings import STEPS_PREFIX, clear_batch, merge
     jobs = job_count(parser, args)
     root = args.root.resolve()
-    states = (args.input / args.scene / 'initial_states.hdf5').resolve()
-    if not states.is_file():
-        parser.error(f'no initial states {states}; run build_scene.py first')
+    first = args.steps[0] if args.steps else 1
+    if args.steps:
+        from table_1000.scenes import load
+        expert_steps = getattr(load(args.scene, 'expert', root), 'STEPS', None)
+        if expert_steps is None:
+            parser.error(f'--steps: the expert of {args.scene} has no STEPS (solve = run_steps(ctx, STEPS))')
+        if args.steps[1] > len(expert_steps):
+            parser.error(f'--steps {args.steps[0]}-{args.steps[1]}: the expert has {len(expert_steps)} steps')
+    parent = None
+    if args.source:
+        if first == 1:
+            parser.error('--from resumes from the checkpoints of step k - 1: give --steps k[-m] with k > 1')
+        states = checkpoint_path(args.source, first - 1).resolve()
+        if not states.is_file():
+            parser.error(f'no checkpoints of step {first - 1} in {args.source}')
+        parent = json.loads((args.source / 'summary.json').read_text())
+    else:
+        if first > 1:
+            parser.error(f'steps {first}-: give --from <batch directory> with checkpoints of step {first - 1}')
+        states = (args.input / args.scene / 'initial_states.hdf5').resolve()
+        if not states.is_file():
+            parser.error(f'no initial states {states}; run build_scene.py first')
     with h5py.File(states, 'r') as file:
         attrs = dict(file.attrs)
         seeds = sorted(int(name) for name in file)
@@ -109,14 +149,17 @@ def main(argv=None):
     if attrs.get('scene') != args.scene or attrs.get('robot') != robot:
         parser.error(f'{states} holds scene {attrs.get("scene")} with robot {attrs.get("robot")}, the scene has '
                      f'{robot}; run build_scene.py again')
+    if args.source and attrs.get('physics') != args.physics:
+        parser.error(f'{states} was made on {attrs.get("physics")}, not {args.physics}')
     if not seeds:
         parser.error(f'{states} holds no initial states')
-    directory = (args.output / args.scene / args.physics).resolve()
-    staging = root / 'outputs' / 'scenes' / args.scene / args.physics
-    if args.stage:
-        staging = staging / 'stages' / args.stage.replace(' ', '_')
-    shutil.rmtree(directory, ignore_errors=True)
-    shutil.rmtree(staging, ignore_errors=True)
+    name = Path(args.physics) / (f'{STEPS_PREFIX}{args.steps[0]}-{args.steps[1]}' if args.steps else '')
+    directory = (args.output / args.scene / name).resolve()
+    staging = root / 'outputs' / 'scenes' / args.scene / name
+    if args.source and directory == args.source.resolve():
+        parser.error(f'the batch would replace {args.source}, which it starts from; give another --output')
+    clear_batch(directory)
+    clear_batch(staging)
     checkout = commit(root)
     works = {}
 
@@ -125,7 +168,9 @@ def main(argv=None):
         works.update(dict.fromkeys(part, staging / name))
         argv = [sys.executable, str(Path(__file__).resolve()), args.scene, '--worker', '--physics', args.physics,
                 '--seeds', *seed_range(part).split(), '--states', str(states), '--work', str(staging / name),
-                '--root', str(root), '--assets', str(args.assets.resolve()), *(['--stage', args.stage] if args.stage else [])]
+                '--root', str(root), '--assets', str(args.assets.resolve()),
+                *(['--steps', '-'.join(map(str, args.steps))] if args.steps else []),
+                *(['--checkpoints'] if args.source else [])]
         return argv, staging / f'{name}.log', f'{args.scene} {args.physics} {name} seeds {seed_range(part)}'
 
     started = time.perf_counter()
@@ -139,15 +184,27 @@ def main(argv=None):
               keep=lambda source, seed: (source.parent / 'episodes' / f'{seed}.json').is_file())
         for part in parts:
             (part / f'{name}.hdf5').unlink(missing_ok=True)
+    # A stopped process may have left a checkpoint without the episode's report, run again elsewhere.
+    sources = [path for path in staging.glob('part*/checkpoints/*.hdf5')
+               if (path.parent.parent / 'episodes' / f'{path.stem}.json').is_file()]
+    merge_checkpoints(sources, directory, {'scene': args.scene, 'robot': robot, 'physics': args.physics,
+                                           'commit': checkout})
+    for path in staging.glob('part*/checkpoints/*.hdf5'):
+        path.unlink()
     reports = []
     for path in sorted(staging.glob('part*/episodes/*.json')):
         reports.append(json.loads(path.read_text()))
         shutil.move(path, directory / 'episodes' / path.name)
-    summary = {'scene': args.scene, 'stage': args.stage, 'robot': robot, 'physics': args.physics, 'commit': checkout,
-               **summarize(reports, seeds), 'total_s': time.perf_counter() - started, 'videos': {}, 'fails': {}}
+    summary = {'scene': args.scene, 'robot': robot, 'physics': args.physics, 'commit': checkout,
+               'steps_run': args.steps, 'from': str(args.source.resolve()) if args.source else None,
+               **summarize(reports, seeds), 'steps': step_rates(reports, seeds, parent),
+               'total_s': time.perf_counter() - started, 'videos': {}, 'fails': {}}
     (directory / 'summary.json').write_text(json.dumps(summary, indent=1, ensure_ascii=False, default=float) + '\n')
     print('SUMMARY', directory / 'summary.json',
           json.dumps({key: summary[key] for key in ('succeeded', 'success_rate', 'failures')}, default=float), flush=True)
+    for row in (summary['steps'] or {}).get('rows', []):
+        print(f'STEP {row["step"]} {row["completed"]}/{row["started"]} progressive {row["progressive_rate"]:.2f}: '
+              f'{row["name"]}', flush=True)
     if missing:
         raise SystemExit(f'no episode: seeds {seed_range(missing)}; see {staging}')
 

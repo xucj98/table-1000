@@ -72,9 +72,9 @@ straight and turns it in place).
 **ready** -- the arms that hold nothing back at their start pose (each step then starts
 alike, out of the way of the other arm).
 
-**retry** -- a step run again when it fails (``ATTEMPTS`` in all, within
-``RETRY_BUDGET`` s of the episode), the arms that hold nothing back at their start pose
-first, so that its choices start afresh.
+**retry** -- a step run again when it fails (``ATTEMPTS`` in all), the arms that hold nothing back at their start pose
+first, so that its choices start afresh; not when nothing was in reach (``Unreachable``: the
+planners sampled their candidates already, a high share of it points at the planning).
 
 Each choice of another candidate is noted (``ctx.note``). A skill that finds nothing in reach
 (no grasp, push or placement) fails with :class:`~table_1000.experts.context.Unreachable`.
@@ -94,7 +94,6 @@ from table_1000.experts.skills.motion import Motion
 from table_1000.experts.skills.placing import PLACE_ABOVE, PLACE_CLEARANCE, PLACE_MARGIN, PLACE_STEP, Placing
 
 ATTEMPTS = 3            # tries of a step under retry
-RETRY_BUDGET = 240.     # s of an episode (wall clock) after which a failed step is not tried again
 
 
 class Skills(Grasping, Motion, Placing, Base):
@@ -116,8 +115,9 @@ class Skills(Grasping, Motion, Placing, Base):
                     parts = [obj.name for obj in solver.add_object(name, lambda body, part: (part, body),
                                                                    merged=ctx.geometry[name].solid)]
                     solver.world.allow(parts, parts)
-        self.home = self.model.q.copy()     # the arms' poses at the start, to return to (see ready)
-        self.start_base = self.base_pose() if ctx.spec.base else None
+        # The arms' poses where the episode began, to return to (see ready), and the base's.
+        self.home = self.model.vector(dict(zip(ctx.env.joints, ctx.start['qpos'])))
+        self.start_base = np.asarray(ctx.start['base_pose'], dtype=float) if ctx.spec.base else None
         self.held = {}      # arm -> {'target', 'supports', 'grasp'}
         self.log, self.rejected = [], {}
 
@@ -136,15 +136,17 @@ def ready(ctx):
     _skills(ctx).ready()
 
 
-def retry(ctx, step, attempts=ATTEMPTS, budget=RETRY_BUDGET):
+def retry(ctx, step, attempts=ATTEMPTS):
     """``step()``, again up to ``attempts`` times in all when it fails (each choice of grasp, path
     and spot starts afresh from where things are), the free arms back at their start pose first;
-    not once the episode has run ``budget`` s (wall clock)."""
+    not when nothing was in reach (:class:`Unreachable`)."""
     for attempt in range(1, attempts + 1):
         try:
             return step()
+        except Unreachable:
+            raise       # the planners tried their candidates already: nothing to gain from the same again
         except ExpertFailed as failure:
-            if attempt == attempts or ctx.elapsed() > budget:
+            if attempt == attempts:
                 raise
             ctx.note('retry', attempt=attempt, reason=failure.reason)
             _skills(ctx).ready()

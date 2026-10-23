@@ -78,6 +78,9 @@ data/scenes/000000/<后端>/        一批专家轨迹：run_expert.py 生成，
   episodes/<seed>.json                           每条轨迹的报告
   videos/<seed>/<相机>.mp4                       成功轨迹的录像，每个相机一条；--merge 时为 videos/<seed>/merge.mp4
   fails/                                         失败轨迹的录像，结构同 videos/
+  checkpoints/step<k>.hdf5                       由步骤组成的专家：每个 seed 第 k 步结束时的场景状态
+  steps<k>-<m>/                                  run_expert.py --steps 只运行第 k 到 m 步的一批，结构同上；
+                                                 join_steps.py 把各步的批次接成完整轨迹，写回 <后端>/ 本身
 ```
 
 规范：[建模](modeling.md)、[几何预览](preview.md)、[物理属性](physics.md)、[行为插件](behaviors.md)、[物理测试](physics-tests.md)、[机器人](robots.md)、[场景与专家轨迹](scenes.md)。
