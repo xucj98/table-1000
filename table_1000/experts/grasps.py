@@ -332,15 +332,13 @@ def lengthwise(closings):
 
 
 def grasp_candidates(shape, transform, hand, obstacles, preferred, center_of_mass=None, approach_distance=.05,
-                     step=np.radians(15), max_up=.05, cost_offset=40., cost_backoff=10., cost_hold=.5 / 30e-6,
-                     closing=None):
+                     step=np.radians(15), max_up=.05, cost_offset=40., cost_backoff=10., cost_hold=.5 / 30e-6):
     """Grasps of ``shape`` (:class:`Box` or :class:`Cylinder`) at world ``transform`` by ``hand``
     (:class:`Hand`), cheapest first, generated as they are taken.
 
     Approach directions are ``step`` apart around each closing direction, none rising more than
     ``max_up`` (z of the unit approach), none closing along the length of a long, thin shape (see
-    :func:`lengthwise`: a pen squeezed by its ends); both hand turns about the approach are listed, of equal cost,
-    the one whose closing direction is nearer ``closing`` (the hand's now: less to turn) first. The TCP
+    :func:`lengthwise`: a pen squeezed by its ends); both hand turns about the approach are listed. The TCP
     starts at the contact centre and backs off along the approach until the open hand is clear
     of the object and of ``obstacles`` (``[(FCL object, clearance to keep)]``), also
     ``approach_distance`` further back (the pre-grasp), and the hand closed on the object
@@ -361,7 +359,6 @@ def grasp_candidates(shape, transform, hand, obstacles, preferred, center_of_mas
     # Every (closing, approach, slide, hand turn), by angle from the preferred approach: the angle is
     # a lower bound of the cost, so a placed grasp is yielded once no later one can be cheaper.
     choices = []
-    turned = closing
     closings = list(shape.closings(step))
     length = lengthwise(closings)
     for closing, width, basis, slides in closings:
@@ -376,7 +373,7 @@ def grasp_candidates(shape, transform, hand, obstacles, preferred, center_of_mas
                 continue
             angle = float(np.arccos(np.clip(approach @ preferred, -1., 1.)))
             for slide in slides:
-                for flip in (1., -1.) if turned is None or closing @ turned >= 0. else (-1., 1.):
+                for flip in (1., -1.):
                     choices.append((angle, len(choices), approach, flip * closing, slide, width, open_gap))
     choices.sort(key=lambda choice: choice[:2])
     placed_grasps = []

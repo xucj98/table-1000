@@ -119,8 +119,7 @@ class Grasping:
             preferred = approach if approach is not None else normalized(centre - self.shoulder(arm)) + [0., 0., -1.]
             obstacles, supports = self.obstacles(arm, target, transform)
             found[arm] = supports, Replayed(grasp_candidates(target.shape, transform, self.hands[arm], obstacles,
-                                                             preferred, center_of_mass=point, approach_distance=APPROACH,
-                                                             closing=self.solvers[arm].tcp()[:3, 1]))
+                                                             preferred, center_of_mass=point, approach_distance=APPROACH))
         closest = min((grasp.info['approach_deg'] for _, candidates in found.values()
                        for grasp in itertools.islice(candidates, MAX_IK)), default=0.)
         for lift in (False, True):
