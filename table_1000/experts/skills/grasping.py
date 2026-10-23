@@ -23,6 +23,12 @@ MIN_RISE = .05          # m the object must rise in pick's lift
 WHY_LIMIT = 20          # rejected grasps per choice whose collisions are counted for the report
 
 
+def lifting(then):
+    """Whether the move ``then`` after a grasp is straight up (a pick's lift, not a drag)."""
+    then = np.asarray(then, dtype=float)
+    return np.linalg.norm(then[:2]) < 1e-9 and then[2] > 0.
+
+
 class Replayed:
     """An iterator's items, made as first asked for and replayed from the first on each pass."""
 
@@ -111,7 +117,7 @@ class Grasping:
         transform = body @ target.offset
         centre = transform[:3, 3]
         then = None if then is None else np.asarray(then, dtype=float)
-        upward = then is not None and np.linalg.norm(then[:2]) < 1e-9 and then[2] > 0.
+        upward = then is not None and lifting(then)
         arms = sorted(arms, key=lambda arm: np.linalg.norm((self.shoulder(arm) - centre)[:2]))
         found = {}
         for arm in arms:
@@ -280,7 +286,7 @@ class Grasping:
                 path = [standoff(grasp.pose, APPROACH), grasp.pose]
                 if then is not None:
                     path.append(translated(grasp.pose, then))
-                    if np.linalg.norm(np.asarray(then, dtype=float)[:2]) > 1e-9 or then[2] <= 0.:
+                    if not lifting(then):
                         path.append(standoff(path[-1], APPROACH))   # letting go there (see options)
                 paths[arm].append(path)
         return paths
