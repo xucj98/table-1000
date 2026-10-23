@@ -225,7 +225,9 @@ class Grasping:
                     skip = set()
                     reached = self.reach(target, arms, skip, point, approach, then, max_angle, need)
             if reached is None:
-                ctx.fail('no reachable grasp', Unmet if unmet or self.rejected['need'] else Unreachable, target=target.names, candidates_tried=len(skip), rejected=self.rejected)
+                # With a need and the base held, only this stance failed: Unmet, for the chain to adapt (the base moves).
+                unmet = unmet or need is not None and (not base or self.rejected['need'])
+                ctx.fail('no reachable grasp', Unmet if unmet else Unreachable, target=target.names, candidates_tried=len(skip), rejected=self.rejected)
             arm, grasp, supports = reached
             solver = self.solvers[arm]
             solver.close_gripper()

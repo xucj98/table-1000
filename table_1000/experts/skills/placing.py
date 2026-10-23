@@ -153,7 +153,9 @@ class Placing:
 
         def accepts(arm, tcp_object):
             rotation = Rotation.from_matrix(tcp_object[:3, :3]).as_rotvec()
-            key = (arm, *np.round(tcp_object[:3, 3] / NEED_ROUND[0]).astype(int), *np.round(rotation / NEED_ROUND[1]).astype(int))
+            # Per hold and per robot state (the base and joints, as a base move or a stow leaves them).
+            key = (arm, *np.round(tcp_object[:3, 3] / NEED_ROUND[0]).astype(int), *np.round(rotation / NEED_ROUND[1]).astype(int),
+                   self.model.base.round(3).tobytes(), self.model.q.round(2).tobytes())
             if key not in verdicts:
                 # Held so (its parts carried with the hand), as it will be when it is put down.
                 solver, poses = self.solvers[arm], ctx.poses()
