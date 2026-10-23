@@ -32,7 +32,6 @@ GRIPPER_TIME = .6         # s for the fingers to close or open
 OPEN_GAP = .08            # m
 GRIPPER_THERE = .002     # m from a commanded opening the fingers count as there
 TORSO_STILL = .001        # m of torso lift travel below which a path leaves it where it was
-LIFT_SETTLE = .3          # s held after the torso lift moved alone
 # A free-space plan allows the contacts it starts in all the way along; fingers starting within the
 # padding of an object they are not meant to touch (a hand that just let go of a handle) back off
 # straight first, along the approach or up, by the first of DEPARTS that leaves the padding.
@@ -206,13 +205,6 @@ class MotionSolver:
         an IK solution that does), the plan holds it first, once, and frees it only if that fails."""
         self.depart()
         free = [lift]
-        if lift and goals is not None:
-            # A goal at another torso height: the lift alone there first where it moves clear (the arm
-            # then plans in the room it has there, rather than through a narrow passage on the way).
-            indices = self.model.lift_indices()
-            heights = {tuple(np.round(np.asarray(goal)[indices], 4)) for goal in goals}
-            if len(heights) == 1 and not np.allclose(next(iter(heights)), self.model.q[indices], atol=TORSO_STILL):
-                self.move_lift(np.asarray(goals[0])[indices])
         if lift:
             here = self.model.q[self.model.lift_indices()]
             if goals is None or all(np.allclose(np.asarray(goal)[self.model.lift_indices()], here, atol=1e-4)
@@ -252,22 +244,6 @@ class MotionSolver:
             if not self.touching():
                 self.ctx.note('departed', arm=self.arm.name, touched=touched)
                 return
-
-    def move_lift(self, target):
-        """The torso lift alone straight to ``target``, the arms held, where the robot stays clear of
-        the planning world on the way; whether it moved."""
-        indices = self.model.lift_indices()
-        here = self.model.q[indices].copy()
-        arm = self.model.q[self.model.arm_indices(self.arm.name)]
-        _, pairs = self.model.check_path(self.arm.name, [arm, arm], VALIDATION_STEP, [here, target])
-        if pairs:
-            return False
-        count = steps(float(np.max(np.abs(target - here))) / self.ctx.spec.lift_velocity_limit)
-        for k in range(1, count + 1):
-            self.ctx.step({'lift': (here + (target - here) * k / count)[None]})
-        self.ctx.hold(LIFT_SETTLE)
-        note_torso(self.ctx, [here, target])
-        return True
 
     def _rrt(self, target, planning_time, attempts, lift, goals):
         for attempt in range(attempts):
