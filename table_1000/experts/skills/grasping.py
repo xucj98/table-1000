@@ -20,6 +20,7 @@ MAX_PLANS = 6           # candidates whose motion is tried per grasp attempt, wi
 # of either arm comes to the approach: a worse grasp is not worth sparing the torso.
 HELD_SLACK = 15.
 MIN_RISE = .05          # m the object must rise in pick's lift
+SHOULDER_ABOVE = .30    # m, with the torso lift moving, its IK starts with the shoulder this far above the grasp
 WHY_LIMIT = 20          # rejected grasps per choice whose collisions are counted for the report
 
 
@@ -140,6 +141,13 @@ class Grasping:
                         break
                     checked += 1
                     start = self.model.vector(side.finger_targets(grasp.open_gap))
+                    if lift:
+                        # From the torso height that puts the shoulder SHOULDER_ABOVE the grasp: the
+                        # nearest solution then has the torso there too (not where it is, which held it
+                        # failed), and the arm reaches down to a low handle rather than into itself.
+                        indices = self.model.lift_indices()
+                        rise = grasp.pose[2, 3] + SHOULDER_ABOVE - self.shoulder(arm)[2]
+                        start[indices] = np.clip(start[indices] + rise, *self.model.limits[indices].T)
                     solver.sync()
                     # The fingers touch the object and come closer to its supports than the padding.
                     solver.allow([*target.names, *supports])
