@@ -322,6 +322,13 @@ HOLD_MARGIN, MIN_HOLD_AREA, HOLD_AREA, HOLD_SPACING, HOLD_TOLERANCE = .002, 5e-6
 SUPPORT_CLEARANCE = -.0005
 
 
+def lengthwise(closings):
+    """The width of ``closings`` (as :meth:`Box.closings` gives them) along the length of an
+    elongated shape, more than ``ELONGATED`` times its next width; None for a shape that is not."""
+    widths = sorted({round(float(width), 6) for _, width, _, _ in closings})
+    return widths[-1] if len(widths) > 1 and widths[-1] > ELONGATED * widths[-2] else None
+
+
 def grasp_candidates(shape, transform, hand, obstacles, preferred, center_of_mass=None, approach_distance=.05,
                      step=np.radians(15), max_up=.05, cost_offset=40., cost_backoff=10., cost_hold=.5 / 30e-6,
                      closing=None):
@@ -354,11 +361,10 @@ def grasp_candidates(shape, transform, hand, obstacles, preferred, center_of_mas
     choices = []
     turned = closing
     closings = list(shape.closings(step))
-    widths = sorted({round(width, 6) for _, width, _, _ in closings})
-    elongated = len(widths) > 1 and widths[-1] > ELONGATED * widths[-2]
+    length = lengthwise(closings)
     for closing, width, basis, slides in closings:
         open_gap = min(width + OPEN_MARGIN, hand.max_gap)
-        if width > open_gap - .01 or elongated and round(width, 6) == widths[-1]:
+        if width > open_gap - .01 or length is not None and width >= length:
             continue
         closing = rotation @ closing
         approaches = [rotation @ (np.cos(t) * basis[0] + np.sin(t) * basis[1]) for t in np.arange(0., 2 * np.pi, step)] \
