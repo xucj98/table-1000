@@ -1,6 +1,6 @@
 """Join the episodes of batches run step by step into whole episodes, one per seed.
 
-``uv run python scripts/scenes/join_steps.py BATCH ... --output DIR``
+``uv run python scripts/scenes/join_steps.py BATCH ... [--output DIR]``
 
 The batches (directories ``run_expert.py`` wrote, in order) each run some steps of
 the expert (``--steps k[-m]``): the first from the initial states, every other from
@@ -14,9 +14,10 @@ the subtasks and steps shifted to their place, ``status`` and ``failure`` of the
 and ``parts``: each part's batch, commit, steps, first step in the joined episode and
 length.
 
-``DIR`` gets ``trajectories.hdf5`` and ``trajectories_failed.hdf5`` (by the last
-part's status) and a ``summary.json``, so ``render.py --input <parent of scene>
---physics <name>`` renders them when ``DIR`` is ``<input>/<scene>/<name>``.
+``DIR`` (default ``<backend>-joined`` next to the batches, e.g.
+``data/scenes/<scene>/isaac-cpu-joined``) gets ``trajectories.hdf5`` and
+``trajectories_failed.hdf5`` (by the last part's status) and a ``summary.json``, so
+``render.py <scene> --physics <backend>-joined`` renders them.
 """
 
 import argparse
@@ -48,7 +49,8 @@ def main(argv=None):
     from table_1000.scenes.recordings import concatenate, decoded_attrs
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('batches', type=Path, nargs='+', help='batch directories, in step order')
-    parser.add_argument('--output', type=Path, required=True, help='the joined batch directory (replaced)')
+    parser.add_argument('--output', type=Path,
+                        help='the joined batch directory, replaced (default: <backend>-joined next to the batches)')
     args = parser.parse_args(argv)
     summaries = []
     for index, batch in enumerate(args.batches):
@@ -59,6 +61,7 @@ def main(argv=None):
             parser.error(f'{batch} did not start from {args.batches[index - 1]}')
         summaries.append(summary)
     first = summaries[0]
+    args.output = args.output or args.batches[-1].parent / f'{first["physics"]}-joined'
     if (first.get('steps_run') or [1])[0] != 1 or first.get('from'):
         parser.error(f'{args.batches[0]} does not start from the initial states (step 1)')
     found = [episodes(batch) for batch in args.batches]

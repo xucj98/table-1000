@@ -93,7 +93,7 @@
 
 `summary.json` 的 `steps` 给出每步的起始 seed 数、完成数、成功率（完成 / 起始）和逐步完成率（progressive completion rate，ManiSkill-HAB 的统计方式：这一步及之前各步都完成的 seed 占第 1 步起始 seed 的比例）；从检查点开始的批次沿用来源批次前几步的行，分母也取来源批次的。
 
-`join_steps.py <批次> ... --output <目录>` 把逐步运行的各批按顺序接成完整轨迹：每段在下一批开始用的检查点处截断，接上下一批同一 seed 的轨迹，`subtasks` 和 `steps` 平移到接好后的位置，`parts` 记录每段的批次、提交、步骤、起点和长度。输出目录的格式与一批轨迹相同，可直接渲染。逐步迭代的方法见[操作手册 05](../../tutorials/05-step-by-step-expert.md)。
+`join_steps.py <批次> ...` 把逐步运行的各批按顺序接成完整轨迹（默认写到批次旁的 `<后端>-joined`）：每段在下一批开始用的检查点处截断，接上下一批同一 seed 的轨迹，`subtasks` 和 `steps` 平移到接好后的位置，`parts` 记录每段的批次、提交、步骤、起点和长度。输出目录的格式与一批轨迹相同，可直接渲染。逐步迭代的方法见[操作手册 05](../../tutorials/05-step-by-step-expert.md)。
 
 ## 轨迹数据
 
