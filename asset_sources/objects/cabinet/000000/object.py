@@ -228,7 +228,7 @@ def build():
             box("Translucent drawer side", (0.0035, 0.256, 0.080), (x, 0.131, 0), smoke, drawer, parts, 0.002)
         box("Translucent drawer bottom", (0.258, 0.256, 0.0035), (0, 0.131, -0.0385), smoke, drawer, parts, 0.002)
         box("Translucent drawer rear", (0.258, 0.0035, 0.080), (0, 0.260, 0), smoke, drawer, parts, 0.002)
-        box("White pull handle", (0.048, 0.010, 0.012), (0, -0.009, -0.006), white, drawer, parts, 0.0025)
+        box("White pull handle", (0.048, 0.020, 0.012), (0, -0.014, -0.006), white, drawer, parts, 0.0025)
         drawer_body = compound_body(drawer)
         collision_parts(drawer_body)
         drawer_joint(housing_body, drawer_body, index, z)
