@@ -11,7 +11,7 @@ One attempt of seed ``s`` runs ``scene.initialize(layout)`` with
    in a drawer: within the support's collision box, or over the table), or anywhere with the
    layout's ``free_landing`` (a messy desk: a pen falling out of its cup); the others are held
    to the settling limits below, and nothing may fall off the table (what the layout
-   stands on the ``'floor'`` stays there);
+   stands on the ``'floor'``, directly or on something there, stays there);
 3. **settling** for :data:`SETTLE_S` with the robot holding still: every object body
    stays within :data:`MOVE_LIMIT` / :data:`TURN_LIMIT` of where it was, relative to its
    support (the table or another object), its joints within :data:`JOINT_LIMIT`, and the
@@ -52,6 +52,15 @@ class InitializationFailed(RuntimeError):
         self.attempts = attempts
 
 
+def on_floor(layout, name):
+    """Whether ``name`` rests on the ``'floor'``, directly or on what stands there (litter in a waste bin)."""
+    seen = set()
+    while name in layout.supports and name not in seen:
+        seen.add(name)
+        name = layout.supports[name]
+    return name == 'floor'
+
+
 def relative_poses(env, layout):
     """Every object body's pose relative to its support (the world for the table)."""
     poses = env.privileged()['poses']
@@ -84,7 +93,7 @@ def settle_report(env, layout, seconds=SETTLE_S):
     touched = sorted({' / '.join(entry['pair']) for entry in env.contacts.intervals()})
     top = layout.scene.TABLE['height'] - FALLEN_DEPTH
     fallen = sorted(key for key, pose in env.privileged()['poses'].items()
-                    if pose[0, 2, 3] < top and layout.supports.get(key.partition(':')[0]) != 'floor')
+                    if pose[0, 2, 3] < top and not on_floor(layout, key.partition(':')[0]))
     return {'objects': moved, 'joints': joint_moves, 'robot_contacts': touched, 'fallen': fallen}
 
 

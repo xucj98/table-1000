@@ -172,6 +172,8 @@ class Layout:
             raise SamplingFailed(f'{name} touches something above everything at {xy}')
         while not touching(free - DROP_STEP):
             free -= DROP_STEP
+            if free < offset:       # down to the floor: nothing under it
+                raise SamplingFailed(f'{name} has nothing under it at {xy}')
         hit = free - DROP_STEP
         while free - hit > DROP_TOLERANCE:
             middle = (free + hit) / 2
@@ -187,8 +189,8 @@ class Layout:
     def scatter(self, name, region, yaw=0., rotation=None, frame=None, onto=None, tries=50):
         """:meth:`drop` ``name`` at a uniform position in ``region`` ``((x0, y0), (x1, y1))`` of
         ``frame`` with a yaw (a value or a ``(low, high)`` range), retrying until it lands on
-        ``onto`` (an object or ``'table'``; a list of them; ``None``: anything) wholly over the
-        table. Returns the pose."""
+        ``onto`` (an object or ``'table'``; a list of them; ``None``: anything), wholly over the
+        table when it lands on the table. Returns the pose."""
         (x0, y0), (x1, y1) = region
         allowed = None if onto is None else {onto} if isinstance(onto, str) else set(onto)
         for _ in range(tries):
@@ -198,7 +200,7 @@ class Layout:
                 transform, support = self.drop(name, xy, angle, rotation, frame)
             except SamplingFailed:
                 continue
-            if (allowed is None or support in allowed) and self.over_table(name):
+            if (allowed is None or support in allowed) and (support != 'table' or self.over_table(name)):
                 return transform
             self.remove(name)
         raise SamplingFailed(f'{name} did not land on {onto} in {region} after {tries} tries')

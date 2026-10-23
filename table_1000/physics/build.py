@@ -31,13 +31,13 @@ def rigid_assets(config=RIGID_CONFIG):
     return json.loads(Path(config).read_text())
 
 
-def author_physics(source, output, rigid=None):
+def author_physics(source, output, values=None):
     """Author ``physics.usda`` with the asset's own ``physics.py``, or without one, with a script made from
-    ``rigid`` (its values in ``configs/rigid_physics.json``); the script used is kept as ``physics.py``."""
+    ``values`` (its entry in ``configs/rigid_physics.json``); the script used is kept as ``physics.py``."""
     if (source / 'physics.py').is_file():
         shutil.copyfile(source / 'physics.py', output / 'physics.py')
-    elif rigid is not None:
-        (output / 'physics.py').write_text(RIGID_SCRIPT.format(values=rigid))
+    elif values is not None:
+        (output / 'physics.py').write_text(RIGID_SCRIPT.format(values=values))
     else:
         raise FileNotFoundError(f'{source}: no physics.py and not in {RIGID_CONFIG}')
     spec = importlib.util.spec_from_file_location('asset_physics', output / 'physics.py')
@@ -168,7 +168,7 @@ def author_geometry(model, destination):
     return paths
 
 
-def build(asset, source, output, rigid=None):
+def build(asset, source, output, values=None):
     from pxr import Sdf, Usd, UsdPhysics, UsdShade, UsdUtils
     from omni.kit.material.library import get_mdl_lib_paths
     started = time.perf_counter()
@@ -180,7 +180,7 @@ def build(asset, source, output, rigid=None):
                         '--', '--blend', str(asset / 'object.blend'), '--output', str(model_path)], check=True)
         model = json.loads(model_path.read_text())
         paths = author_geometry(model, output / 'geometry.usdc')
-        author_physics(source, output, rigid)
+        author_physics(source, output, values)
         composed = Usd.Stage.CreateInMemory()
         composed.GetRootLayer().subLayerPaths = [str(output / 'physics.usda'), str(output / 'geometry.usdc')]
         composed.SetDefaultPrim(composed.GetPrimAtPath('/Asset'))
@@ -217,8 +217,8 @@ def build(asset, source, output, rigid=None):
             (output / 'behavior.py').unlink(missing_ok=True)
         packaged = Usd.Stage.Open(str(output / 'object.usdz'))
         rigid = [prim for prim in packaged.Traverse() if prim.HasAPI(UsdPhysics.RigidBodyAPI)]
-        # A physics layer may merge modelled bodies into one (table_1000.physics.rigid).
-        assert 0 < len(rigid) <= sum(node['rigid'] for node in model['nodes'])
+        # The configured one-body assets merge their modelled bodies (table_1000.physics.rigid).
+        assert len(rigid) == (1 if values is not None else sum(node['rigid'] for node in model['nodes']))
         assert all(UsdPhysics.MassAPI(prim).GetMassAttr().Get() > 0 for prim in rigid)
         # Authored centres of mass (body frame), for what the colliders' uniform density would put wrong.
         centers = {prim.GetCustomDataByKey('table1000:name'): list(UsdPhysics.MassAPI(prim).GetCenterOfMassAttr().Get())
