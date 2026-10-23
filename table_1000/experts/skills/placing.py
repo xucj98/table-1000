@@ -20,9 +20,9 @@ PLACE_TURN_STEP = 15.   # deg between the turns place samples
 PLACE_TURNS = 8         # turns place tries per position, the least first
 PLACE_MARGIN = .01      # m the footprint keeps inside the region and off its keep-out areas
 # What a place needs of the hold (see Placing.need): NEED_REACHED of NEED_PLACES of its placements,
-# spread from the nearest to the farthest, in reach by IK (NEED_IK_ATTEMPTS restarts) at the release
-# and above it (more than one: the object may turn a little in the hand as it closes), per hold (arm,
-# and the object in the hand rounded to NEED_ROUND m / rad).
+# spread over the MAX_PLACE_IK nearest (those place checks), in reach by IK (NEED_IK_ATTEMPTS restarts)
+# at the release and above it (more than one: the object may turn a little in the hand as it closes),
+# per hold (arm, and the object in the hand rounded to NEED_ROUND m / rad).
 NEED_PLACES, NEED_REACHED, NEED_IK_ATTEMPTS, NEED_ROUND = 24, 3, 5, (.02, .1)
 
 
@@ -147,6 +147,7 @@ class Placing:
         if near is None:
             near = frame @ np.r_[(low[:2] + high[:2]) / 2, 0., 1.]
         options = self.placements(target, current, region, np.asarray(near, dtype=float)[:3], keep_out, step, margin)
+        options = options[:MAX_PLACE_IK]       # those place checks
         options = [options[i] for i in np.unique(np.linspace(0, len(options) - 1, NEED_PLACES).astype(int))] if options else []
         verdicts, obj_prefix = {}, f'{obj}:'
 
