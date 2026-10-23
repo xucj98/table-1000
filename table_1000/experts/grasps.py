@@ -308,7 +308,7 @@ class Grasp:
 # point squeezes the object when it is within CONTACT_TOLERANCE of its surface as the fingers
 # close, and a grasp needs MIN_PAD_AREA of such pad surface on each finger.
 OPEN_MARGIN, PAD_SPACING, CONTACT_TOLERANCE, MIN_PAD_AREA = .03, .0015, .001, 15e-6
-ELONGATED = 3., .08     # a shape this many times longer than its next width, and longer (m), is not grasped by its ends
+ELONGATED = 3., .08     # longer than this times its next width and this (m): not grasped by its ends
 # The TCP backs off from the contact centre in BACKOFF_STEP steps until the hand is clear.
 BACKOFF_STEP, MAX_BACKOFF = .002, .06
 # The object's widest section across the closing (where the pads squeeze it: a face of a box, a line
