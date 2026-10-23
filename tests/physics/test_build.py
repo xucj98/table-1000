@@ -33,7 +33,7 @@ class PhysicsAuthorTest(unittest.TestCase):
             with patch('table_1000.physics.rigid.author') as author:
                 author_physics(source, output, values)
             author.assert_called_once_with(output / 'geometry.usdc', output / 'physics.usda', **values)
-            self.assertIn('configs/rigid_physics.py', (output / 'physics.py').read_text())
+            self.assertIn('configs/rigid_physics.json', (output / 'physics.py').read_text())
             with self.assertRaises(FileNotFoundError):
                 author_physics(source, output)
 

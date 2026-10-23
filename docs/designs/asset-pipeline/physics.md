@@ -41,12 +41,12 @@ Stage 使用米、千克和 Z 向上。USD 原生转动关节/驱动角度使用
 
 ## 单刚体资产
 
-不需要机构行为的资产（大部分文具、容器）整体按一个刚体仿真，不写自己的 `physics.py`，在 [`configs/rigid_physics.py`](../../../configs/rigid_physics.py) 中各占一行：
+不需要机构行为的资产（大部分文具、容器）整体按一个刚体仿真，不写自己的 `physics.py`，在 [`configs/rigid_physics.json`](../../../configs/rigid_physics.json) 中各占一行：
 
-```python
-ASSETS = {
-    'battery/000000': {'mass_kg': 0.023, 'friction': (0.4, 0.3), 'angular_damping': 2.0},
-    ...
+```json
+{
+  "battery/000000": {"mass_kg": 0.023, "friction": [0.4, 0.3], "angular_damping": 2.0},
+  "desk_lamp/000000": {"mass_kg": 2.5, "friction": [0.6, 0.5], "center_of_mass": [0.0, -0.03, 0.04]}
 }
 ```
 

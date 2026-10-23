@@ -11,8 +11,8 @@ import tempfile
 import time
 
 
-RIGID_CONFIG = Path(__file__).resolve().parents[2] / 'configs' / 'rigid_physics.py'
-RIGID_SCRIPT = """\"\"\"One rigid body, generated from configs/rigid_physics.py.\"\"\"
+RIGID_CONFIG = Path(__file__).resolve().parents[2] / 'configs' / 'rigid_physics.json'
+RIGID_SCRIPT = """\"\"\"One rigid body, generated from configs/rigid_physics.json.\"\"\"
 
 from table_1000.physics.rigid import author as author_rigid
 
@@ -25,16 +25,15 @@ def author(geometry_path, output_path):
 
 
 def rigid_assets(config=RIGID_CONFIG):
-    """``{asset path: values}`` of the assets built as one rigid body from ``configs/rigid_physics.py``."""
-    spec = importlib.util.spec_from_file_location('rigid_physics', config)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.ASSETS
+    """``{asset path: values}`` of the assets built as one rigid body, from ``configs/rigid_physics.json``:
+    ``mass_kg`` in total, ``friction`` ``[static, dynamic]``, optional ``angular_damping`` (1/s) and
+    ``center_of_mass`` (m, body frame); the keyword arguments of :func:`table_1000.physics.rigid.author`."""
+    return json.loads(Path(config).read_text())
 
 
 def author_physics(source, output, rigid=None):
     """Author ``physics.usda`` with the asset's own ``physics.py``, or without one, with a script made from
-    ``rigid`` (its values in ``configs/rigid_physics.py``); the script used is kept as ``physics.py``."""
+    ``rigid`` (its values in ``configs/rigid_physics.json``); the script used is kept as ``physics.py``."""
     if (source / 'physics.py').is_file():
         shutil.copyfile(source / 'physics.py', output / 'physics.py')
     elif rigid is not None:
@@ -255,7 +254,7 @@ def main(argv=None):
     parser.add_argument('--output', type=Path, default=Path('assets/objects'))
     parser.add_argument('--assets', type=Path, nargs='+',
                         help='Asset paths relative to the source/output roots (default: every asset with a physics.py '
-                             'or in configs/rigid_physics.py)')
+                             'or in configs/rigid_physics.json)')
     parser.add_argument('--gpu', type=int, default=0)
     args = parser.parse_args(argv)
     source, output = args.source.resolve(), args.output.resolve()

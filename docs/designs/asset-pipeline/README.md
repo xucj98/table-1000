@@ -25,7 +25,7 @@ README 说明每个文件放在哪里、由哪份规范约定。各文件的字�
 asset_sources/objects/cabinet/000000/
   object.py           建模入口：坐标系、刚体子树、视觉与碰撞、关节（建模）
   preview.json        几何姿态、相机、关键帧与预览输出（几何预览）
-  physics.py          精细物理资产：质量、接触材料、驱动（物理属性）；单刚体资产不写，数值在 configs/rigid_physics.py
+  physics.py          精细物理资产：质量、接触材料、驱动（物理属性）；单刚体资产不写，数值在 configs/rigid_physics.json
   physics_test.py     精细物理资产：物理实验的初态、动作与记录（物理测试）
   behavior.py         可选，随资产加载的附加力或状态转换（行为插件）
   metadata.json       UUID，见下文
@@ -34,7 +34,7 @@ asset_sources/objects/cabinet/000000/
 assets/objects/cabinet/000000/
   object.blend        object.py 构建的模型
   geometry.usdc       导出的 USD 几何层
-  physics.py          所用物理脚本的快照：资产自己的，或由 configs/rigid_physics.py 生成
+  physics.py          所用物理脚本的快照：资产自己的，或由 configs/rigid_physics.json 生成
   physics.usda        physics.py 生成的物理层
   object.usdz         加载入口；带行为时另有 object.usda 与行为依赖
   *.py、*.json、README.md、three_quarter.jpg    源码快照

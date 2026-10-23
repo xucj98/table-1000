@@ -1,6 +1,6 @@
 """Physics layer of an asset simulated as one rigid body: total mass and one contact material.
 
-The assets in ``configs/rigid_physics.py`` are built with :func:`author` and their values there.
+The assets in ``configs/rigid_physics.json`` are built with :func:`author` and their values there.
 
 Every rigid body of the geometry layer becomes part of a single body at the
 bodies' common parent prim (the asset root when they are siblings under it): the
