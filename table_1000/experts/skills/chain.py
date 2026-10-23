@@ -27,7 +27,8 @@ class InHand:
 
 
 class Action:
-    """One action of a chain, run in subtask ``instruction`` when given."""
+    """One action of a chain, run in subtask ``instruction`` when given (:class:`Pick` and
+    :class:`Place` under :func:`~table_1000.experts.skills.retry`)."""
     instruction = None
 
     def requirements(self, ctx):
@@ -47,7 +48,7 @@ class Pick(Action):
 
     def run(self, ctx, need=None, base=True):
         from table_1000.experts import skills
-        return skills.pick(ctx, self.obj, need=need, base=base, **self.options)
+        return skills.retry(ctx, lambda: skills.pick(ctx, self.obj, need=need, base=base, **self.options))
 
 
 class Place(Action):
@@ -71,8 +72,11 @@ class Place(Action):
 
     def run(self, ctx, need=None, base=True):
         from table_1000.experts import skills
-        region, options = self.where(ctx)
-        return skills.place(ctx, self.obj, region, **options)
+
+        def place():
+            region, options = self.where(ctx)
+            return skills.place(ctx, self.obj, region, **options)
+        return skills.retry(ctx, place)
 
 
 class Handover(Action):
