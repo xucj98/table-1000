@@ -17,11 +17,12 @@ READY_TOLERANCE = .05   # rad from its start pose an arm counts as there
 BASE_TOLERANCE, BASE_SETTLE = (.005, np.radians(1.)), .5
 # make_room samples BASE_SAMPLES poses of the base BASE_DISTANCES (m) from the poses to reach, facing
 # them within BASE_FACING (rad); in the order the base gets there (turn, drive straight, turn), at
-# most BASE_CHECKS of those the robot stands clear at and its arms may reach, each at least
+# most BASE_CHECKS (BASE_CHECKS[1] while none reaches any) of those the robot stands clear at and its
+# arms may reach, each at least
 # BASE_SPREAD (m or rad) from those checked before, are checked by IK (BASE_IK_ATTEMPTS restarts,
 # the torso lift free) for every joint BASE_MARGIN (rad) inside its limits. The way there is
 # checked every BASE_PATH_STEP (m, rad).
-BASE_SAMPLES, BASE_CHECKS = 500, 20
+BASE_SAMPLES, BASE_CHECKS = 500, (20, 60)
 BASE_DISTANCES, BASE_FACING = (.3, 1.), np.radians(60.)
 BASE_MARGIN = .25
 BASE_IK_ATTEMPTS = 5
@@ -103,8 +104,7 @@ class Base:
         reaches ``need`` (default all) of ``poses`` with each joint ``BASE_MARGIN`` inside its limits:
         where it stands if they are reached from there, else the sampled pose (see the constants)
         the base gets to soonest, the robot clear of the planning world there and on its way; else
-        the one reaching most, with the widest margin (None when none is clear and in reach of the
-        arms). No poses: its start pose. Each of ``poses`` is a world TCP pose or a list of them
+        the one reaching most, with the widest margin (None when none reaches any). No poses: its start pose. Each of ``poses`` is a world TCP pose or a list of them
         along a straight move, each solved from the one before at the torso height of the first
         (``path``: ``poses`` are one such list); ``{arm: poses}`` gives each arm its own."""
         model, ctx = self.model, self.ctx
@@ -134,7 +134,7 @@ class Base:
         rejected = {'out of reach': 0, 'collision': 0, 'IK': 0, 'way': 0, 'collisions': {}}
         try:
             for index, pose in enumerate([current, *samples]):
-                if len(checked) >= BASE_CHECKS:
+                if len(checked) >= BASE_CHECKS[most[0] <= 0]:
                     break
                 if any(np.all(np.abs([*(pose[:2] - other[:2]), wrapped(pose[2] - other[2])]) < spread[[0, 0, 1]])
                        for other in checked):
@@ -168,7 +168,7 @@ class Base:
                 solver.sync()
         ctx.note('base choice', checked=len(checked), rejected=rejected, most=list(most), choice_s=time.perf_counter() - started,
                  chosen=None if chosen is None else chosen.tolist(), best=None if best is None else np.asarray(best).tolist())
-        return chosen if chosen is not None else best
+        return chosen if chosen is not None else best if most[0] > 0 else None
 
     def put_base(self, pose, world_poses):
         """The planning model's base at ``pose`` (x, y, yaw), the planning worlds following."""
