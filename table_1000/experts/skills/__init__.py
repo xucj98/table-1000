@@ -73,7 +73,7 @@ straight and turns it in place).
 alike, out of the way of the other arm).
 
 **retry** -- a step run again when it fails (``ATTEMPTS`` in all, within
-``RETRY_BUDGET`` s of the episode), the arms that hold nothing back at their start pose
+``RETRY_BUDGET`` s of the episode, or of its step), the arms that hold nothing back at their start pose
 first, so that its choices start afresh.
 
 Each choice of another candidate is noted (``ctx.note``). A skill that finds nothing in reach
@@ -94,7 +94,7 @@ from table_1000.experts.skills.motion import Motion
 from table_1000.experts.skills.placing import PLACE_ABOVE, PLACE_CLEARANCE, PLACE_MARGIN, PLACE_STEP, Placing
 
 ATTEMPTS = 3            # tries of a step under retry
-RETRY_BUDGET = 240.     # s of an episode (wall clock) after which a failed step is not tried again
+RETRY_BUDGET = 240.     # s of an episode or of its step (wall clock) after which a failed step is not tried again
 
 
 class Skills(Grasping, Motion, Placing, Base):

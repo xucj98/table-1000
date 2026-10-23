@@ -60,6 +60,7 @@ def run_steps(ctx, steps):
         raise ValueError(f'steps {first}-{last} of an expert with {len(steps)}')
     ctx.step_names = [step.name for step in steps]
     for index, step in enumerate(steps[first - 1:last], first):
+        ctx.started = time.perf_counter()     # each step has its own time (see Context.elapsed)
         step.run(ctx)
         if step.check:
             ctx.current = step.name     # a failed check is the step's
@@ -106,7 +107,7 @@ class Context:
 
     # -- stepping ------------------------------------------------------------------
     def elapsed(self):
-        """Wall-clock seconds since the episode started."""
+        """Wall-clock seconds since the episode started, or the step (:func:`run_steps`)."""
         return time.perf_counter() - self.started
 
     @property
