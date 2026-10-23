@@ -122,19 +122,6 @@ def slider(ctx, obj, name):
     return j
 
 
-def handle_path(ctx, obj, j, amount):
-    """World TCP poses on ``j``'s handle straight at it, before, halfway and after moving it to ``amount``."""
-    direction = j.direction(ctx.pose(obj, j.child))
-    box, _ = ctx.part_box(obj, j.handle, j.child)
-    approach = -direction
-    closing = normalized(np.cross(approach, [0., 0., 1.]))
-    grasp = np.eye(4)
-    grasp[:3, :3] = np.c_[approach, closing, np.cross(approach, closing)]
-    grasp[:3, 3] = box[:3, 3]
-    move = direction * (amount - opening(ctx, obj, j.name))
-    return [grasp, translated(grasp, move / 2), translated(grasp, move)]
-
-
 def open(ctx, obj, name, amount):
     """Open joint ``name`` of ``obj`` by ``amount`` (m) by its handle; nothing when it already is."""
     j = slider(ctx, obj, name)
@@ -143,8 +130,6 @@ def open(ctx, obj, name, amount):
         for _ in range(PULLS):
             if is_open(ctx, obj, name, amount):
                 break
-            # Choosing where the base stands moves into the skills with #35; until then, as the expert did.
-            skills.make_room(ctx, handle_path(ctx, obj, j, amount), path=True)
             direction = j.direction(ctx.pose(obj, j.child))
             held = skills.grasp(ctx, obj, j.handle, then=direction * (amount - opening(ctx, obj, name)),
                                 approach=-direction, max_angle=OPEN_ANGLES)
@@ -390,29 +375,48 @@ def around(region, near):
 
 
 # -- placing -------------------------------------------------------------------------------------
-def place_on(ctx, obj, surface, part=None, near=None, keep_out=()):
-    """Put the held ``obj`` down on ``surface`` (the table, an object, or its body or ``part``),
-    out of ``keep_out`` rectangles besides what stands there, nearest ``near`` (world point, within
-    NEAR of it; default the region's centre); it must rest on it after. See :func:`support_region`."""
-    def attempt():
+def on_region(obj, surface, part=None, near=None, keep_out=()):
+    """``where(ctx) -> (region, keep_out)``: where on ``surface`` (the table, an object, or its body
+    or ``part``) to put ``obj`` down in the state then, out of ``keep_out`` rectangles besides what
+    stands there, within NEAR of ``near`` (world point) if given; for
+    :func:`~table_1000.experts.skills.place` (or a :class:`~table_1000.experts.skills.Place`).
+    See :func:`support_region`."""
+    def where(ctx):
         region, blocked = support_region(scene_shapes(ctx, exclude=(obj,)), surface, part, headroom=headroom(ctx, obj))
         require(ctx, region is not None, 'no support', surface=surface, part=part)
-        skills.place(ctx, obj, around(region, near), near=near, keep_out=[*blocked, *keep_out])
+        return around(region, near), [*blocked, *keep_out]
+    return where
 
-    skills.retry(ctx, attempt)
+
+def inside_region(obj, container, part=None, near=None):
+    """``where(ctx) -> (region, keep_out)``: where inside ``container`` (or its body or ``part``: a
+    drawer) to put ``obj`` down in the state then, on its floor where nothing covers it (the part of
+    a drawer out of its cabinet); as :func:`on_region`."""
+    def where(ctx):
+        region, blocked = support_region(scene_shapes(ctx, exclude=(obj,)), container, part, floor=True,
+                                         headroom=headroom(ctx, obj))
+        require(ctx, region is not None, 'no support', container=container, part=part)
+        return around(region, near), blocked
+    return where
+
+
+def put(ctx, obj, where, near):
+    region, keep_out = where(ctx)
+    skills.place(ctx, obj, region, near=near, keep_out=keep_out)
+
+
+def place_on(ctx, obj, surface, part=None, near=None, keep_out=()):
+    """Put the held ``obj`` down where :func:`on_region` says, nearest ``near`` (default the
+    region's centre); it must rest on ``surface`` after."""
+    where = on_region(obj, surface, part, near, keep_out)
+    skills.retry(ctx, lambda: put(ctx, obj, where, near))
     require(ctx, on(ctx, obj, surface, part, keep_out), f'not on the {surface}', obj=obj,
             position=centre(object_points(ctx, obj)).tolist())
 
 
 def place_inside(ctx, obj, container, part=None, near=None):
-    """Put the held ``obj`` down inside ``container`` (or its body or ``part``: a drawer) on its
-    floor, where nothing covers it (the part of a drawer out of its cabinet); it must be inside after."""
-    def attempt():
-        region, blocked = support_region(scene_shapes(ctx, exclude=(obj,)), container, part, floor=True,
-                                         headroom=headroom(ctx, obj))
-        require(ctx, region is not None, 'no support', container=container, part=part)
-        skills.place(ctx, obj, around(region, near), near=near, keep_out=blocked)
-
-    skills.retry(ctx, attempt)
+    """Put the held ``obj`` down where :func:`inside_region` says; it must be inside after."""
+    where = inside_region(obj, container, part, near)
+    skills.retry(ctx, lambda: put(ctx, obj, where, near))
     require(ctx, inside(ctx, obj, container, part), f'not in the {part or container}', obj=obj,
             position=centre(object_points(ctx, obj)).tolist())
