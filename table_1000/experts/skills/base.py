@@ -285,14 +285,14 @@ class Base:
         self.ctx.note('base relocated', travel=float(np.linalg.norm(after[:2] - before[:2])),
                       turn=float(abs((after[2] - before[2] + np.pi) % (2 * np.pi) - np.pi)), pose=after.tolist())
 
-    def stow(self, arms=None):
+    def stow(self, arms=None, why=None):
         """The free ``arms`` (default all) that are out back at their start pose (see :meth:`ready`),
         as a skill does before it moves the base when nothing is in reach as the arms are, or when a
         move runs into them; whether any was out."""
         out = [arm for arm in arms or self.arms if arm not in self.held
                and np.abs(self.home - self.model.q)[self.model.arm_indices(arm)].max() >= READY_TOLERANCE]
         if out:
-            self.ctx.note('arms stowed', arms=out)
+            self.ctx.note('arms stowed', arms=out, why=why)
             self.ready(out)
         return bool(out)
 

@@ -201,7 +201,7 @@ class Grasping:
         skip, regrasps, started, roomed, stowed = set(), 0, time.perf_counter(), False, False
         while True:
             reached = self.reach(target, arms, skip, point, approach, then, max_angle, need)
-            if reached is None and not stowed and self.stow():
+            if reached is None and not stowed and self.stow(why=self.rejected):
                 # None in reach with the other arm out: again with it in, before the base moves.
                 skip, stowed = set(), True
                 reached = self.reach(target, arms, skip, point, approach, then, max_angle, need)
