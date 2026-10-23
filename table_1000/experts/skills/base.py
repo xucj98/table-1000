@@ -20,11 +20,12 @@ BASE_TOLERANCE, BASE_SETTLE = (.005, np.radians(1.)), .5
 # most BASE_CHECKS (BASE_CHECKS[1] while none reaches any) of those the robot stands clear at and its
 # arms may reach, each at least
 # BASE_SPREAD (m or rad) from those checked before, are checked by IK (BASE_IK_ATTEMPTS restarts,
-# the torso lift free) for every joint BASE_MARGIN (rad) inside its limits. The way there is
+# the torso lift free) for every joint BASE_MARGIN (rad) inside its limits (where none is, the first
+# BASE_MARGIN_LOW inside them, with one pose to reach). The way there is
 # checked every BASE_PATH_STEP (m, rad).
 BASE_SAMPLES, BASE_CHECKS = 500, (20, 60)
 BASE_DISTANCES, BASE_FACING = (.3, 1.), np.radians(60.)
-BASE_MARGIN = .25
+BASE_MARGIN, BASE_MARGIN_LOW = .25, .05
 BASE_IK_ATTEMPTS = 5
 BASE_PATH_STEP = (.05, np.radians(10.))
 BASE_SPREAD = (.05, np.radians(10.))
@@ -130,7 +131,8 @@ class Base:
             if arm not in self.held:
                 q[model.arm_indices(arm)] = self.home[model.arm_indices(arm)]
         actual, world_poses, started = model.base.copy(), ctx.poses(), time.perf_counter()
-        chosen, best, most, checked, spread = None, None, (-1, -np.inf), [], np.array(BASE_SPREAD)
+        chosen, best, fallback, most, checked = None, None, None, (-1, -np.inf), []
+        spread = np.array(BASE_SPREAD)
         rejected = {'out of reach': 0, 'collision': 0, 'IK': 0, 'way': 0, 'collisions': {}}
         try:
             for index, pose in enumerate([current, *samples]):
@@ -155,6 +157,11 @@ class Base:
                     rejected['IK'] += 1
                     if (reached, margin) > most:
                         best, most = pose, (reached, margin)
+                    # Short of the margin but within BASE_MARGIN_LOW: the first such, kept in case.
+                    if (index and fallback is None and need == 1 and margin >= BASE_MARGIN_LOW
+                            and all(self.put_base(along, world_poses) or self.clear(q)
+                                    for along in drive_path(current, pose))):
+                        fallback = pose
                     continue
                 if not index:
                     return current
@@ -166,6 +173,8 @@ class Base:
             model.base = actual
             for solver in self.solvers.values():
                 solver.sync()
+        if chosen is None:
+            chosen = fallback
         ctx.note('base choice', checked=len(checked), rejected=rejected, most=list(most), choice_s=time.perf_counter() - started,
                  chosen=None if chosen is None else chosen.tolist(), best=None if best is None else np.asarray(best).tolist())
         return chosen if chosen is not None else best if most[0] > 0 else None
