@@ -73,7 +73,7 @@ straight and turns it in place).
 alike, out of the way of the other arm).
 
 **retry** -- a step run again when it fails (``ATTEMPTS`` in all, within
-``RETRY_BUDGET`` s of the episode, or of its step), the arms that hold nothing back at their start pose
+``RETRY_BUDGET`` simulated s of the episode, or of its step), the arms that hold nothing back at their start pose
 first, so that its choices start afresh; not when nothing was in reach (``Unreachable``: the
 planners sampled their candidates already, a high share of it points at the planning).
 
@@ -95,7 +95,7 @@ from table_1000.experts.skills.motion import Motion
 from table_1000.experts.skills.placing import PLACE_ABOVE, PLACE_CLEARANCE, PLACE_MARGIN, PLACE_STEP, Placing
 
 ATTEMPTS = 3            # tries of a step under retry
-RETRY_BUDGET = 240.     # s of an episode or of its step (wall clock) after which a failed step is not tried again
+RETRY_BUDGET = 90.      # simulated s of an episode or of its step after which a failed step is not tried again
 
 
 class Skills(Grasping, Motion, Placing, Base):
@@ -144,7 +144,7 @@ def ready(ctx):
 def retry(ctx, step, attempts=ATTEMPTS, budget=RETRY_BUDGET):
     """``step()``, again up to ``attempts`` times in all when it fails (each choice of grasp, path
     and spot starts afresh from where things are), the free arms back at their start pose first;
-    not once the episode (or its step) has run ``budget`` s (wall clock), nor when nothing was in
+    not once the episode (or its step) has run ``budget`` simulated s, nor when nothing was in
     reach (:class:`Unreachable`)."""
     for attempt in range(1, attempts + 1):
         try:
