@@ -1,6 +1,6 @@
 """RM001 simulation tuning, without calibration against the real gripper.
 
-K=50 N m/rad, D=20 N m s/rad reduces squeezing/rolling compared with K=100.
+Finger drive K=50 N m/rad, D=20 N m s/rad.
 The build explicitly copies URDF effort limits (20 N m for the fingers).
 High friction and torsional resistance belong only to the separate inner pads;
 the finger structure uses the body's material. Pads are rigid collision shapes,
@@ -20,8 +20,8 @@ _X1PRO = source_module(source_dir('x1pro'), 'physics')
 DRIVES = {**_X1PRO.DRIVES, '_arm_gripper_left_joint': (50., 20.)}
 MATERIALS = {**_X1PRO.MATERIALS, 'finger': (.4, .3), 'pad': (2., 1.6)}
 ARMATURE = {'_arm_gripper_': .001}   # kg m^2
-# X1Pro's 32 position iterations fling small held objects from these fingers
-# under a push (grasp_and_push); 16 hold them.
+# 16 position iterations hold small objects in these fingers under a push
+# (grasp_and_push); 32 fling them.
 SOLVER_ITERATIONS = (16, 4)
 
 

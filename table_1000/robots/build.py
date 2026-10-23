@@ -154,12 +154,14 @@ def main(argv=None):
     # written next to the output and passed on as the exit status (1).
     error = args.output / 'build-error.txt'
     error.unlink(missing_ok=True)
-    failed = False
+    failed = True
     try:
         for name in args.robots:
             print(json.dumps(build((args.source / name).resolve(), (args.output / name).resolve())), flush=True)
+        failed = False
     except Exception:
         import traceback
+        error.parent.mkdir(parents=True, exist_ok=True)
         error.write_text(traceback.format_exc())
-        failed = True
-    app.close(exit_code=int(failed))
+    finally:
+        app.close(exit_code=int(failed))

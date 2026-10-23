@@ -1,5 +1,9 @@
 """Expert trajectories of a scene: ``expert.solve(ctx)`` from a stored initial state, recording and a report per seed.
 
+With ``stage``, one step of the expert is checked alone instead: ``expert.STAGES[stage](ctx)``
+arranges the scene where that step starts (:meth:`~table_1000.experts.context.Context.arrange`)
+and runs it.
+
 One :class:`Generator` builds the environment once and runs seeds one after
 another, each from its initial state of ``initial_states.hdf5``
 (:mod:`table_1000.scenes.initial`). An expert failure is recorded as a failed
@@ -46,15 +50,17 @@ class Generator:
 
     DEVICES = {'isaac-cpu': 'cpu'}
 
-    def __init__(self, scene_name, output, assets, root, physics='isaac-cpu'):
+    def __init__(self, scene_name, output, assets, root, physics='isaac-cpu', stage=None):
         from table_1000.robots import load_spec
         from table_1000.robots.kinematics import RobotModel
         from table_1000.sim.isaaclab import recording
         from table_1000.sim.isaaclab.env import RobotEnv
         self.recording = recording
         started = time.perf_counter()
-        self.name, self.output, self.assets = scene_name, Path(output), Path(assets)
+        self.name, self.output, self.assets, self.stage = scene_name, Path(output), Path(assets), stage
         self.scene, self.expert = load(scene_name, 'scene', root), load(scene_name, 'expert', root)
+        if stage is not None and stage not in getattr(self.expert, 'STAGES', {}):
+            raise KeyError(f'scene {scene_name} has no stage {stage!r}')
         self.spec = load_spec(Path(self.scene.ROBOT['asset']).name, root)
         self.env = RobotEnv(self.scene, self.spec, self.assets, root=root, device=self.DEVICES[physics],
                             recorders=recording.recorder_cfg(self.output))
@@ -68,7 +74,7 @@ class Generator:
     def run(self, seed, attempt, state):
         """Episode ``seed`` from its initial ``state`` (made by sub-seed ``attempt``)."""
         started = time.perf_counter()
-        report = {'scene': self.name, 'seed': seed, 'attempt': attempt}
+        report = {'scene': self.name, 'seed': seed, 'attempt': attempt, 'stage': self.stage}
         self.env.reset_to_state(state)
         init_s = time.perf_counter() - started
         self.recording.begin(self.env)
@@ -78,7 +84,7 @@ class Generator:
         ctx = Context(self.env, self.model, self.scene, self.assets,
                       np.random.default_rng([seed, attempt, 1]))
         try:
-            self.expert.solve(ctx)
+            (self.expert.STAGES[self.stage] if self.stage else self.expert.solve)(ctx)
             report['status'] = 'success'
         except ExpertFailed as error:
             report.update(status='failed', failure={'subtask': error.subtask, 'reason': error.reason,

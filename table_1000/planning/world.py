@@ -20,7 +20,24 @@ def pose(transform):
     """``mplib.Pose`` of a 4x4 transform."""
     from mplib import Pose
     transform = np.asarray(transform, dtype=float)
-    return Pose(transform[:3, 3], Rotation.from_matrix(transform[:3, :3]).as_quat()[[3, 0, 1, 2]])
+    return Pose(transform[:3, 3], quaternion(transform[:3, :3]))
+
+
+def quaternion(m):
+    """``(w, x, y, z)`` of a rotation matrix (Shepperd's method; scipy's is slow for one matrix)."""
+    trace = m[0, 0] + m[1, 1] + m[2, 2]
+    if trace > 0.:
+        s = 2. * np.sqrt(trace + 1.)
+        return np.array([s / 4, (m[2, 1] - m[1, 2]) / s, (m[0, 2] - m[2, 0]) / s, (m[1, 0] - m[0, 1]) / s])
+    i = int(np.argmax(np.diag(m)))
+    j, k = (i + 1) % 3, (i + 2) % 3
+    s = 2. * np.sqrt(1. + m[i, i] - m[j, j] - m[k, k])
+    q = np.empty(4)
+    q[0] = (m[k, j] - m[j, k]) / s
+    q[1 + i] = s / 4
+    q[1 + j] = (m[j, i] + m[i, j]) / s
+    q[1 + k] = (m[k, i] + m[i, k]) / s
+    return q
 
 
 def model_shapes(model):
@@ -57,6 +74,28 @@ def grow(vertices, padding):
     return centre + (vertices - centre) * (half + padding) / half
 
 
+# Collision checks cost about linearly in hull vertices; a planning hull keeps at most this many.
+HULL_VERTICES = 64
+
+
+def simplify_hull(vertices, limit=HULL_VERTICES):
+    """Vertices of a convex hull of at most ``limit`` of ``vertices`` (greedily the farthest outside
+    the hull so far), grown to cover the ones left out."""
+    from scipy.spatial import ConvexHull
+    vertices = np.unique(np.asarray(vertices, dtype=float), axis=0)
+    if len(vertices) <= limit:
+        return vertices
+    directions = np.array([[x, y, z] for x in (-1, 0, 1) for y in (-1, 0, 1) for z in (-1, 0, 1) if x or y or z])
+    chosen = sorted(set(np.argmax(vertices @ directions.T, axis=0).tolist()))
+    while True:
+        planes = ConvexHull(vertices[chosen]).equations
+        outside = (vertices @ planes[:, :3].T + planes[:, 3]).max(1)
+        if len(chosen) >= limit or outside.max() <= 1e-4:
+            break
+        chosen.append(int(np.argmax(outside)))
+    return grow(vertices[chosen], max(float(outside.max()), 0.))
+
+
 def geometry(kind, data, padding=0.):
     """FCL shape grown by ``padding`` on every side.
 
@@ -68,7 +107,9 @@ def geometry(kind, data, padding=0.):
         return fcl.Sphere(data + padding)
     if kind == 'box':
         return fcl.Box(*(np.asarray(data) + 2 * padding))
-    hull = trimesh.Trimesh(data).convex_hull
+    if kind == 'cylinder':    # (radius, length) along the shape frame's Z
+        return fcl.Cylinder(data[0] + padding, data[1] + 2 * padding)
+    hull = trimesh.Trimesh(simplify_hull(data)).convex_hull
     vertices = grow(hull.vertices, padding) if padding else np.asarray(hull.vertices, dtype=float)
     return fcl.Convex(vertices, np.asarray(hull.faces, dtype=np.int32))
 
@@ -170,6 +211,13 @@ class PlanningScene:
             if world.has_object(name):
                 world.remove_object(name)
         self.objects, self.poses, self.permissions = {}, {}, set()
+
+    def set_frame(self, frame):
+        """The planner's frame from the world (the robot's base moved): objects re-placed in it."""
+        self.frame = np.asarray(frame, dtype=float)
+        for name, world_pose in self.poses.items():
+            if not self.planner.planning_world.is_object_attached(name):
+                self.set_pose(name, world_pose)
 
     def update(self, body_poses):
         """``body_poses`` maps a body key (``prefix + body``) to its world 4x4."""

@@ -11,7 +11,7 @@
 | 文件 | 作用 |
 | --- | --- |
 | `scene.py` | 场景：桌子、机器人及起始姿态、物体、录像视角，以及每个 seed 怎样随机摆放（`initialize`） |
-| `expert.py` | 专家程序 `solve(ctx)`：按英文子任务组织的阻塞式代码，用运动原语、几何查询和抓取几何完成任务 |
+| `expert.py` | 专家程序 `solve(ctx)`：按英文子任务组织的阻塞式代码，用运动原语、几何查询和抓取几何，或原子技能（`table_1000.experts.skills`）完成任务 |
 | `thumbnail.jpg` | 场景的缩略图：最小有效 seed 的初态，机器人主相机图像，宽 480，由 `build_scene.py` 生成 |
 
 生成的结果不进 Git，三步各自的产出与验收见下文，每个文件见[资产布局](../designs/asset-pipeline/README.md#资产布局)：
