@@ -58,7 +58,8 @@ class Handing:
         return [pose for *_, pose in sorted(poses, key=lambda option: option[:2])]
 
     def handoffs(self, target, giver, to, need):
-        """Feasible handovers ``(pose, q_give, grasp)``, as they are found (see the module docstring)."""
+        """Feasible handovers ``(pose, q_give, grasp)``, the first grasp of each pose, as they are found
+        (see the module docstring)."""
         ctx = self.ctx
         giving, receiving = self.solvers[giver], self.solvers[to]
         body = ctx.poses()[target.body]
@@ -81,18 +82,20 @@ class Handing:
             obstacles.append((self.hands[giver].fcl(give, gap), 0.))
             preferred = normalized(transform[:3, 3] - self.shoulder(to))
             moved = pose @ np.linalg.inv(body)
-            receiving.sync()
-            poses = ctx.poses()
-            # The object where it would be handed over, in the receiving arm's world.
-            for name in target.names:
-                receiving.world.set_pose(name, moved @ poses[receiving.world.objects[name].body])
             receiving.allow(target.names)
             try:
+                found = None
                 for count, grasp in enumerate(grasp_candidates(target.shape, transform, self.hands[to], obstacles,
                                                                preferred, approach_distance=APPROACH)):
                     if count >= MAX_RECEIVING_IK or checked >= MAX_HANDOVER_IK:
                         break
                     checked += 1
+                    # The object where it would be handed over, in the receiving arm's world (a need's
+                    # check puts it back).
+                    receiving.sync()
+                    poses = ctx.poses()
+                    for name in target.names:
+                        receiving.world.set_pose(name, moved @ poses[receiving.world.objects[name].body])
                     start = self.model.vector(side.finger_targets(grasp.open_gap), q_give)
                     status, q_grasp = self.model.ik(to, grasp.pose, start, world=True, attempts=IK_ATTEMPTS)
                     if status != 'Success':
@@ -107,10 +110,13 @@ class Handing:
                     if need is not None and not need.accepts(to, np.linalg.inv(grasp.pose) @ pose):
                         self.rejected['need'] += 1
                         continue
-                    yield pose, q_give, grasp
+                    found = grasp
+                    break
             finally:
                 receiving.allow(target.names, False)
                 receiving.sync()
+            if found is not None:
+                yield pose, q_give, found
 
     def handover(self, obj, to=None, need=None):
         """Hand the held ``obj`` to arm ``to`` (default: the other one ``need`` takes), held as
