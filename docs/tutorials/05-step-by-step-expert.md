@@ -7,19 +7,19 @@
 ## 1. 迭代第 1 步
 
 ```bash
-uv run python scripts/scenes/run_expert.py 000002 --physics isaac-cpu --steps 1 --output outputs/steps/a \
+uv run python scripts/scenes/run_expert.py 000002 --physics isaac-cpu --steps 1 --output data/steps/a \
     --jobs 20 --launcher '<调度命令>'
 ```
 
 - 先用约 20 个 seed 的初态（`--input` 指向只含这些 seed 的初态目录），改专家、重跑，直到成功率约 95%。
-- 失败按 `summary.json` 的 `failures` 和 `episodes/<seed>.json` 分析；录像用 `render.py --physics isaac-cpu-steps1-1 --input outputs/steps/a`。
+- 失败按 `summary.json` 的 `failures` 和 `episodes/<seed>.json` 分析；录像用 `render.py --physics isaac-cpu-steps1-1 --input data/steps/a`。
 - 达到目标后用 100 个 seed 跑一遍。这一批的 `checkpoints/step1.hdf5` 就是第 2 步的起始状态，约 95 个。
 
 ## 2. 下一步从检查点开始
 
 ```bash
 uv run python scripts/scenes/run_expert.py 000002 --physics isaac-cpu --steps 2 \
-    --from outputs/steps/a/000002/isaac-cpu-steps1-1 --output outputs/steps/b --jobs 20 --launcher '<调度命令>'
+    --from data/steps/a/000002/isaac-cpu-steps1-1 --output data/steps/b --jobs 20 --launcher '<调度命令>'
 ```
 
 - 每个有第 1 步检查点的 seed 都从它开始：恢复状态、静置 0.2 s，只运行第 2 步。
@@ -42,11 +42,11 @@ uv run python scripts/scenes/run_expert.py 000002 --physics isaac-cpu --steps 2 
 ## 5. 接成完整轨迹
 
 ```bash
-uv run python scripts/scenes/join_steps.py outputs/steps/a/000002/isaac-cpu-steps1-1 \
-    outputs/steps/b/000002/isaac-cpu-steps2-2 --output outputs/steps/joined/000002/isaac-cpu
+uv run python scripts/scenes/join_steps.py data/steps/a/000002/isaac-cpu-steps1-1 \
+    data/steps/b/000002/isaac-cpu-steps2-2 --output data/steps/joined/000002/isaac-cpu
 ```
 
-同一 seed 在各批的轨迹按顺序接起来，每段截到下一批开始用的检查点；每条轨迹的 `parts` 属性记录各段的来源批次与提交。输出目录与一批轨迹格式相同，可以用 `render.py --input outputs/steps/joined` 渲染。
+同一 seed 在各批的轨迹按顺序接起来，每段截到下一批开始用的检查点；每条轨迹的 `parts` 属性记录各段的来源批次与提交。输出目录与一批轨迹格式相同，可以用 `render.py --input data/steps/joined` 渲染。
 
 ## 同一检查点重复运行
 

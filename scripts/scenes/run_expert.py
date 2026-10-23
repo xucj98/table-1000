@@ -121,6 +121,13 @@ def main(argv=None):
     jobs = job_count(parser, args)
     root = args.root.resolve()
     first = args.steps[0] if args.steps else 1
+    if args.steps:
+        from table_1000.scenes import load
+        expert_steps = getattr(load(args.scene, 'expert', root), 'STEPS', None)
+        if expert_steps is None:
+            parser.error(f'--steps: the expert of {args.scene} has no STEPS (solve = run_steps(ctx, STEPS))')
+        if args.steps[1] > len(expert_steps):
+            parser.error(f'--steps {args.steps[0]}-{args.steps[1]}: the expert has {len(expert_steps)} steps')
     parent = None
     if args.source:
         if first == 1:
@@ -143,6 +150,8 @@ def main(argv=None):
     if attrs.get('scene') != args.scene or attrs.get('robot') != robot:
         parser.error(f'{states} holds scene {attrs.get("scene")} with robot {attrs.get("robot")}, the scene has '
                      f'{robot}; run build_scene.py again')
+    if args.source and attrs.get('physics') != args.physics:
+        parser.error(f'{states} was made on {attrs.get("physics")}, not {args.physics}')
     if not seeds:
         parser.error(f'{states} holds no initial states')
     name = args.physics + (f'-steps{args.steps[0]}-{args.steps[1]}' if args.steps else '')

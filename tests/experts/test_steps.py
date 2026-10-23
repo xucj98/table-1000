@@ -101,7 +101,7 @@ def write_batch(directory, episodes, summary):
             data = file.create_group('data')
             data.attrs['env_args'] = json.dumps({'robot': 'r'})
             for seed, (status, actions, attrs) in episodes.items():
-                if status != wanted:
+                if (status == 'success') != (wanted == 'success'):
                     continue
                 group = data.create_group(f'demo_{seed}')
                 group.create_dataset('actions', data=np.asarray(actions, dtype=float)[:, None])
@@ -120,11 +120,17 @@ def test_join_cuts_each_part_at_the_checkpoint_the_next_started_from(tmp_path):
         0: ('success', [1, 2, 3, 4], {'steps': [{'step': 1, 'at': 2}, {'step': 2, 'at': 4}],
                                       'subtasks': [{'instruction': 'a', 'start': 0, 'end': 2},
                                                    {'instruction': 'b', 'start': 2, 'end': 4}]}),
-        1: ('failed', [1, 2], {'steps': [], 'subtasks': [], 'failure': {'subtask': 'a', 'reason': 'r'}})},
+        1: ('failed', [1, 2], {'steps': [], 'subtasks': [], 'failure': {'subtask': 'a', 'reason': 'r'}}),
+        # Failed in step 2 after its step-1 checkpoint: the second batch ran step 2 again.
+        2: ('failed', [1, 2, 3], {'steps': [{'step': 1, 'at': 2}], 'subtasks': [],
+                                  'failure': {'subtask': 'b', 'reason': 'slipped'}}),
+        3: ('error', [1, 2], {'steps': [], 'subtasks': [], 'failure': {'subtask': 'a', 'reason': 'error'}})},
         {'steps_run': [1, 2], 'from': None, 'commit': 'c1'})
-    write_batch(second, {0: ('success', [7, 8, 9], {'steps': [{'step': 2, 'at': 1}, {'step': 3, 'at': 3}],
-                                                    'subtasks': [{'instruction': 'b', 'start': 0, 'end': 3}]})},
-                {'steps_run': [2, 3], 'from': str(first), 'commit': 'c2'})
+    write_batch(second, {
+        0: ('success', [7, 8, 9], {'steps': [{'step': 2, 'at': 1}, {'step': 3, 'at': 3}],
+                                   'subtasks': [{'instruction': 'b', 'start': 0, 'end': 3}]}),
+        2: ('success', [5, 6], {'steps': [{'step': 2, 'at': 1}, {'step': 3, 'at': 2}], 'subtasks': []})},
+        {'steps_run': [2, 3], 'from': str(first), 'commit': 'c2'})
     main([str(first), str(second), '--output', str(tmp_path / 'scene' / 'joined')])
     with h5py.File(tmp_path / 'scene' / 'joined' / 'trajectories.hdf5', 'r') as file:
         group = file['data/demo_0']
@@ -134,8 +140,15 @@ def test_join_cuts_each_part_at_the_checkpoint_the_next_started_from(tmp_path):
         assert [(e['instruction'], e['start'], e['end']) for e in json.loads(group.attrs['subtasks'])] == [
             ('a', 0, 2), ('b', 2, 5)]
         assert [part['commit'] for part in json.loads(group.attrs['parts'])] == ['c1', 'c2']
+        assert file['data/demo_2']['actions'][:, 0].tolist() == [1, 2, 5, 6]
     with h5py.File(tmp_path / 'scene' / 'joined' / 'trajectories_failed.hdf5', 'r') as file:
         assert json.loads(file['data/demo_1'].attrs['failure'])['reason'] == 'r'
+        assert file['data/demo_3'].attrs['status'] == 'error'
+    summary = json.loads((tmp_path / 'scene' / 'joined' / 'summary.json').read_text())
+    assert (summary['succeeded'], summary['failed'], summary['error']) == (2, 1, 1)
+    assert summary['seeds']['count'] == 4
+    with pytest.raises(SystemExit):     # the first batch must start from the initial states
+        main([str(second), '--output', str(tmp_path / 'scene' / 'other')])
 
 
 def test_the_steps_of_a_resumed_run_keep_the_seed_s_start():

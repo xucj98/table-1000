@@ -83,7 +83,7 @@
 
 ### 步骤
 
-专家可以把子任务分成步骤：`Step(名字, run, check)`，`run(ctx)` 执行其中的子任务，`check(ctx)` 检查结束状态是否满足下一步的起始条件，不满足就 `ctx.fail`。步骤之间手里不拿东西。`solve` 写成 `run_steps(ctx, STEPS)`。
+专家可以把子任务分成步骤：`Step(名字, run, check)`，`run(ctx)` 执行其中的子任务，`check(ctx)` 检查结束状态是否满足下一步的起始条件，不满足就 `ctx.fail`。步骤之间手里不拿东西。步骤列表定义为模块级的 `STEPS`，`solve` 写成 `run_steps(ctx, STEPS)`（`run_expert.py --steps` 据此选择步骤）。
 
 ### 逐步运行
 

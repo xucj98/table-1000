@@ -77,12 +77,6 @@ def steps(seconds):
     return max(1, round(seconds / DT))
 
 
-def numpy_tree(tree):
-    """A scene state of environment 0 (tensors with the environment axis) as NumPy arrays, the axis kept."""
-    return {key: numpy_tree(value) if isinstance(value, dict) else value[:1].cpu().numpy().copy()
-            for key, value in tree.items()}
-
-
 class Context:
     def __init__(self, env, model, scene, assets, rng, start=None, only=None):
         self.env, self.model, self.scene, self.assets, self.rng = env, model, scene, Path(assets), rng
@@ -167,7 +161,8 @@ class Context:
 
     def checkpoint(self, index, name):
         """Keep the scene state after step ``index`` (``name``), at control step :attr:`steps`."""
-        state = numpy_tree(self.env.env.scene.get_state(is_relative=True))
+        from table_1000.sim.isaaclab.replay import numpy_state
+        state = numpy_state(self.env)
         self.checkpoints.append({'step': index, 'name': name, 'at': self.steps, 'state': state})
 
     def note(self, text, **values):

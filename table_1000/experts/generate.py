@@ -121,6 +121,9 @@ class Generator:
         self.name, self.output, self.assets = scene_name, Path(output), Path(assets)
         self.steps, self.source = steps, source
         self.scene, self.expert = load(scene_name, 'scene', root), load(scene_name, 'expert', root)
+        if steps and not 1 <= steps[0] <= steps[1] <= len(getattr(self.expert, 'STEPS', ())):
+            raise ValueError(f'steps {steps[0]}-{steps[1]}: the expert of {scene_name} has '
+                             f'{len(getattr(self.expert, "STEPS", ()))} STEPS')
         self.spec = load_spec(Path(self.scene.ROBOT['asset']).name, root)
         self.env = RobotEnv(self.scene, self.spec, self.assets, root=root, device=self.DEVICES[physics],
                             recorders=recording.recorder_cfg(self.output))
@@ -151,8 +154,6 @@ class Generator:
             if start is not None:
                 ctx.hold(RESUME_S)
             self.expert.solve(ctx)
-            if self.steps and ctx.step_names is None:
-                raise RuntimeError('the expert has no steps (run_steps) to choose from')
             report['status'] = 'success'
         except ExpertFailed as error:
             report.update(status='failed', failure={'subtask': error.subtask, 'reason': error.reason,

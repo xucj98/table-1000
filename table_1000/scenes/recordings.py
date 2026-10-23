@@ -45,6 +45,12 @@ def merge(sources, target, keep=lambda source, seed: True):
     return len(episodes)
 
 
+def decoded_attrs(group):
+    """An episode group's attributes, JSON-encoded ones (lists, dicts) decoded."""
+    return {key: json.loads(value) if isinstance(value, str) and value[:1] in ('[', '{') else value
+            for key, value in group.attrs.items()}
+
+
 def demo_name(seed):
     return f'demo_{seed}'
 
@@ -93,8 +99,10 @@ def concatenate(sources, target, name):
     import h5py
     import numpy as np
 
-    def join(groups, out):
+    def join(groups, out, skip=None):
         for key, value in groups[0][0].items():
+            if key == skip:
+                continue
             if isinstance(value, h5py.Group):
                 join([(group[key], length) for group, length in groups], out.create_group(key))
             else:
@@ -104,12 +112,6 @@ def concatenate(sources, target, name):
     group = target['data'].create_group(name)
     group.attrs.update(dict(first.attrs))
     first.file.copy(first['initial_state'], group, 'initial_state')
-    for key in first:
-        if key != 'initial_state':
-            item = group.create_group(key) if isinstance(first[key], h5py.Group) else None
-            if item is None:
-                group.create_dataset(key, data=np.concatenate([source[key][:length] for source, length in sources]))
-            else:
-                join([(source[key], length) for source, length in sources], item)
+    join(sources, group, skip='initial_state')
     group.attrs['num_samples'] = sum(length for _, length in sources)
     return group
