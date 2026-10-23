@@ -192,7 +192,8 @@ class Motion:
                         if len(paths[candidate]) < ROOM_PLACES:
                             paths[candidate].append([translated(contact, -direction * PUSH_GAP), contact,
                                                      translated(contact, direction * distance)])
-                    self.make_room(paths, need=1)
+                    self.make_room(paths, need=1, touch=[name for name, obj in self.solvers[candidate].world.objects.items()
+                                                         if obj.body == target.body] or target.names)
                     tried, stowed = set(), True
                 else:
                     ctx.fail('no reachable push', Unreachable, target=target.names)

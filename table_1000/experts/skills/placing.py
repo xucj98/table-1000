@@ -212,7 +212,8 @@ class Placing:
         if result['planned'] == 0 and ctx.spec.base:
             releases = [translated(placed, [0., 0., clearance]) @ np.linalg.inv(tcp_object)
                         for placed, _ in options[:ROOM_PLACES]]
-            self.make_room([[release, translated(release, [0., 0., above])] for release in releases], [arm], need=1)
+            self.make_room([[release, translated(release, [0., 0., above])] for release in releases], [arm], need=1,
+                           touch=[])    # place lets the fingers touch nothing (the held object goes with them)
             current = ctx.poses()[target.body]
             options = self.placements(target, current, region, np.asarray(near, dtype=float)[:3], keep_out, step, margin)
             result = self.put_down(arm, options, tcp_object, clearance, above)

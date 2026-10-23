@@ -232,7 +232,9 @@ class Grasping:
                 roomed = True
                 paths = self.grasp_paths(target, arms, point, approach, then, max_angle)
                 if any(paths.values()):
-                    self.make_room(paths, need=1)
+                    # The fingers touch what options lets them: the target and its supports.
+                    _, supports = self.obstacles(arms[0], target, ctx.poses()[target.body] @ target.offset)
+                    self.make_room(paths, need=1, touch=[*target.names, *supports])
                     skip = set()
                     reached = self.reach(target, arms, skip, point, approach, then, max_angle, need)
             if reached is None:
