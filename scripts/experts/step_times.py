@@ -32,11 +32,13 @@ def step_times(report):
 def subtask_times(report):
     """``[(instruction, sim_s, wall_s or None, planning_s)]`` of the subtasks ``report`` ran."""
     walls = report.get('subtask_wall_s') or [None] * len(report['subtasks'])
-    planning = defaultdict(float)
+    # Each plan to the run of its subtask whose control steps it falls in (a subtask may run again).
+    planning = [0.] * len(report['subtasks'])
     for plan in report['plans']:
-        planning[plan['subtask']] += plan['planning_s']
-    return [(entry['instruction'], (entry['end'] - entry['start']) / CONTROL_HZ, wall, planning[entry['instruction']])
-            for entry, wall in zip(report['subtasks'], walls)]
+        planning[next(i for i, entry in enumerate(report['subtasks']) if entry['instruction'] == plan['subtask']
+                      and entry['start'] <= plan['step'] <= entry['end'])] += plan['planning_s']
+    return [(entry['instruction'], (entry['end'] - entry['start']) / CONTROL_HZ, wall, planned)
+            for entry, wall, planned in zip(report['subtasks'], walls, planning)]
 
 
 def mean(values):
