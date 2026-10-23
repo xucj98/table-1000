@@ -59,11 +59,15 @@ class CaseResultsTests(unittest.TestCase):
             self.assertIsNone(render.call_args.args[6])
 
     def test_batch_runs_every_asset_backend_and_writes_summaries(self):
-        with tempfile.TemporaryDirectory() as temporary:
+        with tempfile.TemporaryDirectory() as temporary, tempfile.TemporaryDirectory() as checkout:
             root = Path(temporary)
             for reference in ('pen/000002', 'cabinet/000000'):
                 (root / reference).mkdir(parents=True)
                 (root / reference / 'physics_test.py').write_text("TESTS = {'drop': None}\n")
+            # The pen's definition was edited after the build.
+            edited = Path(checkout) / 'asset_sources/objects/pen/000002/physics_test.py'
+            edited.parent.mkdir(parents=True)
+            edited.write_text("TESTS = {'drop': None, 'close': None}\n")
             def run(jobs, gpus):
                 for command, _, _ in jobs:
                     output = Path(command[command.index('--worker') + 1]) / 'physics_test' / command[command.index('--physics') + 1]
@@ -73,8 +77,11 @@ class CaseResultsTests(unittest.TestCase):
                         'environments': {'count': 1}, 'metrics': {},
                         'performance': {'no_render': {'RTF': 1}, 'video_end_to_end': {'RTF': 1}}}))
                 return []
-            with patch('table_1000.common.batch.run_jobs', side_effect=run) as jobs:
+            with patch('table_1000.common.batch.run_jobs', side_effect=run) as jobs, \
+                 patch('table_1000.physics.test.ROOT', Path(checkout)), patch('builtins.print') as output:
                 main(['--source', temporary, '--physics', 'isaac-cpu', 'isaac-gpu', '--gpus', '1', '2'])
+            warnings = [call.args[0] for call in output.call_args_list if str(call.args[0]).startswith('WARNING')]
+            self.assertEqual([line.split(':')[0] for line in warnings], ['WARNING pen/000002'])
             self.assertEqual(jobs.call_count, 1)
             commands = jobs.call_args.args[0]
             self.assertEqual(jobs.call_args.args[1], [1, 2])

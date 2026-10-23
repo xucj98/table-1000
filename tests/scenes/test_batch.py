@@ -221,33 +221,47 @@ def test_run_expert_rejects_another_robot(tmp_path, monkeypatch):
 
 
 def test_build_scene_combines_parts(tmp_path, monkeypatch):
+    rounds = []
+
     def jobs(commands, gpus):
         for command, _, _ in commands:
             work = tmp_path / command[command.index('--work') + 1]
             seeds = parse_seeds(command[command.index('--seeds') + 1:command.index('--work')])
-            (work / 'images').mkdir(parents=True)
-            records = {seed: {'seed': seed, 'attempt': None if seed == 1 else 0,
-                              'attempts': [{'attempt': 0, 'settle': {'objects': {}, 'robot_contacts': []}}]}
-                       for seed in seeds}
-            write_states(work / 'states.hdf5', {seed: (0, STATE) for seed in seeds if seed != 1},
-                         {'scene': '000000', 'robot': 'x1pro'})
+            rounds.append(seeds)
+            for name in ('states', 'images', 'records'):
+                (work / name).mkdir(parents=True)
             for seed in seeds:
+                if seed == 2 and len(rounds) == 1 or seed == 3 and len(rounds) == 3:
+                    break      # the process died here: earlier seeds keep their results
                 if seed != 1:
+                    write_states(work / 'states' / f'{seed}.hdf5', {seed: (0, STATE)}, {'scene': '000000', 'robot': 'x1pro'})
                     Image.new('RGB', (64, 36), 'red').save(work / 'images' / f'{seed}.jpg')
-            (work / 'report.json').write_text(json.dumps({'robot': 'x1pro', 'camera': 'face_view', 'records': records}))
+                record = {'seed': seed, 'attempt': None if seed == 1 else 0,
+                          'attempts': [{'attempt': 0, 'settle': {'objects': {}, 'robot_contacts': []}}]}
+                if len(rounds) == 2:
+                    # seed 3 errs, then its rerun dies before it; seed 4 finds no valid state after the error
+                    (work / 'states' / f'{seed}.hdf5').unlink()
+                    record.update({'attempt': None, 'error': 'RuntimeError: CUDA error'} if seed == 3 else
+                                  {'attempt': None, 'after_error': 3})
+                (work / 'records' / f'{seed}.json').write_text(
+                    json.dumps({'robot': 'x1pro', 'camera': 'face_view', 'record': record}))
         return []
 
     monkeypatch.setattr(scene_batch, 'run_jobs', jobs)
     root = tmp_path / 'checkout'
     output = tmp_path / 'custom'
     (output / '000000' / 'initial').mkdir(parents=True)
-    with pytest.raises(SystemExit, match='without a valid state: 1'):
+    with pytest.raises(SystemExit, match=r'errors: seeds 3 \(see .*\); seeds without a valid state: 1$'):
         build_scene.main(['000000', '--seeds', '0:5', '--gpus', '0', '1', '--grid', '2x1', '--output', str(output),
                           '--root', str(root)])
+    assert rounds == [[0, 1, 2], [3, 4], [2, 3], [4]]  # seeds without a result or with an error run again
     directory = output / '000000'
     report = json.loads((directory / 'initial.json').read_text())
-    assert report['seeds'] == {'range': '0:5', 'count': 5} and report['without_state'] == [1]
-    assert list(read_states(directory / 'initial_states.hdf5')[1]) == [0, 2, 3, 4]
+    assert report['seeds'] == {'range': '0:5', 'count': 5} and report['without_state'] == [1, 3]
+    assert report['records']['3']['error'] == 'RuntimeError: CUDA error'
+    attrs, states = read_states(directory / 'initial_states.hdf5')
+    assert list(states) == [0, 2, 4] and attrs['scene'] == '000000' and attrs['robot'] == 'x1pro'
     assert Image.open(directory / 'initial_states.jpg').size == (2 * build_scene.TILE_WIDTH, 216 + build_scene.CAPTION)
     assert not (directory / 'initial').exists()            # replaced, and no --images this time
+    assert not (directory / 'staging').exists()            # the processes' results, removed once merged
     assert not (root / 'asset_sources').exists()           # a custom output keeps the thumbnail

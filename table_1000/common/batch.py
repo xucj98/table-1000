@@ -3,7 +3,7 @@
 A batch script's work units (seeds, cases, asset backends) are packed into ``--jobs`` processes
 (:func:`plan`) that run at once: spread evenly over the local ``--gpus``, or each submitted through
 ``--launcher``, a job scheduler's command prefix such as ``srun --gres=gpu:1`` that picks the GPU.
-Units whose process stopped before writing their result run again (``--retries``); see
+Units without a result (their process stopped first) run again (``--retries``); see
 :func:`run_batch`. Seeds are written as in ``--seeds``: ``a:b`` (``a`` to ``b - 1``) and single
 seeds, e.g. ``0:100`` or ``20 64``.
 """
@@ -25,7 +25,7 @@ def add_arguments(parser):
                         'not with --launcher')
     parser.add_argument('--launcher', help='command prefix of a job scheduler that runs a process on a free GPU it sets '
                         'CUDA_VISIBLE_DEVICES to; instead of --gpus')
-    parser.add_argument('--retries', type=int, default=1, help='reruns of work whose process stopped before its result')
+    parser.add_argument('--retries', type=int, default=1, help='reruns of work without a result, e.g. its process stopped first')
     parser.add_argument('--gpu', type=int, help=argparse.SUPPRESS)
 
 
@@ -188,15 +188,15 @@ def run_batch(items, *, command, missing, count, gpus, launcher=None, retries=1,
     """Run ``items`` (work units) as processes (:func:`plan`), at most ``count`` at a time, on ``gpus``
     (spread evenly, see :func:`run_jobs`) or each through ``launcher`` (see :func:`launch`).
     ``command(group, index, attempt)`` gives a process's ``(argv, log, label)``. Items still ``missing(item)``
-    after a round (their process died, was killed or failed to start before writing them) run again, up to
-    ``retries`` more rounds, in as many processes as before at most; items that wrote a result, even a failing
-    one, do not. Returns the items still missing."""
+    after a round (their process died, was killed or failed to start before writing them, or a result that
+    ``missing`` counts as not one, such as an error that may be the process's) run again, up to ``retries``
+    more rounds, in as many processes as before at most. Returns the items still missing."""
     pending = list(items)
     for attempt in range(retries + 1):
         if not pending:
             break
         if attempt:
-            print(f'RETRY {len(pending)} missing (attempt {attempt})', flush=True)
+            print(f'RETRY {len(pending)} without a result (attempt {attempt})', flush=True)
         jobs = [command(group, index, attempt) for index, group in enumerate(plan(pending, key, cost, count))]
         if launcher:
             launch(jobs, launcher, count)
