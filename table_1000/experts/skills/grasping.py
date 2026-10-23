@@ -278,7 +278,9 @@ class Grasping:
             solver = self.solvers[arm]
             try:
                 solver.open_gripper(grasp.open_gap)
-                solver.move_to_pose_with_RRTConnect(None, lift=True, goals=[q_pre], attempts=CANDIDATE_PLANS)
+                # With the torso lift held, one try each: where they fail, the lift is likely needed.
+                solver.move_to_pose_with_RRTConnect(None, lift=True, goals=[q_pre],
+                                                    attempts=CANDIDATE_PLANS if lift else 1)
                 solver.allow([*target.names, *supports])
                 solver.move_to_pose_with_screw(grasp.pose)
                 return arm, grasp, supports

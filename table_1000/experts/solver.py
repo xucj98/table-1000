@@ -30,6 +30,7 @@ ARRIVAL_TOLERANCE = .01   # rad, final joint error before a move counts as done
 SETTLE_LIMIT = .5         # s of extra holding allowed to reach it
 GRIPPER_TIME = .6         # s for the fingers to close or open
 OPEN_GAP = .08            # m
+GRIPPER_THERE = .002     # m from a commanded opening the fingers count as there
 TORSO_STILL = .001        # m of torso lift travel below which a path leaves it where it was
 
 
@@ -267,6 +268,12 @@ class MotionSolver:
             note_torso(self.ctx, lift)
 
     def gripper(self, gap, seconds=GRIPPER_TIME):
+        """Command the pad gap ``gap`` for ``seconds``; opening to where the fingers are (within
+        GRIPPER_THERE) takes no time."""
+        gap = float(np.clip(gap, 0., self.arm.max_gap))
+        if gap > 0. and abs(self.finger_gap() - gap) < GRIPPER_THERE:
+            self.ctx.step({f'{self.arm.name}_gripper': [[gap]]})
+            return
         for _ in range(steps(seconds)):
             self.ctx.step({f'{self.arm.name}_gripper': [[gap]]})
 
