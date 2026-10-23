@@ -13,7 +13,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from table_1000.experts import skills
-from table_1000.experts.context import ExpertFailed
+from table_1000.experts.context import ExpertFailed, Step, run_steps
 from table_1000.experts.grasps import translated
 
 TOP, BOTTOM = 'drawer1', 'drawer3'
@@ -67,17 +67,6 @@ def handle_poses(ctx, drawer, opening):
     return [grasp, translated(grasp, move / 2), translated(grasp, move)]
 
 
-def grasp_handle(ctx, drawer, move, inward):
-    """Grasp ``drawer``'s handle within the first of HANDLE_ANGLES of straight at it that reaches."""
-    for limit in HANDLE_ANGLES:
-        try:
-            return skills.grasp(ctx, 'cabinet', f'{body(drawer)}.handle', then=move, approach=inward,
-                                max_angle=limit)
-        except ExpertFailed as failure:
-            if failure.reason != 'no reachable grasp' or limit == HANDLE_ANGLES[-1]:
-                raise
-
-
 def move_drawer(ctx, drawer, opening):
     """Grasp the handle, slide the drawer to ``opening``, let go; where the hand cannot follow the
     handle all the way (the wrist bends to its limit as the handle nears the body), it slides it
@@ -88,7 +77,8 @@ def move_drawer(ctx, drawer, opening):
         # Straight at the drawer face: pivoting fingers pinching the handle's ends from above (even
         # 15 degrees) slip off.
         inward = ctx.pose('cabinet', body(drawer))[:3, 1]
-        held = grasp_handle(ctx, drawer, move, inward)
+        held = skills.grasp(ctx, 'cabinet', f'{body(drawer)}.handle', then=move, approach=inward,
+                            max_angle=HANDLE_ANGLES)
         # Closing on the handle straight on may have pushed the drawer in a little.
         move = pull(ctx, drawer, opening - ctx.joint('cabinet', slide(drawer)))
         housing = ctx.pose('cabinet')[:3, 3]
@@ -108,9 +98,19 @@ def move_drawer(ctx, drawer, opening):
 
 def open_drawer(ctx, drawer):
     move_drawer(ctx, drawer, OPENING)
+    check_open(ctx, drawer)
+
+
+def check_open(ctx, drawer):
     opening = ctx.joint('cabinet', slide(drawer))
     if opening < OPENING - OPEN_TOLERANCE:
         ctx.fail('drawer not opened', opening=opening)
+
+
+def check_closed(ctx, drawer):
+    opening = ctx.joint('cabinet', slide(drawer))
+    if opening > CLOSED:
+        ctx.fail('drawer not closed', opening=opening)
 
 
 def close_drawer(ctx, drawer):
@@ -123,8 +123,7 @@ def close_drawer(ctx, drawer):
     opening = ctx.joint('cabinet', slide(drawer))
     ctx.note('pushed', drawer=drawer, opening=opening, arm=pushed['arm'], tilt=pushed['tilt'],
              cabinet_shift=float(np.linalg.norm(ctx.pose('cabinet')[:3, 3] - housing)))
-    if opening > CLOSED:
-        ctx.fail('drawer not closed', opening=opening)
+    check_closed(ctx, drawer)
 
 
 def drawer_box(ctx, drawer):
@@ -156,12 +155,7 @@ def table_region(ctx):
 
 def pick_up(ctx):
     """Pick the pen up from the table leaning as :func:`pick_from_above`, within the first of PICK_ANGLES that reaches."""
-    for limit in PICK_ANGLES:
-        try:
-            return skills.pick(ctx, 'pen', approach=pick_from_above(ctx), max_angle=limit)
-        except ExpertFailed as failure:
-            if failure.reason != 'no reachable grasp' or limit == PICK_ANGLES[-1]:
-                raise
+    return skills.pick(ctx, 'pen', approach=pick_from_above(ctx), max_angle=PICK_ANGLES)
 
 
 def pick_from_above(ctx):
@@ -180,6 +174,11 @@ def put_in_drawer(ctx, drawer):
     surface = frame @ np.r_[np.c_[np.eye(3), [0., 0., floor]], [[0., 0., 0., 1.]]]
     near = (frame @ [(x0 + x1) / 2, (y0 + y1) / 2, floor, 1.])[:3]
     skills.retry(ctx, lambda: skills.place(ctx, 'pen', (surface, (x0, y0), (x1, y1)), near=near))
+    check_in_drawer(ctx, drawer)
+
+
+def check_in_drawer(ctx, drawer):
+    frame, (x0, y0), (x1, _), floor, rear = drawer_box(ctx, drawer)
     local = (np.linalg.inv(frame) @ ctx.pose('pen', 'body'))[:3, 3]
     if not (x0 <= local[0] <= x1 and y0 <= local[1] <= rear and local[2] < floor + .03):
         ctx.fail('pen not in the drawer', pen_in_drawer=local.tolist())
@@ -212,22 +211,60 @@ def put_on_table(ctx):
     skills.place(ctx, 'pen', region, keep_out=keep_out, near=aside(ctx))
 
 
-def solve(ctx):
-    # Each step starts with the free arms back at their start pose (out of the way of the other) and
-    # is tried again when it fails (skills.retry), from where things are.
-    def step(instruction, action):
+def check_on_table(ctx):
+    """The pen lies on the table top, clear of the cabinet and its drawers' pull-out space."""
+    pen = ctx.pose('pen', 'body')[:3, 3]
+    _, [(frame, low, high)] = table_region(ctx)
+    local = (np.linalg.inv(frame) @ np.r_[pen, 1.])[:2]
+    table = ctx.scene.TABLE
+    on_top = np.all(np.abs(pen[:2]) <= np.array(table['size'][:2]) / 2) and pen[2] < table['height'] + .03
+    if not on_top or np.all((low <= local) & (local <= high)):
+        ctx.fail('pen not on the table', pen=pen.tolist())
+
+
+def subtask(instruction, action):
+    """``action(ctx)`` as subtask ``instruction``, the free arms back at their start pose first (out
+    of the way of the other)."""
+    def run(ctx):
         with ctx.subtask(instruction):
             skills.ready(ctx)
-            action()
+            action(ctx)
+    return run
 
-    step('open the top drawer of the cabinet', lambda: skills.retry(ctx, lambda: open_drawer(ctx, TOP)))
-    step('take the pen out of the top drawer', lambda: skills.retry(ctx, lambda: take_out(ctx)))
-    step('put the pen on the table', lambda: skills.retry(ctx, lambda: put_on_table(ctx)))
-    step('close the top drawer', lambda: skills.retry(ctx, lambda: close_drawer(ctx, TOP)))
-    step('open the bottom drawer of the cabinet', lambda: skills.retry(ctx, lambda: open_drawer(ctx, BOTTOM)))
-    step('pick up the pen from the table', lambda: (skills.make_room(ctx, []), skills.retry(ctx, lambda: pick_up(ctx))))
-    step('put the pen into the bottom drawer', lambda: put_in_drawer(ctx, BOTTOM))
-    step('close the bottom drawer', lambda: skills.retry(ctx, lambda: close_drawer(ctx, BOTTOM)))
+
+def subtasks(*runs):
+    return lambda ctx: [run(ctx) for run in runs]
+
+
+# Each step is tried again when it fails (skills.retry), from where things are.
+STEPS = [
+    Step('open the top drawer',
+         subtask('open the top drawer of the cabinet', lambda ctx: skills.retry(ctx, lambda: open_drawer(ctx, TOP))),
+         lambda ctx: check_open(ctx, TOP)),
+    Step('move the pen from the top drawer to the table', subtasks(
+         subtask('take the pen out of the top drawer', lambda ctx: skills.retry(ctx, lambda: take_out(ctx))),
+         subtask('put the pen on the table', lambda ctx: skills.retry(ctx, lambda: put_on_table(ctx)))),
+         check_on_table),
+    Step('close the top drawer',
+         subtask('close the top drawer', lambda ctx: skills.retry(ctx, lambda: close_drawer(ctx, TOP))),
+         lambda ctx: check_closed(ctx, TOP)),
+    Step('open the bottom drawer',
+         subtask('open the bottom drawer of the cabinet',
+                 lambda ctx: skills.retry(ctx, lambda: open_drawer(ctx, BOTTOM))),
+         lambda ctx: check_open(ctx, BOTTOM)),
+    Step('move the pen from the table to the bottom drawer', subtasks(
+         subtask('pick up the pen from the table',
+                 lambda ctx: (skills.make_room(ctx, []), skills.retry(ctx, lambda: pick_up(ctx)))),
+         subtask('put the pen into the bottom drawer', lambda ctx: put_in_drawer(ctx, BOTTOM))),
+         lambda ctx: check_in_drawer(ctx, BOTTOM)),
+    Step('close the bottom drawer',
+         subtask('close the bottom drawer', lambda ctx: skills.retry(ctx, lambda: close_drawer(ctx, BOTTOM))),
+         lambda ctx: check_closed(ctx, BOTTOM)),
+]
+
+
+def solve(ctx):
+    run_steps(ctx, STEPS)
 
 
 # -- each step alone (run_expert.py --stage <name>) -------------------------------------------------

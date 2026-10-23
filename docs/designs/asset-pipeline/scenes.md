@@ -67,11 +67,11 @@
 
 ### 原子技能
 
-`table_1000.experts.skills` 在运动原语之上提供以物体为单位的技能，接口仿照 RoboTwin 2.0 的任务 API，但和 `solve` 一样阻塞：每个调用在仿真中执行完、检查结果后才返回，做不到时以 `ctx.fail`（原因如 `no reachable grasp`、`object not held`、`no placement`）或规划异常结束。技能按物体的实时位姿和资产几何自己选择手臂、抓取候选和路径，每次换用候选都用 `ctx.note` 记下。场景 [000002](../../../asset_sources/scenes/000002/expert.py) 只用这些技能写成。
+`table_1000.experts.skills` 在运动原语之上提供以物体为单位的技能，接口仿照 RoboTwin 2.0 的任务 API，但和 `solve` 一样阻塞：每个调用在仿真中执行完、检查结果后才返回，做不到时以 `ctx.fail`（原因如 `no reachable grasp`、`object not held`、`no placement`）或规划异常结束；什么都够不着（没有可行的抓取、推或放置）时异常类型为 `Unreachable`。技能按物体的实时位姿和资产几何自己选择手臂、抓取候选和路径，每次换用候选都用 `ctx.note` 记下。场景 [000002](../../../asset_sources/scenes/000002/expert.py) 只用这些技能写成。
 
 | 技能 | 作用 |
 | --- | --- |
-| `grasp(ctx, 物体, 部件)` | 抓住物体或其一个部件（如把手）。可给接近方向 `approach`、与它的最大夹角 `max_angle`、抓住后的位移 `then`（候选须让这段位移也有 IK 解）。先试肩部离物体近的手臂；闭合后没夹住（手指间隙小于物体宽度）就退出重选，至多 `MAX_REGRASPS` 次；可达范围内没有候选时先移动底盘 |
+| `grasp(ctx, 物体, 部件)` | 抓住物体或其一个部件（如把手）。可给接近方向 `approach`、与它的最大夹角 `max_angle`（给一组时依次放宽，够不着才用下一个）、抓住后的位移 `then`（候选须让这段位移也有 IK 解）。先试肩部离物体近的手臂；闭合后没夹住（手指间隙小于物体宽度）就退出重选，至多 `MAX_REGRASPS` 次；可达范围内没有候选时先移动底盘 |
 | `pick(ctx, 物体)` | `grasp` 后抬起 `height`；物体没跟着抬起时松手并失败（`object not lifted`） |
 | `move_by_displacement(ctx, 手臂, x, y, z)` | TCP 沿直线移动。`drag` 指定随手移动的关节部件（拉抽屉）；`least` 允许整段规划不通时只走一部分，返回走过的比例 |
 | `push(ctx, 物体, 部件, direction, distance)` | 闭合指尖抵住部件的面推动（推抽屉关上） |
@@ -80,6 +80,10 @@
 | `make_room(ctx, 位姿)` | 移动底盘（相对起始位姿后退、转向）到能以关节余量够到给定 TCP 位姿的最小移动处；`path=True` 表示这些位姿是一条直线运动上的连续位姿。机器人没有底盘时不动 |
 | `ready(ctx)` | 空着的手臂回到起始姿态 |
 | `retry(ctx, 步骤)` | 步骤失败时先 `ready` 再重试，至多 `ATTEMPTS` 次；回合墙钟时间超过 `RETRY_BUDGET` 后不再重试 |
+
+### 步骤
+
+专家可以把子任务分成步骤：`Step(名字, run, check)`，`run(ctx)` 执行其中的子任务，`check(ctx)` 检查结束状态是否满足下一步的起始条件，不满足就 `ctx.fail`。步骤之间手里不拿东西。`solve` 写成 `run_steps(ctx, STEPS)`。
 
 ### 单步检查
 
