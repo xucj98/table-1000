@@ -12,6 +12,7 @@ from table_1000.experts.solver import PlanningFailed
 # The base drives at most BASE_SPEED (m/s) and turns at most BASE_TURN (rad/s), proportionally to the
 # error (BASE_GAIN) until within BASE_TOLERANCE (m, rad), then settles for BASE_SETTLE s.
 BASE_SPEED, BASE_TURN, BASE_GAIN = .15, .4, 2.
+READY_TOLERANCE = .05   # rad from its start pose an arm counts as there
 BASE_TOLERANCE, BASE_SETTLE = (.005, np.radians(1.)), .5
 # make_room samples BASE_SAMPLES poses of the base BASE_DISTANCES (m) from the poses to reach, facing
 # them within BASE_FACING (rad); in the order the base gets there (turn, drive straight, turn), at
@@ -248,7 +249,8 @@ class Base:
 
     def make_room(self, poses, arms=None, need=None, path=False):
         """Move the base (see :meth:`base_for`) to where ``poses`` are reachable with a margin: the
-        free arms in, turned in place, straight on, turned in place."""
+        free arms in where they would sweep something on the way, turned in place, straight on,
+        turned in place."""
         if not self.ctx.spec.base:
             return
         chosen = self.base_for(poses, arms, need, path)
@@ -259,16 +261,38 @@ class Base:
         first, distance, last = drive(before, chosen)
         if abs(distance) < BASE_TOLERANCE[0] * 2 and abs(first) + abs(last) < BASE_TOLERANCE[1] * 2:
             return
-        self.ready()        # the free arms in, so that they sweep nothing as the base turns
+        if not self.clear_way(before, chosen):
+            self.ready()    # the free arms in, so that they sweep nothing as the base turns
         self.move_base(0., first)
         self.move_base(distance, last)
         self.note_relocated(before)
+
+    def clear_way(self, start, goal):
+        """Whether the robot as it is (the arms where they are) is clear of the planning world all
+        the way from base pose ``start`` to ``goal``."""
+        actual, world_poses = self.model.base.copy(), self.ctx.poses()
+        try:
+            return all(self.put_base(along, world_poses) or self.clear(self.model.q) for along in drive_path(start, goal))
+        finally:
+            self.model.base = actual
+            for solver in self.solvers.values():
+                solver.sync()
 
     def note_relocated(self, before):
         """Note a move of the base from ``before`` (x, y, yaw): how far it went and turned."""
         after = self.base_pose()
         self.ctx.note('base relocated', travel=float(np.linalg.norm(after[:2] - before[:2])),
                       turn=float(abs((after[2] - before[2] + np.pi) % (2 * np.pi) - np.pi)), pose=after.tolist())
+
+    def stow(self):
+        """The free arms that are out back at their start pose (see :meth:`ready`), as a skill does
+        before it moves the base when nothing is in reach as the arms are; whether any was out."""
+        out = [arm for arm in self.arms if arm not in self.held
+               and np.abs(self.home - self.model.q)[self.model.arm_indices(arm)].max() >= READY_TOLERANCE]
+        if out:
+            self.ctx.note('arms stowed', arms=out)
+            self.ready()
+        return bool(out)
 
     def ready(self):
         """Back to the start pose with each arm holding nothing (a planned move; skipped where it
@@ -279,7 +303,7 @@ class Base:
             solver, indices = self.solvers[arm], self.model.arm_indices(arm)
             goal = self.model.q.copy()
             goal[indices] = self.home[indices]
-            if np.abs(goal - self.model.q).max() < .05:
+            if np.abs(goal - self.model.q).max() < READY_TOLERANCE:
                 continue
             try:
                 solver.open_gripper()

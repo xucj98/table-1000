@@ -5,10 +5,10 @@ import time
 
 import numpy as np
 
-from table_1000.experts.context import Unreachable
+from table_1000.experts.context import DT, Unreachable
 from table_1000.experts.grasps import SUPPORT_CLEARANCE, Box, grasp_candidates, standoff, translated
 from table_1000.experts.skills.common import (APPROACH, CANDIDATE_PLANS, IK_ATTEMPTS, ROOM_PLACES, SUPPORT_DISTANCE,
-                                              Target, collisions, normalized, planning_object)
+                                              Target, Unmet, collisions, normalized, planning_object)
 from table_1000.experts.solver import PlanningFailed
 
 LIFT = .10              # m, pick's lift
@@ -94,15 +94,18 @@ class Grasping:
             obstacles.append((body, SUPPORT_CLEARANCE if support else 0.))
         return obstacles, supports
 
-    def options(self, target, arms, skip, point=None, approach=None, then=None, max_angle=None, tried=None):
+    def options(self, target, arms, skip, point=None, approach=None, then=None, max_angle=None, tried=None,
+                need=None):
         """Feasible ``(arm, grasp, supports, q_grasp, q_pre)``, in the order tried: those of either
         arm (the nearer first) with the torso lift where it is (also through ``then``), then those
         moving it too; ``skip`` holds the ids of candidates already used, ``tried`` (``{lift: count}``)
-        those whose motion was tried, up to ``MAX_PLANS`` each. ``self.rejected`` counts the
-        candidates dropped, by reason."""
+        those whose motion was tried, up to ``MAX_PLANS`` each; ``need`` (an
+        :class:`~table_1000.experts.skills.chain.InHand`) keeps those holding the object as it asks.
+        ``self.rejected`` counts the candidates dropped, by reason."""
         tried = {False: 0, True: 0} if tried is None else tried
-        self.rejected = {'grasp IK': 0, 'pre-grasp IK': 0, 'then': 0, 'collisions': {}}
-        transform = self.ctx.poses()[target.body] @ target.offset
+        self.rejected = {'grasp IK': 0, 'pre-grasp IK': 0, 'then': 0, 'need': 0, 'collisions': {}}
+        body = self.ctx.poses()[target.body]
+        transform = body @ target.offset
         centre = transform[:3, 3]
         then = None if then is None else np.asarray(then, dtype=float)
         upward = then is not None and np.linalg.norm(then[:2]) < 1e-9 and then[2] > 0.
@@ -150,11 +153,21 @@ class Grasping:
                     if then is not None:
                         status, _ = self.model.ik(arm, translated(grasp.pose, then), q_grasp, world=True, lift=lift,
                                                   attempts=IK_ATTEMPTS)
+                        if status == 'Success':
+                            # All the way along, as the move goes: an arm folding into itself half way (a
+                            # drawer pulled out towards the body) makes it stop there.
+                            solver.allow([*target.names, *supports])
+                            status = self.model.plan_screw(arm, translated(grasp.pose, then), q_grasp, world=True,
+                                                           time_step=DT, lift=lift)['status']
+                            solver.allow([*target.names, *supports], False)
                         # Close to the body the hand may not reach higher; then the torso must rise that far.
                         headroom = self.model.limits[self.model.lift_indices(), 1] - q_grasp[self.model.lift_indices()]
                         if status != 'Success' and not (lift and upward and np.min(headroom) >= then[2]):
                             self.rejected['then'] += 1
                             continue
+                    if need is not None and not need.accepts(arm, np.linalg.inv(grasp.pose) @ body):
+                        self.rejected['need'] += 1
+                        continue
                     skip.add((arm, index))
                     yield arm, grasp, supports, q_grasp, q_pre, lift
 
@@ -174,24 +187,33 @@ class Grasping:
             counts[key] = counts.get(key, 0) + 1
 
     # -- skills --------------------------------------------------------------------------
-    def grasp(self, target, arm=None, point=None, approach=None, then=None, max_angle=None):
+    def grasp(self, target, arm=None, point=None, approach=None, then=None, max_angle=None, need=None, base=True):
         """Grasp ``target`` (:class:`Target`) with ``arm`` (default either); see the module docstring.
-        Returns ``{'arm', 'grasp', 'supports', 'finger_gap', 'regrasps', 'choice_s', 'tcp_object'}``."""
+        ``need``: only grasps holding it as that :class:`~table_1000.experts.skills.chain.InHand` asks
+        (:class:`Unmet` where no other is in reach); ``base``: whether the base may move. Returns
+        ``{'arm', 'grasp', 'supports', 'finger_gap', 'regrasps', 'choice_s', 'tcp_object'}``."""
         ctx = self.ctx
         arms = [arm] if arm else [a for a in self.arms if a not in self.held]
-        skip, regrasps, started, roomed = set(), 0, time.perf_counter(), False
+        unmet = need is not None and not set(arms) <= set(need.arms)     # an arm it leaves out
+        if need is not None:
+            arms = [a for a in arms if a in need.arms]
+        skip, regrasps, started, roomed, stowed = set(), 0, time.perf_counter(), False, False
         while True:
-            reached = self.reach(target, arms, skip, point, approach, then, max_angle)
-            if reached is None and not roomed and ctx.spec.base:
+            reached = self.reach(target, arms, skip, point, approach, then, max_angle, need)
+            if reached is None and not stowed and self.stow():
+                # None in reach with the other arm out: again with it in, before the base moves.
+                skip, stowed = set(), True
+                reached = self.reach(target, arms, skip, point, approach, then, max_angle, need)
+            if reached is None and not roomed and ctx.spec.base and base:
                 # None in reach from here: the base moves to reach the first candidates, then again.
                 roomed = True
                 paths = self.grasp_paths(target, arms, point, approach, then, max_angle)
                 if any(paths.values()):
                     self.make_room(paths, need=1)
                     skip = set()
-                    reached = self.reach(target, arms, skip, point, approach, then, max_angle)
+                    reached = self.reach(target, arms, skip, point, approach, then, max_angle, need)
             if reached is None:
-                ctx.fail('no reachable grasp', Unreachable, target=target.names, candidates_tried=len(skip), rejected=self.rejected)
+                ctx.fail('no reachable grasp', Unmet if unmet or self.rejected['need'] else Unreachable, target=target.names, candidates_tried=len(skip), rejected=self.rejected)
             arm, grasp, supports = reached
             solver = self.solvers[arm]
             solver.close_gripper()
@@ -242,12 +264,12 @@ class Grasping:
                 paths[arm].append(path)
         return paths
 
-    def reach(self, target, arms, skip, point, approach, then, max_angle=None):
+    def reach(self, target, arms, skip, point, approach, then, max_angle=None, need=None):
         """Move to the first grasp of :meth:`options` whose motion plans, fingers open around the
         object; ``(arm, grasp, supports)``, or None when no candidate is left."""
         ctx, tried = self.ctx, {False: 0, True: 0}
         for arm, grasp, supports, q_grasp, q_pre, lift in self.options(target, arms, skip, point, approach, then,
-                                                                      max_angle, tried):
+                                                                      max_angle, tried, need):
             tried[lift] += 1
             solver = self.solvers[arm]
             try:
@@ -261,10 +283,11 @@ class Grasping:
                 ctx.note('next grasp', arm=arm, cost=grasp.cost, reason=error.reason, **collisions(error))
         return None
 
-    def pick(self, target, arm=None, point=None, approach=None, height=LIFT, max_angle=None):
+    def pick(self, target, arm=None, point=None, approach=None, height=LIFT, max_angle=None, need=None, base=True):
         """:meth:`grasp` with the lift checked, then up by ``height``; the object must have risen."""
         ctx = self.ctx
-        result = self.grasp(target, arm, point, approach, then=(0., 0., height), max_angle=max_angle)
+        result = self.grasp(target, arm, point, approach, then=(0., 0., height), max_angle=max_angle, need=need,
+                            base=base)
         before = ctx.poses()[target.body]
         self.move_by_displacement(result['arm'], (0., 0., height))
         ctx.hold(.2)

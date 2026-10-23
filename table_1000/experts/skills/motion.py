@@ -140,36 +140,41 @@ class Motion:
                     pose[:3, 3] = face - approach * tip
                     options.append((candidate, tilt, pose))
         before = ctx.poses()[target.body][:3, 3]
-        # Either arm with the torso lift where it is (all the way through the push), then moving it too.
-        tried = set()
-        for lift, (index, (candidate, tilt, contact)) in ((lift, option) for lift in (False, True)
-                                                          for option in enumerate(options)):
-            if index in tried:
-                continue
-            solver = self.solvers[candidate]
-            start = self.model.vector(ctx.spec.arms[candidate].finger_targets(0.))
-            status, q_pre = self.model.ik(candidate, translated(contact, -direction * PUSH_GAP), start, world=True,
-                                          lift=lift, attempts=IK_ATTEMPTS)
-            if status != 'Success':
-                continue
-            status, _ = self.model.ik(candidate, translated(contact, direction * distance), q_pre, world=True,
-                                      lift=lift, attempts=IK_ATTEMPTS, check_collision=False)
-            if status != 'Success':
-                continue
-            tried.add(index)
-            # The fingertips push the part and may touch the rest of its body (a drawer's front).
-            touched = [name for name, obj in solver.world.objects.items() if obj.body == target.body] or target.names
-            try:
-                solver.close_gripper()
-                solver.move_to_pose_with_RRTConnect(None, lift=True, goals=[q_pre], attempts=CANDIDATE_PLANS)
-                solver.allow(touched)
-                solver.move_to_pose_with_screw(contact)
-                break
-            except PlanningFailed as error:
-                solver.allow(touched, False)
-                ctx.note('next push', arm=candidate, tilt=float(tilt), reason=error.reason, **collisions(error))
-        else:
-            ctx.fail('no reachable push', Unreachable, target=target.names)
+        # Either arm with the torso lift where it is (all the way through the push), then moving it too;
+        # none in reach with the other arm out: again with it in.
+        tried, pushed, stowed = set(), False, False
+        while not pushed:
+            for lift, (index, (candidate, tilt, contact)) in ((lift, option) for lift in (False, True)
+                                                              for option in enumerate(options)):
+                if index in tried:
+                    continue
+                solver = self.solvers[candidate]
+                start = self.model.vector(ctx.spec.arms[candidate].finger_targets(0.))
+                status, q_pre = self.model.ik(candidate, translated(contact, -direction * PUSH_GAP), start, world=True,
+                                              lift=lift, attempts=IK_ATTEMPTS)
+                if status != 'Success':
+                    continue
+                status, _ = self.model.ik(candidate, translated(contact, direction * distance), q_pre, world=True,
+                                          lift=lift, attempts=IK_ATTEMPTS, check_collision=False)
+                if status != 'Success':
+                    continue
+                tried.add(index)
+                # The fingertips push the part and may touch the rest of its body (a drawer's front).
+                touched = [name for name, obj in solver.world.objects.items() if obj.body == target.body] or target.names
+                try:
+                    solver.close_gripper()
+                    solver.move_to_pose_with_RRTConnect(None, lift=True, goals=[q_pre], attempts=CANDIDATE_PLANS)
+                    solver.allow(touched)
+                    solver.move_to_pose_with_screw(contact)
+                    pushed = True
+                    break
+                except PlanningFailed as error:
+                    solver.allow(touched, False)
+                    ctx.note('next push', arm=candidate, tilt=float(tilt), reason=error.reason, **collisions(error))
+            if not pushed:
+                if stowed or not self.stow():
+                    ctx.fail('no reachable push', Unreachable, target=target.names)
+                tried, stowed = set(), True
         try:
             self.move_by_displacement(candidate, direction * distance, drag=(target.obj, target.body.split(':', 1)[1]))
         finally:

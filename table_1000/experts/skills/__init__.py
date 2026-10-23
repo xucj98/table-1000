@@ -98,6 +98,8 @@ import numpy as np
 from table_1000.experts.context import ExpertFailed, Unreachable
 from table_1000.experts.grasps import Hand
 from table_1000.experts.skills.base import Base
+from table_1000.experts.skills.chain import InHand, Pick, Place, chain
+from table_1000.experts.skills.common import Unmet
 from table_1000.experts.skills.grasping import LIFT, Grasping
 from table_1000.experts.skills.motion import Motion
 from table_1000.experts.skills.placing import PLACE_ABOVE, PLACE_CLEARANCE, PLACE_MARGIN, PLACE_STEP, Placing
@@ -164,14 +166,17 @@ def retry(ctx, step, attempts=ATTEMPTS):
 
 def relaxed(limits, attempt):
     """``attempt(limit)`` for each of ``limits`` (one value, a list or None) in turn while it is
-    :class:`Unreachable`."""
+    :class:`Unreachable`; :class:`Unmet` if one of them was."""
     limits = list(np.atleast_1d(limits)) if limits is not None else [None]
-    for limit in limits[:-1]:
+    unmet = None
+    for limit in limits:
         try:
             return attempt(limit)
-        except Unreachable:
-            pass
-    return attempt(limits[-1])
+        except Unmet as failure:
+            unmet = failure
+        except Unreachable as failure:
+            last = failure
+    raise unmet or last
 
 
 def grasp(ctx, obj, part=None, *, arm=None, shape=None, offset=None, body=None, point=None, approach=None, then=None,
@@ -184,11 +189,13 @@ def grasp(ctx, obj, part=None, *, arm=None, shape=None, offset=None, body=None, 
 
 
 def pick(ctx, obj, part=None, *, arm=None, shape=None, offset=None, body=None, point=None, approach=None, height=LIFT,
-         max_angle=None):
-    """Grasp scene object ``obj`` (or its ``part``) and lift it by ``height``; ``max_angle`` as for :func:`grasp`."""
+         max_angle=None, need=None, base=True):
+    """Grasp scene object ``obj`` (or its ``part``) and lift it by ``height``; ``max_angle`` as for
+    :func:`grasp`; ``need``: held as that :class:`~table_1000.experts.skills.chain.InHand` asks, else
+    :class:`Unmet`; ``base``: whether the base may move."""
     skills = _skills(ctx)
     target = skills.target(obj, part, shape, offset, body)
-    return relaxed(max_angle, lambda angle: skills.pick(target, arm, point, approach, height, angle))
+    return relaxed(max_angle, lambda angle: skills.pick(target, arm, point, approach, height, angle, need, base))
 
 
 def move_by_displacement(ctx, arm, x=0., y=0., z=0., drag=None, least=1.):

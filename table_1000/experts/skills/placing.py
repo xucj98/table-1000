@@ -17,6 +17,10 @@ PLACE_STEP = .02        # m between the positions place samples in its region
 PLACE_TURN_STEP = 15.   # deg between the turns place samples
 PLACE_TURNS = 8         # turns place tries per position, the least first
 PLACE_MARGIN = .01      # m the footprint keeps inside the region and off its keep-out areas
+# What a place needs of the hold (see Placing.need): NEED_PLACES of its placements, spread from the
+# nearest to the farthest, checked by IK (NEED_IK_ATTEMPTS restarts) at the release and above it, per
+# hold (arm, and the object in the hand rounded to NEED_ROUND m / rad).
+NEED_PLACES, NEED_IK_ATTEMPTS, NEED_ROUND = 24, 5, (.02, .1)
 
 
 def overlaps(outline, low, high):
@@ -127,6 +131,41 @@ class Placing:
             ctx.note('next placement', arm=arm, spot=spot.tolist(), reason=error.reason, **collisions(error))
             return False
 
+    def need(self, obj, region, near=None, keep_out=(), clearance=PLACE_CLEARANCE, above=PLACE_ABOVE,
+             step=PLACE_STEP, margin=PLACE_MARGIN):
+        """What :meth:`place` with these arguments needs of the hand that will hold ``obj`` (not held
+        yet, at its pose now): an :class:`~table_1000.experts.skills.chain.InHand` accepting the holds
+        from which one of its placements is in reach (IK at the release and above it)."""
+        from table_1000.experts.skills.chain import InHand
+        ctx = self.ctx
+        target = self.target(obj)
+        current = ctx.poses()[target.body]
+        frame, low, high = (np.asarray(item, dtype=float) for item in region)
+        if near is None:
+            near = frame @ np.r_[(low[:2] + high[:2]) / 2, 0., 1.]
+        options = self.placements(target, current, region, np.asarray(near, dtype=float)[:3], keep_out, step, margin)
+        options = [options[i] for i in np.unique(np.linspace(0, len(options) - 1, NEED_PLACES).astype(int))] if options else []
+        verdicts = {}
+
+        def accepts(arm, tcp_object):
+            rotation = Rotation.from_matrix(tcp_object[:3, :3]).as_rotvec()
+            key = (arm, *np.round(tcp_object[:3, 3] / NEED_ROUND[0]).astype(int), *np.round(rotation / NEED_ROUND[1]).astype(int))
+            if key not in verdicts:
+                verdicts[key] = any(self.in_reach_down(arm, placed, tcp_object, clearance, above) for placed, _ in options)
+            return verdicts[key]
+        return InHand(obj, accepts, [arm for arm in self.arms if arm not in self.held])
+
+    def in_reach_down(self, arm, placed, tcp_object, clearance, above):
+        """Whether ``arm`` holding the object as ``tcp_object`` has IK at its release at ``placed``
+        (the torso lift moving too) and above it."""
+        release = translated(placed, [0., 0., clearance]) @ np.linalg.inv(tcp_object)
+        status, q_release = self.model.ik(arm, release, self.model.q, world=True, lift=True, attempts=NEED_IK_ATTEMPTS)
+        if status != 'Success':
+            return False
+        status, _ = self.model.ik(arm, translated(release, [0., 0., above]), q_release, world=True,
+                                  attempts=NEED_IK_ATTEMPTS)
+        return status == 'Success'
+
     def place(self, obj, region, arm=None, near=None, keep_out=(), clearance=PLACE_CLEARANCE, above=PLACE_ABOVE,
               step=PLACE_STEP, margin=PLACE_MARGIN):
         """Put the held ``obj`` down in ``region`` and release it; see the module docstring.
@@ -150,6 +189,8 @@ class Placing:
         # IK first (cheap) over many, then motion for those that have it. Where none is in reach,
         # the base moves to reach the first ones, and they are screened again.
         result = self.put_down(arm, options, tcp_object, clearance, above)
+        if not result['done'] and self.stow():     # none in reach or planned with the other arm out
+            result = self.put_down(arm, options, tcp_object, clearance, above)
         if result['planned'] == 0 and ctx.spec.base:
             releases = [translated(placed, [0., 0., clearance]) @ np.linalg.inv(tcp_object)
                         for placed, _ in options[:ROOM_PLACES]]
