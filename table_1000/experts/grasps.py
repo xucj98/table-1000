@@ -308,7 +308,7 @@ class Grasp:
 # point squeezes the object when it is within CONTACT_TOLERANCE of its surface as the fingers
 # close, and a grasp needs MIN_PAD_AREA of such pad surface on each finger.
 OPEN_MARGIN, PAD_SPACING, CONTACT_TOLERANCE, MIN_PAD_AREA = .03, .0015, .001, 15e-6
-ELONGATED = 3.          # a grasp closes across at most this many times the narrowest width of the shape
+ELONGATED = 3.          # a shape this many times longer than its next width is not grasped by its ends
 # The TCP backs off from the contact centre in BACKOFF_STEP steps until the hand is clear.
 BACKOFF_STEP, MAX_BACKOFF = .002, .06
 # The object's widest section across the closing (where the pads squeeze it: a face of a box, a line
@@ -329,8 +329,8 @@ def grasp_candidates(shape, transform, hand, obstacles, preferred, center_of_mas
     (:class:`Hand`), cheapest first, generated as they are taken.
 
     Approach directions are ``step`` apart around each closing direction, none rising more than
-    ``max_up`` (z of the unit approach), none closing across more than ``ELONGATED`` times the
-    narrowest width (a pen squeezed by its ends); both hand turns about the approach are listed, of equal cost,
+    ``max_up`` (z of the unit approach), none closing along the length of an elongated shape (more
+    than ``ELONGATED`` times its next width: a pen squeezed by its ends); both hand turns about the approach are listed, of equal cost,
     the one whose closing direction is nearer ``closing`` (the hand's now: less to turn) first. The TCP
     starts at the contact centre and backs off along the approach until the open hand is clear
     of the object and of ``obstacles`` (``[(FCL object, clearance to keep)]``), also
@@ -354,10 +354,11 @@ def grasp_candidates(shape, transform, hand, obstacles, preferred, center_of_mas
     choices = []
     turned = closing
     closings = list(shape.closings(step))
-    narrowest = min(width for _, width, _, _ in closings)
+    widths = sorted({round(width, 6) for _, width, _, _ in closings})
+    elongated = len(widths) > 1 and widths[-1] > ELONGATED * widths[-2]
     for closing, width, basis, slides in closings:
         open_gap = min(width + OPEN_MARGIN, hand.max_gap)
-        if width > open_gap - .01 or width > ELONGATED * narrowest:
+        if width > open_gap - .01 or elongated and round(width, 6) == widths[-1]:
             continue
         closing = rotation @ closing
         approaches = [rotation @ (np.cos(t) * basis[0] + np.sin(t) * basis[1]) for t in np.arange(0., 2 * np.pi, step)] \
