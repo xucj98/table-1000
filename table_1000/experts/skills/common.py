@@ -1,0 +1,48 @@
+"""What the skills share: candidate and IK budgets, the grasped target, planning failure details."""
+
+from dataclasses import dataclass
+
+import numpy as np
+
+from table_1000.experts.grasps import Box
+from table_1000.planning.world import PlanningObject
+
+APPROACH = .05          # m, pre-grasp distance behind the grasp along the approach
+CANDIDATE_PLANS = 2     # RRTConnect tries (3 s, then 6 s) per candidate before the next is taken
+IK_ATTEMPTS = 20        # IK restarts per pose
+SUPPORT_DISTANCE = .003 # m, planning objects this close to the grasped one support it
+ROOM_PLACES = 10        # first placements (grasps, per arm) the base moves to reach when none is in reach
+RETREATS = (APPROACH, .03)   # m, back-off after releasing, tried in order
+
+
+def collisions(error):
+    """The collisions a :class:`PlanningFailed` reports (of its path, start or goal)."""
+    plan = error.details.get('plan', {})
+    return {key: plan[key] for key in ('collisions', 'start_collisions', 'goal_collisions') if plan.get(key)}
+
+
+def normalized(vector):
+    vector = np.asarray(vector, dtype=float)
+    return vector / np.linalg.norm(vector)
+
+
+def planning_object(name, key, shape, offset=np.eye(4)):
+    """Planning object ``name`` of ``shape`` moving with body ``key``."""
+    if isinstance(shape, Box):
+        entry = (np.asarray(offset, dtype=float), 'box', tuple(shape.size))
+    else:
+        entry = (np.asarray(offset, dtype=float), 'cylinder', (shape.radius, shape.length))
+    return PlanningObject(name, key, [entry], padded=False)
+
+
+@dataclass
+class Target:
+    """What a grasp holds: planning objects ``names``, shaped (for the grasp) by ``shape`` at
+    ``offset`` in the frame of body ``body`` (a key of ``ctx.poses()``); ``points`` are the whole
+    held object's collision points in that frame (for placing it)."""
+    obj: str
+    names: list
+    body: str
+    shape: object
+    offset: np.ndarray
+    points: np.ndarray

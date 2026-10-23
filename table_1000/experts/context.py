@@ -4,21 +4,27 @@ The expert is plain blocking code: every motion steps the environment until it
 is done. ``ctx`` offers
 
 - **motion** -- :meth:`Context.solver` per arm (:class:`~table_1000.experts.solver.MotionSolver`),
-  :meth:`Context.step`, :meth:`Context.hold`;
+  :meth:`Context.step`, :meth:`Context.hold`; the atomic skills of
+  :mod:`table_1000.experts.skills` (grasp, pick, place, ...) on top of them;
 - **state and geometry queries** -- live poses of object bodies, object joint
   values and centres of mass, each object's
   :class:`~table_1000.scenes.geometry.AssetGeometry`, the TCP;
 - **subtasks** -- ``with ctx.subtask('open the bottom drawer of the cabinet'):``
-  marks the steps of one English instruction;
+  marks the steps of one English instruction; :class:`Step` groups subtasks into steps
+  that start and end with the hands empty, each with a check of the state it leaves
+  (:func:`run_steps`); after each checked step the scene state is kept as a checkpoint
+  a later run resumes from (``ctx.only`` runs some of the steps);
 - ``ctx.rng`` -- the episode's random generator (from the seed), for choices that
   vary the trajectory.
 
-Failures raise :class:`ExpertFailed` with the subtask and a reason; nothing is
-retried unless the expert does it.
+Failures raise :class:`ExpertFailed` (:class:`Unreachable` where nothing is in
+reach) with the subtask and a reason; nothing is retried unless the expert does it.
 """
 
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 from scipy.spatial.transform import Rotation
@@ -35,19 +41,59 @@ class ExpertFailed(RuntimeError):
         self.subtask, self.reason, self.details = subtask, reason, details
 
 
+@dataclass
+class Step:
+    """A step of an expert, between two states in which the hands hold nothing: ``run(ctx)`` does
+    its subtasks (:meth:`Context.subtask`); ``check(ctx)`` fails it (:meth:`Context.fail`) unless
+    the state it leaves is fit for the next step."""
+    name: str
+    run: Callable
+    check: Callable = None
+
+
+def run_steps(ctx, steps):
+    """Run ``steps`` (:class:`Step`) in order, each checked when done and then kept as a checkpoint
+    (:meth:`Context.checkpoint`); only steps ``ctx.only`` (``(first, last)``, from 1) when set."""
+    first, last = ctx.only or (1, len(steps))
+    if not 1 <= first <= last <= len(steps):
+        raise ValueError(f'steps {first}-{last} of an expert with {len(steps)}')
+    ctx.step_names = [step.name for step in steps]
+    for index, step in enumerate(steps[first - 1:last], first):
+        step.run(ctx)
+        if step.check:
+            ctx.current = step.name     # a failed check is the step's
+            try:
+                step.check(ctx)
+            finally:
+                ctx.current = None
+        ctx.checkpoint(index, step.name)
+
+
+class Unreachable(ExpertFailed):
+    """Nothing the step could do is in reach (no grasp, push or placement has a motion)."""
+
+
 def steps(seconds):
     return max(1, round(seconds / DT))
 
 
 class Context:
-    def __init__(self, env, model, scene, assets, rng):
+    def __init__(self, env, model, scene, assets, rng, start=None, only=None):
         self.env, self.model, self.scene, self.assets, self.rng = env, model, scene, Path(assets), rng
         self.spec = env.spec
         self.geometry = {name: AssetGeometry.of(assets, spec['asset']) for name, spec in scene.OBJECTS.items()}
         self.subtasks, self.current = [], None
         self.solvers = {}
+        self._skills = None
         self.events = []        # (step, note) along the way, for the episode report
         self.origin = env.steps  # the episode starts here, after settling
+        self.observers = []      # called after every step (e.g. video capture)
+        # The robot where the seed's episode began ({'qpos', 'base_pose'}): its arms' home and its
+        # base's start, also when this run resumes from a checkpoint.
+        self.start = start or self.robot_state()
+        self.only = only            # (first, last) steps to run (see run_steps)
+        self.step_names = None      # the expert's steps, once run_steps runs
+        self.checkpoints = []       # {'step', 'name', 'at', 'state'} after each checked step
         self.sync_model()
 
     # -- stepping ------------------------------------------------------------------
@@ -55,6 +101,9 @@ class Context:
     def steps(self):
         """Control steps since the episode started."""
         return self.env.steps - self.origin
+
+    def robot_state(self):
+        return {'qpos': self.env.obs['agent']['qpos'][0].copy(), 'base_pose': self.env.obs['agent']['base_pose'][0].copy()}
 
     def base_transform(self):
         x, y, yaw = self.env.obs['agent']['base_pose'][0]
@@ -72,6 +121,8 @@ class Context:
     def step(self, action=None):
         obs = self.env.step(action or {})
         self.sync_model()
+        for observer in self.observers:
+            observer(self)
         return obs
 
     def hold(self, seconds):
@@ -84,6 +135,13 @@ class Context:
         if arm not in self.solvers:
             self.solvers[arm] = MotionSolver(self, arm)
         return self.solvers[arm]
+
+    def skills(self):
+        """The :class:`~table_1000.experts.skills.Skills` of every arm (made on first use)."""
+        from table_1000.experts.skills import Skills
+        if self._skills is None:
+            self._skills = Skills(self)
+        return self._skills
 
     # -- subtasks ------------------------------------------------------------------
     @contextmanager
@@ -100,11 +158,17 @@ class Context:
             self.current = None
             self.env.contacts.phase = None
 
+    def checkpoint(self, index, name):
+        """Keep the scene state after step ``index`` (``name``), at control step :attr:`steps`."""
+        from table_1000.sim.isaaclab.replay import numpy_state
+        state = numpy_state(self.env)
+        self.checkpoints.append({'step': index, 'name': name, 'at': self.steps, 'state': state})
+
     def note(self, text, **values):
         self.events.append({'step': self.steps, 'subtask': self.current, 'note': text, **values})
 
-    def fail(self, reason, **details):
-        raise ExpertFailed(self.current, reason, **details)
+    def fail(self, reason, failure=ExpertFailed, **details):
+        raise failure(self.current, reason, **details)
 
     # -- state and geometry queries --------------------------------------------------
     def poses(self):

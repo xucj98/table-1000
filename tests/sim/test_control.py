@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import torch
 
-from table_1000.robots.spec import BaseSpec
+from table_1000.robots.spec import ArmSpec, BaseSpec
 from table_1000.sim import CONTROL_HZ, PHYSICS_DT, SUBSTEPS, control
 
 # A differential base like X1Pro's.
@@ -36,6 +36,24 @@ def test_gripper_gap():
     signs = tensor([1., -1.])
     np.testing.assert_allclose(control.finger_targets(tensor([[.06]]), signs, .1), [[.03, -.03]])
     np.testing.assert_allclose(control.finger_targets(tensor([[1.]]), signs, .1), [[.05, -.05]])
+    np.testing.assert_allclose(control.finger_gap(tensor([[.03, -.03]]), signs), [[.06]])
+
+
+def test_pivoting_fingers():
+    # Fingers like X1Pro's rm001: pivots 25 mm off the centre line, pads at (140, -15) mm.
+    pivot, signs = (.025, (.14, -.015)), tensor([1., -1.])
+    arm = ArmSpec('right', (), 'tcp', ('link6', (.2, 0., 0.)), ('left', 'right'), ('l', 'r'), max_gap=.245,
+                  finger_pivot=pivot)
+    gaps = tensor([[0.], [.05], [.245]])
+    q = control.finger_targets(gaps, signs, .245, pivot)
+    np.testing.assert_allclose(q[:, 0], -q[:, 1])
+    np.testing.assert_allclose(control.finger_gap(q, signs, pivot), gaps, atol=1e-9)
+    # The pad of the left finger at angle s, rotated about the pivot.
+    s = q[:, 0]
+    np.testing.assert_allclose(.025 + .14 * torch.sin(s) - .015 * torch.cos(s), gaps[:, 0] / 2, atol=1e-9)
+    for gap, row in zip(gaps[:, 0].tolist(), q.tolist()):
+        np.testing.assert_allclose(list(arm.finger_targets(gap).values()), row)
+        assert arm.gap(row) == pytest.approx(gap)
 
 
 class Base:

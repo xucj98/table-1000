@@ -48,6 +48,9 @@ def endpoint_error(planner, ee_index, goal, qpos):
     return float(np.linalg.norm(actual[:3, 3] - target[:3, 3])), float(rotation)
 
 
+LIMIT_GAIN = .01   # null-space pull of redundant joints toward their mid-range, per step
+
+
 def plan_screw(planner, goal, qpos, *, qpos_step=.03, time_step=.004,
                position_tolerance=1e-3, rotation_tolerance=1e-3, wrt_world=True,
                max_iterations=2000, locked=()):
@@ -82,7 +85,15 @@ def plan_screw(planner, goal, qpos, *, qpos_step=.03, time_step=.004,
         planner.pinocchio_model.compute_full_jacobian(qpos)
         jacobian = planner.pinocchio_model.get_link_jacobian(ee_index, local=False)
         jacobian[:, list(locked)] = 0.
-        delta_q = np.linalg.pinv(jacobian) @ residual
+        inverse = np.linalg.pinv(jacobian)
+        delta_q = inverse @ residual
+        # Redundant joints (a free torso lift) keep away from the limits in the null space.
+        free = [i for i in joints if i not in set(locked)]
+        if len(free) > 6:
+            middle, half = limits.mean(1), np.maximum(np.ptp(limits, 1) / 2, 1e-6)
+            away = np.zeros_like(qpos)
+            away[free] = ((middle - qpos) / half ** 2)[free] * LIMIT_GAIN
+            delta_q += (np.eye(len(qpos)) - inverse @ jacobian) @ away
         norm = float(np.linalg.norm(delta_q))
         if not np.isfinite(norm) or norm < 1e-7:
             return {'status': 'screw plan failed', 'reason': 'no_progress', **state}
@@ -105,7 +116,11 @@ def plan_screw(planner, goal, qpos, *, qpos_step=.03, time_step=.004,
     positions = np.asarray(positions)
     if len(positions) < 2 or not np.isfinite(positions).all():
         return {'status': 'screw plan failed', 'reason': 'time_parameterization_samples', **state}
-    timed = endpoint_error(planner, ee_index, goal, planner.pad_move_group_qpos(positions[-1].copy()))
+    # MPlib's pad_move_group_qpos assumes the move group leads the full configuration;
+    # here it need not (a second arm's chain), so the end is written at the group's indices.
+    end = qpos.copy()
+    end[joints] = positions[-1]
+    timed = endpoint_error(planner, ee_index, goal, end)
     if timed[0] > position_tolerance or timed[1] > rotation_tolerance:
         return {'status': 'screw plan failed', 'reason': 'time_parameterization_endpoint',
                 'position_error_m': timed[0], 'rotation_error_rad': timed[1]}

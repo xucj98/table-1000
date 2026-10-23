@@ -163,7 +163,9 @@ def shape_cfg(spec, contacts=True):
     elif shape == 'sphere':
         cfg = sim_utils.SphereCfg(radius=float(size), **common)
     elif shape == 'cylinder':
-        cfg = sim_utils.CylinderCfg(radius=float(size[0]), height=float(size[1]), axis='Z', **common)
+        # A 32-sided convex mesh: on PhysX's exact cylinder a cylinder lying on the table rolls by
+        # itself (to 17 mm/s within a second), the mesh rests on one of its faces.
+        cfg = sim_utils.MeshCylinderCfg(radius=float(size[0]), height=float(size[1]), axis='Z', **common)
     else:
         raise ValueError(f'unknown primitive shape {shape}')
     if not kinematic:
