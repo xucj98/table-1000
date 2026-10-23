@@ -113,9 +113,8 @@ def chain(ctx, actions, adapt=ADAPT):
 
 def adapted(ctx, action, need, adapt, failure):
     """``action`` with ``need`` met by the first of ``adapt`` that does (see the module docstring)."""
-    from table_1000.experts import skills
     for way in adapt:
-        if way == 'handover' and isinstance(action, Pick) and hasattr(skills, 'handover'):
+        if way == 'handover' and isinstance(action, Pick):
             with subtask(ctx, action.instruction):
                 result = action.run(ctx)
             to = next((arm for arm in need.arms if arm != result['arm']), None)
