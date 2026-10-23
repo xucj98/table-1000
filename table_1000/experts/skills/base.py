@@ -1,12 +1,13 @@
 """The base: driving it, and choosing where it stands so that poses are reached; the free arms back home."""
 
+import os
 import time
 
 import numpy as np
 from scipy.spatial.transform import Rotation
 
 from table_1000.experts.context import steps
-from table_1000.experts.skills.common import IK_ATTEMPTS
+from table_1000.experts.skills.common import IK_ATTEMPTS, collisions
 from table_1000.experts.solver import PlanningFailed
 
 # The base drives at most BASE_SPEED (m/s) and turns at most BASE_TURN (rad/s), proportionally to the
@@ -284,20 +285,32 @@ class Base:
         self.ctx.note('base relocated', travel=float(np.linalg.norm(after[:2] - before[:2])),
                       turn=float(abs((after[2] - before[2] + np.pi) % (2 * np.pi) - np.pi)), pose=after.tolist())
 
-    def stow(self):
-        """The free arms that are out back at their start pose (see :meth:`ready`), as a skill does
-        before it moves the base when nothing is in reach as the arms are; whether any was out."""
-        out = [arm for arm in self.arms if arm not in self.held
+    def stow(self, arms=None):
+        """The free ``arms`` (default all) that are out back at their start pose (see :meth:`ready`),
+        as a skill does before it moves the base when nothing is in reach as the arms are, or when a
+        move runs into them; whether any was out."""
+        out = [arm for arm in arms or self.arms if arm not in self.held
                and np.abs(self.home - self.model.q)[self.model.arm_indices(arm)].max() >= READY_TOLERANCE]
         if out:
             self.ctx.note('arms stowed', arms=out)
-            self.ready()
+            self.ready(out)
         return bool(out)
 
-    def ready(self):
-        """Back to the start pose with each arm holding nothing (a planned move; skipped where it
-        does not plan), the fingers open."""
-        for arm in self.arms:
+    def in_the_way(self, arm, error):
+        """The free arms other than ``arm`` that the move failing with ``error`` ran into."""
+        pairs = collisions(error).values()
+        links = {name for found in pairs for pair in found for name in (pair[0], pair[-1])}
+        return [other for other in self.arms if other != arm and other not in self.held
+                and any(link.startswith(self.prefix(other)) for link in links)]
+
+    def prefix(self, arm):
+        """What the names of ``arm``'s joints and links start with (``left_arm_``)."""
+        return os.path.commonprefix(self.ctx.spec.arms[arm].joints).removesuffix('joint')
+
+    def ready(self, arms=None):
+        """Back to the start pose with each of ``arms`` (default all) holding nothing (a planned
+        move; skipped where it does not plan), the fingers open."""
+        for arm in arms or self.arms:
             if arm in self.held:
                 continue
             solver, indices = self.solvers[arm], self.model.arm_indices(arm)

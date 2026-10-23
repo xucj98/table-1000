@@ -77,6 +77,13 @@ class Motion:
             return 1.
         except PlanningFailed as error:
             failed = error
+        # Into the other arm, out where it was left: that arm in, and again.
+        if self.stow(self.in_the_way(arm, failed)):
+            try:
+                solver.move_to_pose_with_screw(translated(start, displacement))
+                return 1.
+            except PlanningFailed as error:
+                failed = error
         # Six arm joints alone may run into a limit along the line: part of it, else all of it with
         # the torso lift as well (which follows its path less closely).
         options = [(f, False) for f in PARTIALS if f >= least] + [(1., True)]
