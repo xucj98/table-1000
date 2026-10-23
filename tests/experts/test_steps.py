@@ -14,7 +14,7 @@ from table_1000.experts.generate import merge_checkpoints, read_checkpoints, ste
 class FakeContext:
     def __init__(self, only=None):
         self.only, self.current, self.step_names, self.ran, self.kept = only, None, None, [], []
-        self.env, self.starts = types.SimpleNamespace(steps=0), []
+        self.env = types.SimpleNamespace(steps=0)
 
     def checkpoint(self, index, name):
         self.kept.append(index)
@@ -31,7 +31,6 @@ def steps(failing=None):
         return run
     def run(ctx, name):
         ctx.ran.append(name)
-        ctx.starts.append(ctx.started)
         ctx.env.steps += 10
     return [Step(name, lambda ctx, name=name: run(ctx, name), check(name)) for name in 'abc']
 
@@ -40,7 +39,6 @@ def test_run_steps_runs_the_chosen_steps_and_keeps_a_checkpoint_after_each():
     ctx = FakeContext(only=(2, 3))
     run_steps(ctx, steps())
     assert ctx.ran == ['b', 'c'] and ctx.kept == [2, 3] and ctx.step_names == ['a', 'b', 'c']
-    assert ctx.starts == [0, 10]     # each step's time (retry's budget) counts from its start
 
 
 def test_a_failed_check_is_the_steps_and_keeps_no_checkpoint():

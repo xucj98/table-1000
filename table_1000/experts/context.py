@@ -59,7 +59,6 @@ def run_steps(ctx, steps):
         raise ValueError(f'steps {first}-{last} of an expert with {len(steps)}')
     ctx.step_names = [step.name for step in steps]
     for index, step in enumerate(steps[first - 1:last], first):
-        ctx.started = ctx.env.steps     # each step has its own time (see Context.elapsed)
         step.run(ctx)
         if step.check:
             ctx.current = step.name     # a failed check is the step's
@@ -95,7 +94,6 @@ class Context:
         self.events = []        # (step, note) along the way, for the episode report
         self.origin = env.steps  # the episode starts here, after settling
         self.observers = []      # called after every step (e.g. video capture)
-        self.started = env.steps     # control step the episode, or the current step, started at
         # The robot where the seed's episode began ({'qpos', 'base_pose'}): its arms' home and its
         # base's start, also when this run resumes from a checkpoint.
         self.start = start or self.robot_state()
@@ -105,11 +103,6 @@ class Context:
         self.sync_model()
 
     # -- stepping ------------------------------------------------------------------
-    def elapsed(self):
-        """Simulated seconds since the episode started, or the step (:func:`run_steps`): the same
-        whatever the machine's load."""
-        return (self.env.steps - self.started) * DT
-
     @property
     def steps(self):
         """Control steps since the episode started."""
