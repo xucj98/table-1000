@@ -53,6 +53,7 @@
 | 状态与几何查询 | `ctx.pose(物体, 刚体)`、`ctx.joint(物体, 关节)`、`ctx.center_of_mass`、`ctx.part_box`（部件在刚体坐标系中的包围盒）、`ctx.geometry[物体]`（部件包围盒、关节轴）、`ctx.tcp()` |
 | 抓取几何 | `table_1000.experts.grasps`：`build_grasp_pose`、`compute_grasp_info_by_obb`（ManiSkill 的同名函数）、`standoff`、`translated` |
 | 原子技能 | `table_1000.experts.skills`（见下文）：`grasp`、`pick`、`move_by_displacement`、`push`、`release`、`place`、`make_room`、`ready`、`retry`；动作链 `chain`（`Pick`、`Place`） |
+| 语义技能 | `table_1000.experts.skills.semantic`（见下文）：`open`、`close`、`place_on`、`place_inside`，谓词 `on`、`inside`、`is_open`、`is_closed` |
 | 子任务 | `with ctx.subtask('put the pen into the drawer'):` 标记这段步数属于哪条英文指令 |
 | 随机 | `ctx.rng`：需要变化的选择（抓取位置、顺序）用它，不用其他随机源 |
 
@@ -67,7 +68,7 @@
 
 ### 原子技能
 
-`table_1000.experts.skills` 在运动原语之上提供以物体为单位的技能，接口仿照 RoboTwin 2.0 的任务 API，但和 `solve` 一样阻塞：每个调用在仿真中执行完、检查结果后才返回，做不到时以 `ctx.fail`（原因如 `no reachable grasp`、`object not held`、`no placement`）或规划异常结束；什么都够不着（没有可行的抓取、推或放置）时异常类型为 `Unreachable`。技能按物体的实时位姿和资产几何自己选择手臂、抓取候选和路径，每次换用候选都用 `ctx.note` 记下。选择时尽量少动身体，依次尝试：一只手臂（躯干不动）、另一只手臂（躯干不动）、躯干参与、伸着的空闲手臂收回、移动底盘；可移动躯干的 RRTConnect 在终点躯干高度不变时先锁住躯干规划，不通再放开。躯干和底盘的每次移动用 `ctx.note` 记下（`torso moved`、`base relocated`），`scripts/experts/resource_stats.py` 从批次的 `episodes/*.json` 汇总每条轨迹的次数与行程。场景 [000002](../../../asset_sources/scenes/000002/expert.py) 只用这些技能写成。
+`table_1000.experts.skills` 在运动原语之上提供以物体为单位的技能，接口仿照 RoboTwin 2.0 的任务 API，但和 `solve` 一样阻塞：每个调用在仿真中执行完、检查结果后才返回，做不到时以 `ctx.fail`（原因如 `no reachable grasp`、`object not held`、`no placement`）或规划异常结束；什么都够不着（没有可行的抓取、推或放置）时异常类型为 `Unreachable`。技能按物体的实时位姿和资产几何自己选择手臂、抓取候选和路径，每次换用候选都用 `ctx.note` 记下。选择时尽量少动身体，依次尝试：一只手臂（躯干不动）、另一只手臂（躯干不动）、躯干参与、伸着的空闲手臂收回、移动底盘；可移动躯干的 RRTConnect 在终点躯干高度不变时先锁住躯干规划，不通再放开。躯干和底盘的每次移动用 `ctx.note` 记下（`torso moved`、`base relocated`），`scripts/experts/resource_stats.py` 从批次的 `episodes/*.json` 汇总每条轨迹的次数与行程。
 
 | 技能 | 作用 |
 | --- | --- |
@@ -81,6 +82,36 @@
 | `chain(ctx, 动作)` | 依次执行动作（`Pick(物体, ...)`、`Place(物体, 区域, ...)`，参数同 `pick`、`place`，`instruction` 给出时在该子任务下执行）。每个动作先满足下一个动作的需要：放置需要物体在某只手里、以能放到区域内某处的握法拿着（`InHand`），拿起时只选这样的抓取；够不着这样的抓取（`Unmet`）时，按 `adapt`（默认先交接再底盘）补救：近手拿起后交给另一只手，或允许移动底盘再拿。`Place` 的区域可以是函数 `region(ctx) -> (区域, keep_out)`，在执行时按当时状态求 |
 | `ready(ctx)` | 空着的手臂回到起始姿态 |
 | `retry(ctx, 步骤)` | 步骤失败时先 `ready` 再重试，共至多 `ATTEMPTS`（3）次，不限时间；`Unreachable` 不重试：规划已经尝试过所有候选，这类失败比例高说明规划参数、碰撞或上一步留下的状态有问题，应优化规划而不是重试 |
+
+### 语义技能
+
+`table_1000.experts.skills.semantic` 在原子技能之上，按场景里的说法给目标：哪个物体、哪个关节、放到哪个表面。参数都从资产的碰撞几何和关节推出，不依赖具体场景。关节用资产 `model.json` 里的名字（如 `cabinet.drawer1.slide`）。场景 [000002](../../../asset_sources/scenes/000002/expert.py) 用这些技能写成。
+
+| 技能 | 作用 |
+| --- | --- |
+| `open(ctx, 物体, 关节, 开度)` | 拉动方向取关节轴（随子刚体的实时位姿），把手取关节子刚体上名为 `handle` 的部件。正对把手抓取，与正对方向的夹角按 `OPEN_ANGLES` 逐级放宽；沿关节轴拉到开度后松手。拉不到位就分段重抓，至多 `PULLS` 次；拉动失败先松手。已经打开（差距不超过 `OPEN_TOLERANCE`）时什么也不做 |
+| `close(ctx, 物体, 关节)` | 用闭合的指尖沿关节轴反向推把手，推过闭合位 `PUSH_PAST` |
+| `place_on(ctx, 物体, 表面, 部件, near, keep_out)` | 把手中物体放在桌面（`'table'`）、某个物体或它的刚体、部件的顶面上，避开 `keep_out` 矩形；给了 `near` 时只在它周围 `NEAR` 以内找位置 |
+| `place_inside(ctx, 物体, 容器, 部件)` | 把手中物体放进容器（如一个抽屉刚体）的内底上没有被遮住的部分 |
+
+**放置区域**：在支撑物上方按 `SUPPORT_STEP` 的网格竖直向下打射线，射线对场景中所有碰撞形状（桌面、各物体，不含要放的物体）求交。网格取支撑物所在刚体的坐标系。首先击中支撑物朝上面的格子，按高度归层：`place_on` 取最高的一层，`place_inside` 取最低的一层（内底，而不是边沿）。这一层格子的外接矩形（边界取在格子之间）就是放置区域。矩形内首先击中别的东西的格子，用击中刚体在自身坐标系下的碰撞包围盒作为禁放区：支撑物自己的其他部件按部件算，别的物体按刚体算。`place` 让物体从上方竖直放下，比物体下落时扫过的高度（物体高度 + `PLACE_CLEARANCE` + `PLACE_ABOVE`）还高的东西既不遮挡支撑面，也不列为禁放区，手臂是否碰到它由放置时的 IK 和规划检查。效果是：桌上立着的柜子和拉出的抽屉自动避开；抽屉只取露在柜体外的那段内底（柜内的隔板比下落高度低，仍然遮挡），悬在边上的上层把手不占区域。区域和禁放区随后交给 `place`。
+
+**谓词**：
+
+| 谓词 | 判断 |
+| --- | --- |
+| `opening(ctx, 物体, 关节)` | 关节离闭合端（下限）多远 |
+| `is_open(ctx, 物体, 关节, 开度)`、`is_closed(ctx, 物体, 关节)` | 开度达到要求（容差 `OPEN_TOLERANCE`），或在闭合端 `CLOSED` 以内 |
+| `on(ctx, 物体, 表面, 部件, keep_out)` | 从物体中心向下，首先击中的是该表面；物体最低点高出击中点不超过 `ON_TOLERANCE`；中心不在 `keep_out` 内 |
+| `inside(ctx, 物体, 容器, 部件)` | 从物体中心沿容器刚体的 ±x、±y 和向下打射线，都击中该容器部件 |
+
+语义技能结束时用谓词检查结果，不满足就 `ctx.fail`；专家的 `Step.check` 也用它们（`require(ctx, 谓词, 原因)`）。每个语义技能都在 `retry` 下执行。辅助函数：`travel(ctx, 物体, 关节, margin)` 返回关节子刚体从当前位置拉到全开所扫过的矩形，`body_box(ctx, 物体, 刚体, margin)` 返回一个刚体的包围盒矩形，都可作为 `keep_out`（如笔不放在抽屉拉出的路径上）。
+
+限制：
+- 只支持滑动关节。转动关节（柜门）需要以下几项：沿圆弧拖动把手（现在的 `move_by_displacement` 只走直线）；开门过程中，抓取的接近方向随门转动；关门的推动方向随门面法向变化。
+- 把手按部件名 `handle` 查找。
+- 射线只从上往下打：被低于下落高度的部件盖住的支撑面（柜子内部的隔板）找不到；高于下落高度的遮挡只交给 IK 排除，候选位置可能因此偏向手够不着的地方。
+- 网格对齐支撑刚体的坐标系，假定它的 z 轴朝上。
 
 ### 步骤
 
