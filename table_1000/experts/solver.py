@@ -34,8 +34,8 @@ GRIPPER_THERE = .002     # m from a commanded opening the fingers count as there
 TORSO_STILL = .001        # m of torso lift travel below which a path leaves it where it was
 # A free-space plan allows the contacts it starts in all the way along; fingers starting within the
 # padding of an object they are not meant to touch (a hand that just let go of a handle) back off
-# straight first, along the approach or up, by the first of DEPARTS that leaves the padding.
-DEPARTS = (.03, .06)      # m
+# first (see MotionSolver.depart), by the first of DEPARTS that leaves the padding.
+DEPARTS = (.03, .06, .10)  # m
 
 
 class PlanningFailed(ExpertFailed):
@@ -230,20 +230,27 @@ class MotionSolver:
             self.world.set_padding(0.)
 
     def depart(self):
-        """Back the hand straight off what it touches unasked for (see DEPARTS), where it does."""
+        """Back the hand off what it touches unasked for, where it does: straight along the approach or
+        up by each of DEPARTS (the arm alone, then with the torso lift), else by a short free-space hop
+        there (the arm and the torso lift), until it is clear."""
         from table_1000.experts.grasps import standoff, translated
         touched = self.touching()
         if not touched:
             return
         tcp = self.tcp()
-        for target in [standoff(tcp, d) for d in DEPARTS] + [translated(tcp, [0., 0., d]) for d in DEPARTS]:
+        targets = [target for d in DEPARTS for target in (standoff(tcp, d), translated(tcp, [0., 0., d]))]
+        moves = [lambda target=target, lift=lift: self.move_to_pose_with_screw(target, lift=lift)
+                 for lift in (False, True) for target in targets]
+        moves += [lambda target=target: self._rrt(target, 3., 1, True, None) for target in targets[-2:]]
+        for move in moves:
             try:
-                self.move_to_pose_with_screw(target)
+                move()
             except PlanningFailed:
                 continue
             if not self.touching():
                 self.ctx.note('departed', arm=self.arm.name, touched=touched)
                 return
+        self.ctx.note('not departed', arm=self.arm.name, touched=touched)
 
     def _rrt(self, target, planning_time, attempts, lift, goals):
         for attempt in range(attempts):
