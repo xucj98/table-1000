@@ -266,7 +266,8 @@ class Hand:
 
     def fcl(self, tcp, gap, fingers=True):
         """FCL object of the hand at world TCP pose ``tcp`` with the fingers at ``gap`` (only the
-        palm, the TCP link, for ``fingers=False``)."""
+        palm, the TCP link, for ``fingers=False``). Its collision objects are made once per gap and
+        reused: it is valid until the next call with the same gap (check it before making another)."""
         from mplib.collision_detection import fcl
         from table_1000.planning.world import geometry, pose
         key = (int(round(float(np.clip(gap, 0., self.max_gap)) / 5e-4)), fingers)
@@ -276,11 +277,10 @@ class Hand:
                 if link in self.side.finger_links and not fingers:
                     continue
                 for transform, kind, data, _ in self.shapes[link]:
-                    parts.append((geometry(kind, data), pose(frame @ transform)))
-            self.geometry[key] = parts
-        parts = self.geometry[key]
-        return fcl.FCLObject('hand', pose(tcp), [fcl.CollisionObject(shape) for shape, _ in parts],
-                             [part_pose for _, part_pose in parts])
+                    parts.append((fcl.CollisionObject(geometry(kind, data)), pose(frame @ transform)))
+            self.geometry[key] = [part for part, _ in parts], [part_pose for _, part_pose in parts]
+        objects, poses = self.geometry[key]
+        return fcl.FCLObject('hand', pose(tcp), objects, poses)
 
 
 def _urdf_shape(collision, directory):
@@ -437,16 +437,17 @@ def _placed(shape, transform, target, pose, hand, open_gap, obstacles, approach_
     nearest = float(((shape.points() @ transform[:3, :3].T + transform[:3, 3] - pose[:3, 3]) @ pose[:3, 0]).min())
     for backoff in np.arange(0., min(MAX_BACKOFF, reach - nearest) + 1e-9, BACKOFF_STEP):
         tcp = standoff(pose, backoff)
-        hand_open, pre = hand.fcl(tcp, open_gap), hand.fcl(standoff(tcp, approach_distance), open_gap)
-        if any(_collides(body, target, 0.) for body in (hand_open, pre)) or any(
-                _collides(body, obstacle, clearance) for body in (hand_open, pre) for obstacle, clearance in obstacles):
+        # The open hand there and at the pre-grasp, one after the other (see Hand.fcl).
+        if any(_collides(body, target, 0.) or any(_collides(body, obstacle, clearance) for obstacle, clearance in obstacles)
+               for body in (hand.fcl(at, open_gap) for at in (tcp, standoff(tcp, approach_distance)))):
             continue
         closed = _close(shape, transform, tcp, hand, open_gap)
         if closed is None:
             return None     # backing off further only squeezes less of the object
         gap, contact = closed
+        closed_hand = hand.fcl(tcp, gap)
         if _collides(hand.fcl(tcp, gap, fingers=False), target, 0.) or any(
-                _collides(hand.fcl(tcp, gap), obstacle, clearance) for obstacle, clearance in obstacles):
+                _collides(closed_hand, obstacle, clearance) for obstacle, clearance in obstacles):
             continue
         held = _held_area(shape, transform, tcp, hand, gap)
         if held < MIN_HOLD_AREA:
