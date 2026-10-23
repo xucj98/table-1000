@@ -25,7 +25,8 @@ is in each arm's planning world, one planning object per part (``<object>:<part>
 the table too.
 
 Each skill reaches with the least of the robot it can, in this order: one arm with the torso
-lift where it is, the other arm so, the torso lift moving too, then the base moving
+lift where it is, the other arm so, the torso lift moving too, the free arms that are out back
+at their start pose (where none is in reach as they are), then the base moving
 (:func:`make_room`); a free-space plan (RRTConnect) that may move the torso lift holds it first
 where its goal leaves it where it is.
 
@@ -74,8 +75,8 @@ surface, then :func:`release`.
 straight move) are reachable with every joint a margin inside its limits: where it stands
 if they are, else the base pose that it gets to soonest among poses sampled around them
 (facing them, at a distance), the robot clear of the planning world there and on the way
-(the table's legs included). The free arms go back to their start pose first; the base turns
-in place, drives straight and turns in place. Given no poses, the base goes back to where it
+(the table's legs included). The free arms go back to their start pose first where they would
+sweep something on the way; the base turns in place, drives straight and turns in place. Given no poses, the base goes back to where it
 started.
 
 **ready** -- the arms that hold nothing back at their start pose (each step then starts
@@ -84,6 +85,15 @@ alike, out of the way of the other arm).
 **retry** -- a step run again when it fails (``ATTEMPTS`` in all), the arms that hold nothing back at their start pose
 first, so that its choices start afresh; not when nothing was in reach (``Unreachable``: the
 planners sampled their candidates already, a high share of it points at the planning).
+
+**chain** -- actions (:class:`Pick`, :class:`Place`) run in order, each asked for what the next
+needs of it: a place needs the object held by a hand, and with a hold, from which one of its
+placements is in reach (an :class:`InHand`), and the pick takes only such grasps; where none is in
+reach (:class:`Unmet`) the object is picked as it can be and handed over to the other hand, else
+the pick runs again with the base free to move (see :mod:`~table_1000.experts.skills.chain`)::
+
+    skills.chain(ctx, [skills.Pick('pen', instruction='pick up the pen from the table'),
+                       skills.Place('pen', region, near=point, instruction='put the pen into the drawer')])
 
 Each choice of another candidate is noted (``ctx.note``). A skill that finds nothing in reach
 (no grasp, push or placement) fails with :class:`~table_1000.experts.context.Unreachable`.

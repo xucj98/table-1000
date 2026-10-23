@@ -153,9 +153,10 @@ class Grasping:
                     if then is not None:
                         status, _ = self.model.ik(arm, translated(grasp.pose, then), q_grasp, world=True, lift=lift,
                                                   attempts=IK_ATTEMPTS)
-                        if status == 'Success':
+                        if status == 'Success' and not upward:
                             # All the way along, as the move goes: an arm folding into itself half way (a
-                            # drawer pulled out towards the body) makes it stop there.
+                            # drawer pulled out towards the body) makes it stop there. (A lift up has the
+                            # torso lift rise where the arm alone stops.)
                             solver.allow([*target.names, *supports])
                             status = self.model.plan_screw(arm, translated(grasp.pose, then), q_grasp, world=True,
                                                            time_step=DT, lift=lift)['status']

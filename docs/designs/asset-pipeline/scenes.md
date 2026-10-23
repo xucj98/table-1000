@@ -52,7 +52,7 @@
 | 运动原语（与物体无关） | `ctx.solver(arm)` 的 `move_to_pose_with_RRTConnect`、`move_to_pose_with_screw`、`open_gripper`、`close_gripper`、`first_reachable`（依次尝试候选目标）；规划世界 `add_table`、`add_object`（由碰撞几何生成，可按部件分组）、`allow`（允许手指接触某部件）、`attach`/`detach`（手中物体）、`carry`/`release`（随手移动的关节部件，如被拉的抽屉）；`ctx.hold`、`ctx.step` |
 | 状态与几何查询 | `ctx.pose(物体, 刚体)`、`ctx.joint(物体, 关节)`、`ctx.center_of_mass`、`ctx.part_box`（部件在刚体坐标系中的包围盒）、`ctx.geometry[物体]`（部件包围盒、关节轴）、`ctx.tcp()` |
 | 抓取几何 | `table_1000.experts.grasps`：`build_grasp_pose`、`compute_grasp_info_by_obb`（ManiSkill 的同名函数）、`standoff`、`translated` |
-| 原子技能 | `table_1000.experts.skills`（见下文）：`grasp`、`pick`、`move_by_displacement`、`push`、`release`、`place`、`make_room`、`ready`、`retry` |
+| 原子技能 | `table_1000.experts.skills`（见下文）：`grasp`、`pick`、`move_by_displacement`、`push`、`release`、`place`、`make_room`、`ready`、`retry`；动作链 `chain`（`Pick`、`Place`） |
 | 子任务 | `with ctx.subtask('put the pen into the drawer'):` 标记这段步数属于哪条英文指令 |
 | 随机 | `ctx.rng`：需要变化的选择（抓取位置、顺序）用它，不用其他随机源 |
 
@@ -67,7 +67,7 @@
 
 ### 原子技能
 
-`table_1000.experts.skills` 在运动原语之上提供以物体为单位的技能，接口仿照 RoboTwin 2.0 的任务 API，但和 `solve` 一样阻塞：每个调用在仿真中执行完、检查结果后才返回，做不到时以 `ctx.fail`（原因如 `no reachable grasp`、`object not held`、`no placement`）或规划异常结束；什么都够不着（没有可行的抓取、推或放置）时异常类型为 `Unreachable`。技能按物体的实时位姿和资产几何自己选择手臂、抓取候选和路径，每次换用候选都用 `ctx.note` 记下。选择时尽量少动身体，依次尝试：一只手臂（躯干不动）、另一只手臂（躯干不动）、躯干参与、移动底盘；可移动躯干的 RRTConnect 在终点躯干高度不变时先锁住躯干规划，不通再放开。躯干和底盘的每次移动用 `ctx.note` 记下（`torso moved`、`base relocated`），`scripts/experts/resource_stats.py` 从批次的 `episodes/*.json` 汇总每条轨迹的次数与行程。场景 [000002](../../../asset_sources/scenes/000002/expert.py) 只用这些技能写成。
+`table_1000.experts.skills` 在运动原语之上提供以物体为单位的技能，接口仿照 RoboTwin 2.0 的任务 API，但和 `solve` 一样阻塞：每个调用在仿真中执行完、检查结果后才返回，做不到时以 `ctx.fail`（原因如 `no reachable grasp`、`object not held`、`no placement`）或规划异常结束；什么都够不着（没有可行的抓取、推或放置）时异常类型为 `Unreachable`。技能按物体的实时位姿和资产几何自己选择手臂、抓取候选和路径，每次换用候选都用 `ctx.note` 记下。选择时尽量少动身体，依次尝试：一只手臂（躯干不动）、另一只手臂（躯干不动）、躯干参与、伸着的空闲手臂收回、移动底盘；可移动躯干的 RRTConnect 在终点躯干高度不变时先锁住躯干规划，不通再放开。躯干和底盘的每次移动用 `ctx.note` 记下（`torso moved`、`base relocated`），`scripts/experts/resource_stats.py` 从批次的 `episodes/*.json` 汇总每条轨迹的次数与行程。场景 [000002](../../../asset_sources/scenes/000002/expert.py) 只用这些技能写成。
 
 | 技能 | 作用 |
 | --- | --- |
@@ -77,7 +77,8 @@
 | `push(ctx, 物体, 部件, direction, distance)` | 闭合指尖抵住部件的面推动（推抽屉关上） |
 | `release(ctx, 手臂)` | 张开手指并沿接近方向退出 |
 | `place(ctx, 物体, region, near, keep_out)` | 把手中物体放在表面上的矩形区域内：`region = (表面坐标系, 低角, 高角)`，表面为坐标系的 z = 0 平面；朝向不限，按离 `near` 的距离、再按转角排序采样；物体轮廓避开 `keep_out` 矩形。可达范围内没有可行位置时先移动底盘 |
-| `make_room(ctx, 位姿)` | 移动底盘到能以关节余量够到给定 TCP 位姿处：当前位置够得到就不动；否则在位姿周围按距离和朝向采样底盘位姿，取机器人在该处及途中不碰桌子（含桌腿）和物体、最快到达的一个。移动前空闲手臂收回，原地转向、直行、原地转向。`path=True` 表示这些位姿是一条直线运动上的连续位姿；不给位姿时回到起始位姿。机器人没有底盘时不动 |
+| `make_room(ctx, 位姿)` | 移动底盘到能以关节余量够到给定 TCP 位姿处：当前位置够得到就不动；否则在位姿周围按距离和朝向采样底盘位姿，取机器人在该处及途中不碰桌子（含桌腿）和物体、最快到达的一个。空闲手臂途中会扫到东西时先收回，再原地转向、直行、原地转向。`path=True` 表示这些位姿是一条直线运动上的连续位姿；不给位姿时回到起始位姿。机器人没有底盘时不动 |
+| `chain(ctx, 动作)` | 依次执行动作（`Pick(物体, ...)`、`Place(物体, 区域, ...)`，参数同 `pick`、`place`，`instruction` 给出时在该子任务下执行）。每个动作先满足下一个动作的需要：放置需要物体在某只手里、以能放到区域内某处的握法拿着（`InHand`），拿起时只选这样的抓取；够不着这样的抓取（`Unmet`）时，按 `adapt`（默认先交接再底盘）补救：近手拿起后交给另一只手，或允许移动底盘再拿。`Place` 的区域可以是函数 `region(ctx) -> (区域, keep_out)`，在执行时按当时状态求 |
 | `ready(ctx)` | 空着的手臂回到起始姿态 |
 | `retry(ctx, 步骤)` | 步骤失败时先 `ready` 再重试，共至多 `ATTEMPTS`（3）次，不限时间；`Unreachable` 不重试：规划已经尝试过所有候选，这类失败比例高说明规划参数、碰撞或上一步留下的状态有问题，应优化规划而不是重试 |
 
