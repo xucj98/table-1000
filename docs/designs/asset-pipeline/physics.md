@@ -1,6 +1,6 @@
 # physics.py 与物理资产
 
-`physics.py` 是物理属性的权威源码，通过官方 `UsdPhysics`、`PhysxSchema` API 为几何层配置质量、接触材料和驱动。源码随 Git 提交；生成的 `physics.usda`、几何层及 USDZ 不提交，也不手工维护第二份配置。
+`physics.py` 是精细物理资产（抽屉、卡扣等需要专门调参和物理测试的资产）物理属性的权威源码，通过官方 `UsdPhysics`、`PhysxSchema` API 为几何层配置质量、接触材料和驱动。源码随 Git 提交；生成的 `physics.usda`、几何层及 USDZ 不提交，也不手工维护第二份配置。
 
 ## 构建接口
 
@@ -41,22 +41,20 @@ Stage 使用米、千克和 Z 向上。USD 原生转动关节/驱动角度使用
 
 ## 单刚体资产
 
-不需要机构行为的资产（大部分文具、容器）整体按一个刚体仿真，`physics.py` 只写总质量和一种接触材料，调用共用的 `table_1000.physics.rigid.author`：
+不需要机构行为的资产（大部分文具、容器）整体按一个刚体仿真，不写自己的 `physics.py`，在 [`configs/rigid_physics.py`](../../../configs/rigid_physics.py) 中各占一行：
 
 ```python
-from table_1000.physics.rigid import author as author_rigid
-
-MASS_KG = 0.015
-FRICTION = (0.5, 0.4)          # 静摩擦、动摩擦
-
-
-def author(geometry_path, output_path):
-    author_rigid(geometry_path, output_path, MASS_KG, FRICTION)
+ASSETS = {
+    'battery/000000': {'mass_kg': 0.023, 'friction': (0.4, 0.3), 'angular_damping': 2.0},
+    ...
+}
 ```
+
+构建时由这些数值生成调用 `table_1000.physics.rigid.author` 的 `physics.py`，写入产物目录作为快照。资产目录里有 `physics.py` 的即为精细物理资产，不列入该表。
 
 - 几何层中的多个刚体合并成一个刚体，位于它们的公共父节点（都在资产根下时即资产根）；原有关节停用，笔帽、盒盖、长尾夹把手和按钮固定在建模时的位置。合并后的刚体沿用父节点的 `table1000:name`，资产根则名为 `object`。
 - 质心和惯量由引擎按碰撞形状计算；所有碰撞形状使用同一接触材料，恢复系数 0。
-- 圆柱形的资产（笔、胶棒、胶带、螺丝刀）另给 `angular_damping`（1/s），代替仿真中没有的滚动阻力，否则在桌上一直滚。
+- `friction` 为静摩擦、动摩擦；圆柱形的资产（笔、胶棒、胶带、螺丝刀）另给 `angular_damping`（1/s），代替仿真中没有的滚动阻力，否则在桌上一直滚。
 - 碰撞形状的均匀密度给错重心时（花瓶里的花束、香薰瓶的藤条，体积大而实际很轻），另给 `center_of_mass`（m，刚体坐标系）。构建时把显式给出的质心写入 `physics_build.json` 的 `centers_of_mass`（`{刚体名: 质心}`），场景布局按它计算单刚体资产的稳定放置朝向（台灯的重底座让它正立）。
 - PhysX 会把超过 64 个顶点的凸包悄悄简化，物体因此下沉或倾倒；每个碰撞凸包不超过 64 个顶点。
 - 质量与摩擦是按实物估计的设计值，未经标定。

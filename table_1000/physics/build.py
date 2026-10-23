@@ -11,12 +11,40 @@ import tempfile
 import time
 
 
-def author_physics(source, output):
-    spec = importlib.util.spec_from_file_location('asset_physics', source / 'physics.py')
+RIGID_CONFIG = Path(__file__).resolve().parents[2] / 'configs' / 'rigid_physics.py'
+RIGID_SCRIPT = """\"\"\"One rigid body, generated from configs/rigid_physics.py.\"\"\"
+
+from table_1000.physics.rigid import author as author_rigid
+
+VALUES = {values!r}
+
+
+def author(geometry_path, output_path):
+    author_rigid(geometry_path, output_path, **VALUES)
+"""
+
+
+def rigid_assets(config=RIGID_CONFIG):
+    """``{asset path: values}`` of the assets built as one rigid body from ``configs/rigid_physics.py``."""
+    spec = importlib.util.spec_from_file_location('rigid_physics', config)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.ASSETS
+
+
+def author_physics(source, output, rigid=None):
+    """Author ``physics.usda`` with the asset's own ``physics.py``, or without one, with a script made from
+    ``rigid`` (its values in ``configs/rigid_physics.py``); the script used is kept as ``physics.py``."""
+    if (source / 'physics.py').is_file():
+        shutil.copyfile(source / 'physics.py', output / 'physics.py')
+    elif rigid is not None:
+        (output / 'physics.py').write_text(RIGID_SCRIPT.format(values=rigid))
+    else:
+        raise FileNotFoundError(f'{source}: no physics.py and not in {RIGID_CONFIG}')
+    spec = importlib.util.spec_from_file_location('asset_physics', output / 'physics.py')
     physics = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(physics)
     physics.author(output / 'geometry.usdc', output / 'physics.usda')
-    shutil.copyfile(source / 'physics.py', output / 'physics.py')
 
 
 def author_geometry(model, destination):
@@ -141,7 +169,7 @@ def author_geometry(model, destination):
     return paths
 
 
-def build(asset, source, output):
+def build(asset, source, output, rigid=None):
     from pxr import Sdf, Usd, UsdPhysics, UsdShade, UsdUtils
     from omni.kit.material.library import get_mdl_lib_paths
     started = time.perf_counter()
@@ -153,7 +181,7 @@ def build(asset, source, output):
                         '--', '--blend', str(asset / 'object.blend'), '--output', str(model_path)], check=True)
         model = json.loads(model_path.read_text())
         paths = author_geometry(model, output / 'geometry.usdc')
-        author_physics(source, output)
+        author_physics(source, output, rigid)
         composed = Usd.Stage.CreateInMemory()
         composed.GetRootLayer().subLayerPaths = [str(output / 'physics.usda'), str(output / 'geometry.usdc')]
         composed.SetDefaultPrim(composed.GetPrimAtPath('/Asset'))
@@ -225,12 +253,15 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, default=Path('asset_sources/objects'))
     parser.add_argument('--output', type=Path, default=Path('assets/objects'))
-    parser.add_argument('--assets', type=Path, nargs='+', help='Asset paths relative to the source/output roots')
+    parser.add_argument('--assets', type=Path, nargs='+',
+                        help='Asset paths relative to the source/output roots (default: every asset with a physics.py '
+                             'or in configs/rigid_physics.py)')
     parser.add_argument('--gpu', type=int, default=0)
     args = parser.parse_args(argv)
     source, output = args.source.resolve(), args.output.resolve()
+    rigid = rigid_assets()
     references = args.assets if args.assets is not None else sorted(
-        path.parent.relative_to(source) for path in source.rglob('physics.py'))
+        {path.parent.relative_to(source) for path in source.rglob('physics.py')} | set(map(Path, rigid)))
     from table_1000.common.path import configure_isaac_paths
     configure_isaac_paths()
     from isaacsim import SimulationApp
@@ -239,6 +270,6 @@ def main(argv=None):
                          'disable_viewport_updates': True, 'limit_cpu_threads': 4})
     try:
         for reference in references:
-            build(output / reference, source / reference, output / reference)
+            build(output / reference, source / reference, output / reference, rigid.get(Path(reference).as_posix()))
     finally:
         app.close(wait_for_replicator=False)

@@ -1,14 +1,6 @@
 """Physics layer of an asset simulated as one rigid body: total mass and one contact material.
 
-An asset's ``physics.py`` calls :func:`author` with its values::
-
-    from table_1000.physics.rigid import author as author_rigid
-
-    MASS_KG = .015
-    FRICTION = (.5, .4)
-
-    def author(geometry_path, output_path):
-        author_rigid(geometry_path, output_path, MASS_KG, FRICTION)
+The assets in ``configs/rigid_physics.py`` are built with :func:`author` and their values there.
 
 Every rigid body of the geometry layer becomes part of a single body at the
 bodies' common parent prim (the asset root when they are siblings under it): the

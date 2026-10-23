@@ -17,7 +17,7 @@
 
 ## 命令
 
-构建物理资产（省略 `--assets` 时构建所有带 `physics.py` 的资产）：
+构建物理资产（省略 `--assets` 时构建所有带 `physics.py` 的资产和 [`configs/rigid_physics.py`](../../configs/rigid_physics.py) 中的单刚体资产）：
 
 ```bash
 uv run python scripts/assets/build_physics.py --assets pen/000002 cabinet/000000 --gpu 0
