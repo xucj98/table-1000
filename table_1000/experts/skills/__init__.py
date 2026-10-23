@@ -80,6 +80,10 @@ if they are, else the base pose that it gets to soonest among poses sampled arou
 sweep something on the way; the base turns in place, drives straight and turns in place. Given no poses, the base goes back to where it
 started.
 
+**handover** -- the held object passed to the other hand, held as the next action needs
+(:mod:`~table_1000.experts.skills.handover`, after WRS): the giving arm brings it in front of the
+body, the receiving one grasps it, the giving one lets go.
+
 **ready** -- the arms that hold nothing back at their start pose (each step then starts
 alike, out of the way of the other arm).
 
@@ -100,7 +104,7 @@ Each choice of another candidate is noted (``ctx.note``). A skill that finds not
 (no grasp, push or placement) fails with :class:`~table_1000.experts.context.Unreachable`.
 
 The skills are one :class:`Skills` per context (``ctx.skills()``), put together from
-``grasping`` (grasp, pick), ``motion`` (straight moves, push, release), ``placing`` and ``base``
+``grasping`` (grasp, pick), ``handover``, ``motion`` (straight moves, push, release), ``placing`` and ``base``
 (the base, ready); ``common`` holds what they share.
 """
 
@@ -112,13 +116,14 @@ from table_1000.experts.skills.base import Base
 from table_1000.experts.skills.chain import InHand, Pick, Place, chain
 from table_1000.experts.skills.common import Unmet
 from table_1000.experts.skills.grasping import LIFT, Grasping
+from table_1000.experts.skills.handover import Handing
 from table_1000.experts.skills.motion import Motion
 from table_1000.experts.skills.placing import PLACE_ABOVE, PLACE_CLEARANCE, PLACE_MARGIN, PLACE_STEP, Placing
 
 ATTEMPTS = 3            # tries of a step under retry
 
 
-class Skills(Grasping, Motion, Placing, Base):
+class Skills(Grasping, Handing, Motion, Placing, Base):
     """The skills of ``ctx``'s arms (``arms``: names, default all); see the module docstring."""
 
     def __init__(self, ctx, arms=None):
@@ -230,6 +235,11 @@ def place(ctx, obj, region, *, arm=None, near=None, keep_out=(), clearance=PLACE
           step=PLACE_STEP, margin=PLACE_MARGIN):
     """Put the held ``obj`` down in ``region`` (see :meth:`Skills.place`) and release it."""
     return _skills(ctx).place(obj, region, arm, near, keep_out, clearance, above, step, margin)
+
+
+def handover(ctx, obj, *, to=None, need=None):
+    """Hand the held ``obj`` to the other hand (``to``), held as ``need`` asks (see :meth:`Skills.handover`)."""
+    return _skills(ctx).handover(obj, to, need)
 
 
 def open_gripper(ctx, arm, gap=None):
