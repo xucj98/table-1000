@@ -56,6 +56,10 @@ class AssetGeometry:
         return [shape for shape in self.shapes
                 if part is None or shape[1] == part or shape[1].startswith(part + '.') or shape[0] == part]
 
+    def parts(self, part=None):
+        """``[(body, part)]`` of ``part`` (a body, a part and its sub-parts, or everything), in model order."""
+        return list(dict.fromkeys((shape[0], shape[1]) for shape in self._selected(part)))
+
     def points(self, part=None, frame=None):
         """Collision vertices of ``part`` (a body, a part and its sub-parts, or everything) in the
         frame of body ``frame`` (default: the asset frame), at rest. Spheres contribute the six
@@ -95,6 +99,23 @@ class AssetGeometry:
             if best is None or error < best[0]:
                 best = (error, turned)
         return best[1]
+
+    def solid(self, part, tolerance=1.2, narrow=.02):
+        """Whether ``part``'s collision shapes may be replaced by their common convex hull for
+        planning: together they are about convex (the hull at most ``tolerance`` times their summed
+        volume), or too thin for anything to get into their hollows (narrower than ``narrow``, as a
+        ring or a tube of a pen cap)."""
+        import trimesh
+        shapes, volumes = [], []
+        for body, _, transform, kind, data in self._selected(part):
+            local = data if kind == 'convex' else np.vstack([np.eye(3) * data, -np.eye(3) * data])
+            points = transform_points(self.rest[body] @ transform, local)
+            shapes.append(points)
+            volumes.append(4 / 3 * np.pi * data ** 3 if kind == 'sphere' else trimesh.convex.convex_hull(points).volume)
+        if len(shapes) == 1:
+            return True
+        hull = trimesh.convex.convex_hull(np.vstack(shapes))
+        return hull.volume <= tolerance * sum(volumes) or min(hull.bounding_box_oriented.primitive.extents) < narrow
 
     def lowest(self, rotation):
         """Lowest collision point (z, asset frame origin at 0) of the asset turned by ``rotation`` (3x3)."""

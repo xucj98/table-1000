@@ -1,6 +1,6 @@
 """Videos of a batch of trajectories, rendered from their recorded states.
 
-``uv run python scripts/scenes/render.py 000000 --physics isaac-cpu --gpus 0 1 2 3 --cameras NAME ... [--merge] [--captions] [--count N] [--seeds ...] [--failed] [--input DIR]``
+``uv run python scripts/scenes/render.py 000000 --physics isaac-cpu --gpus 0 1 2 3 [--jobs N] --cameras NAME ... [--merge] [--captions] [--count N] [--seeds ...] [--failed] [--input DIR]``
 
 Reads the batch ``<input>/<scene>/<backend>/`` (``<input>`` = ``data/scenes``,
 written by ``run_expert.py``) and writes, per episode, one video per camera
@@ -15,10 +15,12 @@ time on the right.
 The episodes are the batch's succeeded ones, or with ``--failed`` its failed
 ones; ``--seeds`` (as in ``build_scene.py``) picks episodes, succeeded or failed
 (only failed ones with ``--failed``), and ``--count N`` keeps the first N by
-seed. A run writes the videos of its episodes and keeps the others. Every frame
-restores the recorded state of that step; nothing is simulated. The episodes
-are split into ``len(gpus) × jobs-per-gpu`` parts, one process each (logs in
-``outputs/scenes/<scene>/<backend>/render/``); ``summary.json`` lists the seeds
+seed. A run replaces the videos of its episodes and keeps the others. Every frame
+restores the recorded state of that step; nothing is simulated. The episodes are
+packed by length into ``--jobs`` processes, spread over ``--gpus`` or submitted
+through ``--launcher`` (see ``table_1000/common/batch.py``); episodes whose process
+stopped before their videos run again (``--retries``). Logs are in
+``outputs/scenes/<scene>/<backend>/render/``; ``summary.json`` lists the seeds
 with videos.
 """
 
@@ -78,15 +80,16 @@ def check_cameras(scene, robot, root, names):
 
 def worker(args):
     """Render ``args.seeds`` of the batch in this process."""
+    from table_1000.common.batch import worker_gpu
     from table_1000.sim.isaaclab.app import start_app
     from table_1000.sim.isaaclab.render import RT2_ARGS
-    app = start_app(gpu=args.gpu, workers=4, extra_args=RT2_ARGS)
+    app = start_app(gpu=worker_gpu(args.gpu), workers=4, extra_args=RT2_ARGS)
     failed = False
     try:
         from PIL import Image
         from table_1000.robots import load_spec
         from table_1000.scenes import load
-        from table_1000.scenes.batch import parse_seeds
+        from table_1000.common.batch import parse_seeds
         from table_1000.scenes.recordings import MERGED, demo_name, video_path
         from table_1000.sim import CONTROL_HZ
         from table_1000.sim.isaaclab import render, replay
@@ -96,8 +99,10 @@ def worker(args):
         directory, work = args.batch.resolve(), args.work.resolve()
         file, episodes = replay.episodes(directory / 'trajectories.hdf5')
         meta = replay.env_args(file)
+        failures = {}
         if (directory / 'trajectories_failed.hdf5').is_file():
-            episodes.update(replay.episodes(directory / 'trajectories_failed.hdf5')[1])
+            failures = replay.episodes(directory / 'trajectories_failed.hdf5')[1]
+            episodes.update(failures)
         scene = load(meta['scene'], 'scene', args.root)
         spec = load_spec(meta['robot'], args.root)
         cameras, views = camera_sets(scene, spec, args.cameras)
@@ -126,7 +131,7 @@ def worker(args):
                     image = tile([images[c] for c in args.cameras], cell_height) if output == MERGED else images[output]
                     save_frame(caption(image, left, right) if args.captions else image, frames / output / f'{t:05d}.jpg')
             for output in outputs:
-                target = video_path(directory, seed, None if output == MERGED else output, failed=bool(failure))
+                target = video_path(directory, seed, None if output == MERGED else output, failed=name in failures)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(encode(frames / output, CONTROL_HZ, frames / f'{output}.mp4'), target)
             shutil.rmtree(frames)
@@ -139,6 +144,7 @@ def worker(args):
 
 
 def main(argv=None):
+    from table_1000.common.batch import add_arguments, job_count, parse_seeds, process_name, run_batch, seed_range
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('scene')
     parser.add_argument('--physics', required=True, help='the backend the batch was generated on')
@@ -148,8 +154,7 @@ def main(argv=None):
     parser.add_argument('--failed', action='store_true', help='the failed episodes instead of the succeeded ones')
     parser.add_argument('--seeds', nargs='+', help='a:b (a to b - 1) and single seeds')
     parser.add_argument('--count', type=int, help='the first N of the chosen episodes by seed')
-    parser.add_argument('--gpus', type=int, nargs='+', default=[0], help='physical GPUs')
-    parser.add_argument('--jobs-per-gpu', type=int, default=1, help='processes at a time on each GPU')
+    add_arguments(parser)
     parser.add_argument('--input', type=Path, default=ROOT / 'data' / 'scenes',
                         help='the batch in <input>/<scene>/<backend>/, videos written next to it')
     parser.add_argument('--root', type=Path, default=ROOT)
@@ -157,18 +162,15 @@ def main(argv=None):
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--batch', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--work', type=Path, help=argparse.SUPPRESS)
-    parser.add_argument('--gpu', type=int, default=0, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.worker:
         worker(args)
         return
     import h5py
-    from table_1000.scenes.batch import parse_seeds, run_parts, seed_range, split
-    from table_1000.scenes.recordings import videos
+    from table_1000.scenes.recordings import MERGED, video_path, videos
+    jobs = job_count(parser, args)
     if args.count is not None and args.count < 1:
         parser.error('--count must be positive')
-    if args.jobs_per_gpu < 1:
-        parser.error('--jobs-per-gpu must be positive')
     if len(set(args.cameras)) != len(args.cameras):
         parser.error('--cameras lists a camera twice')
     directory = (args.input / args.scene / args.physics).resolve()
@@ -185,10 +187,11 @@ def main(argv=None):
     summary = json.loads((directory / 'summary.json').read_text())
 
     def episodes(path):
+        """``{seed: steps}`` of a trajectory file."""
         if not path.is_file():
-            return []
+            return {}
         with h5py.File(path, 'r') as file:
-            return [int(name.split('_')[1]) for name in file['data']]
+            return {int(name.split('_')[1]): int(group.attrs['num_samples']) for name, group in file['data'].items()}
 
     succeeded, failed = episodes(trajectories), episodes(directory / 'trajectories_failed.hdf5')
     try:
@@ -201,21 +204,30 @@ def main(argv=None):
         parser.error('no episodes to render')
     staging = root / 'outputs' / 'scenes' / args.scene / args.physics / 'render'
     shutil.rmtree(staging, ignore_errors=True)
-    jobs = []
-    for index, part in enumerate(split(seeds, len(args.gpus) * args.jobs_per_gpu)):
-        command = [sys.executable, str(Path(__file__).resolve()), args.scene, '--worker', '--physics', args.physics,
-                   '--cameras', *args.cameras, '--seeds', *seed_range(part).split(), '--batch', str(directory),
-                   '--work', str(staging / f'part{index}'), '--root', str(root), '--assets', str(args.assets.resolve())]
-        command += ['--merge'] if args.merge else []
-        command += ['--captions'] if args.captions else []
-        jobs.append((command, staging / f'part{index}.log', f'{args.scene} render part{index} seeds {seed_range(part)}'))
-    failures = run_parts(jobs, args.gpus, args.jobs_per_gpu)
+    targets = {seed: [video_path(directory, seed, None if output == MERGED else output, failed=seed in failed)
+                      for output in ([MERGED] if args.merge else args.cameras)] for seed in seeds}
+    for path in (path for paths in targets.values() for path in paths):
+        path.unlink(missing_ok=True)
+
+    def command(part, index, attempt):
+        name = process_name(f'part{index}', attempt)
+        argv = [sys.executable, str(Path(__file__).resolve()), args.scene, '--worker', '--physics', args.physics,
+                '--cameras', *args.cameras, '--seeds', *seed_range(part).split(), '--batch', str(directory),
+                '--work', str(staging / name), '--root', str(root), '--assets', str(args.assets.resolve())]
+        argv += ['--merge'] if args.merge else []
+        argv += ['--captions'] if args.captions else []
+        return argv, staging / f'{name}.log', f'{args.scene} render {name} seeds {seed_range(part)}'
+
+    lengths = {**succeeded, **failed}
+    missing = run_batch(seeds, command=command, cost=lambda seed: lengths[seed], count=jobs, gpus=args.gpus,
+                        launcher=args.launcher, retries=args.retries,
+                        missing=lambda seed: not all(path.is_file() for path in targets[seed]))
     for key, kinds in videos(directory).items():
         summary[key] = {kind: seed_range(values) for kind, values in kinds.items()}
     (directory / 'summary.json').write_text(json.dumps(summary, indent=1, ensure_ascii=False, default=float) + '\n')
     print('VIDEOS', json.dumps({key: summary[key] for key in ('videos', 'fails')}), flush=True)
-    if failures:
-        raise SystemExit('failed: ' + ', '.join(failures))
+    if missing:
+        raise SystemExit(f'no video: seeds {seed_range(missing)}; see {staging}')
 
 
 if __name__ == '__main__':

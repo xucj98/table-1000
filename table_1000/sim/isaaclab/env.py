@@ -337,17 +337,22 @@ class RobotEnv:
         # Lab resets the action terms before writing the state; they hold the joints written.
         for term in self.terms.values():
             term.reset()
-        origins = self.env.scene.env_origins
-        for name in self.shapes:
-            shape = self.env.scene[name]
-            if kinematic(shape):
-                pose = to_tensors(state)['rigid_object'][name]['root_pose'].clone()
-                pose[:, :3] += origins
-                place(self.env, shape, pose, list(range(self.num_envs)))
+        self.place_kinematic(to_tensors(state))
         self.env.sim.forward()
         self.steps = 0
         self.contacts.clear()
         return self.observe()
+
+    def place_kinematic(self, state):
+        """Pose the kinematic shapes as in ``state`` (tensors on the device): ``InteractiveScene.reset_to``
+        leaves their kinematic targets and USD transforms."""
+        rows = next(iter(state['rigid_object'].values()))['root_pose'].shape[0] if state['rigid_object'] else 0
+        for name in self.shapes:
+            shape = self.env.scene[name]
+            if kinematic(shape):
+                pose = state['rigid_object'][name]['root_pose'].clone()
+                pose[:, :3] += self.env.scene.env_origins[:rows]
+                place(self.env, shape, pose, list(range(rows)))
 
     def observe(self):
         obs = self.env.observation_manager.compute()
@@ -461,6 +466,19 @@ class RobotEnv:
         pose[:, :3] += self.env.scene.env_origins
         place(self.env, self.env.scene[name], pose, torch.arange(self.num_envs, device=self.device))
 
+    def push_shape(self, name, force):
+        """Push a shape's centre of mass with the world ``force`` (N, every environment) until changed. The
+        force is held in the shape's frame, so it turns with the shape: call again each step to keep it along
+        a world direction. A zero ``force`` stops pushing."""
+        # The permanent composer, as the instantaneous one is cleared after each physics step of the
+        # several in a control step. It converts with the orientation read on its first call after a
+        # reset: resetting first converts with the current orientation.
+        composer = self.env.scene[name].permanent_wrench_composer
+        composer.reset()
+        force = torch.as_tensor(force, dtype=torch.float32, device=self.device).repeat(self.num_envs, 1, 1)
+        if force.any():
+            composer.set_forces_and_torques(forces=force, torques=torch.zeros_like(force), is_global=True)
+
     def link_pose(self, link):
         """``[N, 4, 4]`` world pose of a robot body as simulated."""
         index = self.robot.body_names.index(link)
@@ -531,5 +549,8 @@ class RobotEnv:
         self.markers = max(count, len(points))
 
     def close(self):
+        """Close the environment and empty the stage, so the process can build another one."""
+        import omni.usd
         self.contacts.close()
         self.env.close()
+        omni.usd.get_context().new_stage()

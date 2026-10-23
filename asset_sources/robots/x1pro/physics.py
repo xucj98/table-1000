@@ -16,8 +16,11 @@ DRIVES = {
     'lift_joint': (20000., 1000.),
     'head_': (30., 3.),
     '_arm_joint': (1000., 60.),
-    # The left finger is driven; the right one follows it (MIMIC_FINGERS).
-    '_arm_gripper_left_joint': (1500., 20.),
+    # The left finger is driven; the right one follows it (MIMIC_FINGERS). The
+    # drive reaches the URDF's 20 N force limit once the target is 4 mm past the
+    # held object, so a 1 cm cube is squeezed as hard as a 4 cm one. The pair
+    # splits it: each pad presses with 10 N.
+    '_arm_gripper_left_joint': (5000., 60.),
     '_arm_gripper_right_joint': (0., 0.),
     '_wheel_joint': (0., 1.),
     # Virtual planar base joints (see table_1000.robots.build): stiff and close
@@ -26,7 +29,9 @@ DRIVES = {
     'base_y_joint': (1e5, 6000.),
     'base_yaw_joint': (8000., 500.),
 }
-SOLVER_ITERATIONS = (16, 4)
+# (position, velocity). 32 position iterations hold a 1 cm steel cube in the
+# pads under a 5 N push (grasp_and_push).
+SOLVER_ITERATIONS = (32, 4)
 # One motor moves both fingers of the real gripper through a rack. Two
 # independently driven fingers, both at their force limit on a held object,
 # have no restoring force along the closing axis: an acceleration of the hand
@@ -51,15 +56,17 @@ MATERIALS = {'body': (.4, .3), 'finger': (1., .8)}
 PAD_PATCH_RADIUS = .006
 
 
-def gains(name):
-    matches = [value for key, value in DRIVES.items() if key in name]
+def gains(name, drives=DRIVES):
+    matches = [value for key, value in drives.items() if key in name]
     if len(matches) != 1:
         raise ValueError(f'expected one drive entry for {name}, found {len(matches)}')
     return matches[0]
 
 
-def author(import_path, output_path):
-    """Write ``output_path`` as a layer over the imported robot."""
+def author(import_path, output_path, drives=DRIVES, materials=MATERIALS, armature=None, iterations=SOLVER_ITERATIONS):
+    """Write ``output_path`` as a layer over the imported robot, with the joint drives ``drives`` and
+    contact ``materials`` (x1pro_rm001 passes its own finger drives, pads and solver iterations).
+    ``armature`` maps joint name parts to added joint inertia (kg m^2 or kg)."""
     from pxr import PhysxSchema, Sdf, Usd, UsdPhysics, UsdShade
 
     layer = Sdf.Layer.CreateNew(str(output_path))
@@ -76,17 +83,20 @@ def author(import_path, output_path):
         if prim.HasAPI(UsdPhysics.ArticulationRootAPI):
             articulation = PhysxSchema.PhysxArticulationAPI.Apply(prim)
             articulation.CreateEnabledSelfCollisionsAttr(True)
-            articulation.CreateSolverPositionIterationCountAttr(SOLVER_ITERATIONS[0])
-            articulation.CreateSolverVelocityIterationCountAttr(SOLVER_ITERATIONS[1])
+            articulation.CreateSolverPositionIterationCountAttr(iterations[0])
+            articulation.CreateSolverVelocityIterationCountAttr(iterations[1])
         if not (prim.IsA(UsdPhysics.RevoluteJoint) or prim.IsA(UsdPhysics.PrismaticJoint)):
             continue
         angular = prim.IsA(UsdPhysics.RevoluteJoint)
-        stiffness, damping = gains(prim.GetName())
+        stiffness, damping = gains(prim.GetName(), drives)
         scale = math.pi / 180 if angular else 1.
         drive = UsdPhysics.DriveAPI.Apply(prim, 'angular' if angular else 'linear')
         drive.CreateTypeAttr('force')
         drive.CreateStiffnessAttr(stiffness * scale)
         drive.CreateDampingAttr(damping * scale)
+        for key, value in (armature or {}).items():
+            if key in prim.GetName():
+                PhysxSchema.PhysxJointAPI.Apply(prim).CreateArmatureAttr(value)
 
     joints = {prim.GetName(): prim for prim in Usd.PrimRange(root) if prim.IsA(UsdPhysics.Joint)}
     for follower, leader in MIMIC_FINGERS:
@@ -100,18 +110,18 @@ def author(import_path, output_path):
         pair = UsdPhysics.FilteredPairsAPI.Apply(root.GetChild(first))
         pair.CreateFilteredPairsRel().AddTarget(root.GetChild(second).GetPath())
 
-    materials = {}
-    for name, (static, dynamic) in MATERIALS.items():
+    bound = {}
+    for name, (static, dynamic) in materials.items():
         material = UsdShade.Material.Define(stage, root.GetPath().AppendPath(f'PhysicsMaterials/{name}'))
         api = UsdPhysics.MaterialAPI.Apply(material.GetPrim())
         api.CreateStaticFrictionAttr(static)
         api.CreateDynamicFrictionAttr(dynamic)
         api.CreateRestitutionAttr(0.)
-        materials[name] = material
+        bound[name] = material
     for prim in root.GetChildren():
         if prim.HasAPI(UsdPhysics.RigidBodyAPI):
             kind = 'finger' if prim.GetName().endswith(('_gripper_left_link', '_gripper_right_link')) else 'body'
-            UsdShade.MaterialBindingAPI.Apply(prim).Bind(materials[kind], materialPurpose='physics')
+            UsdShade.MaterialBindingAPI.Apply(prim).Bind(bound[kind], materialPurpose='physics')
             if kind == 'finger':
                 # The importer instances colliders; a finger's own copy can be edited.
                 for child in Usd.PrimRange(prim, Usd.TraverseInstanceProxies()):
@@ -120,6 +130,13 @@ def author(import_path, output_path):
                 for shape in Usd.PrimRange(prim):
                     if shape.HasAPI(UsdPhysics.CollisionAPI):
                         collision = PhysxSchema.PhysxCollisionAPI.Apply(shape)
-                        collision.CreateTorsionalPatchRadiusAttr(PAD_PATCH_RADIUS)
-                        collision.CreateMinTorsionalPatchRadiusAttr(PAD_PATCH_RADIUS)
+                        pad = bound.get('pad')
+                        # Mesh colliders are nested below the named URDF collision
+                        # (the leaf itself is typically just "node_").
+                        is_pad = 'pad' in str(shape.GetPath().MakeRelativePath(prim.GetPath())).lower()
+                        if pad is not None and is_pad:
+                            UsdShade.MaterialBindingAPI.Apply(shape).Bind(pad, materialPurpose='physics')
+                        if pad is None or is_pad:
+                            collision.CreateTorsionalPatchRadiusAttr(PAD_PATCH_RADIUS)
+                            collision.CreateMinTorsionalPatchRadiusAttr(PAD_PATCH_RADIUS)
     layer.Save()

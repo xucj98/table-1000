@@ -4,7 +4,8 @@ Kit reads ``/persistent/...`` settings from a ``user.config.json`` shared by
 every run of the installation and may write changed ones back on exit, so one
 run could silently change later ones. Here each run points Kit at an empty
 config in a temporary directory (removed when the app closes), requests the
-PhysX worker count on the command line and reads it back. Shader and texture caches stay
+PhysX worker count on the command line and reads it back. Isaac's online assets
+(the ground plane) load from the local mirror ``assets/isaac`` when it exists. Shader and texture caches stay
 shared: they only speed up start-up.
 
 The process sees only the requested GPU (``CUDA_VISIBLE_DEVICES``). CUDA uses
@@ -19,6 +20,10 @@ import shutil
 import tempfile
 
 PHYSICS_WORKERS = '/persistent/physics/numThreads'
+# Isaac's cloud asset root (Isaac Lab's ISAAC_NUCLEUS_DIR is its Isaac/), mirrored by
+# scripts/assets/download_isaac_assets.py; used when present, so runs need no network.
+ISAAC_ASSET_ROOT = '/persistent/isaac/asset_root/cloud'
+ISAAC_ASSETS = Path(__file__).resolve().parents[3] / 'assets' / 'isaac'
 # Extensions beyond Isaac Lab's experience: the RTX lens-distortion schemas of robot cameras.
 EXTENSIONS = ('omni.usd.schema.omni_lens_distortion',)
 
@@ -46,6 +51,8 @@ def start_app(*, gpu, workers=4, device='cpu', cameras=True, extra_args=()):
                 f'--/renderer/activeGpu={gpu}',
                 f'--{PHYSICS_WORKERS}={int(workers)}', *(arg for name in EXTENSIONS for arg in ('--enable', name)),
                 *extra_args]
+    if ISAAC_ASSETS.is_dir():
+        kit_args.append(f'--{ISAAC_ASSET_ROOT}={ISAAC_ASSETS}')
     launcher = AppLauncher(headless=True, enable_cameras=cameras, multi_gpu=False,
                            device='cpu' if device == 'cpu' else 'cuda:0',
                            kit_args=' '.join(kit_args))

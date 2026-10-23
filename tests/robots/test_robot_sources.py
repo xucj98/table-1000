@@ -22,6 +22,26 @@ def test_there_are_robots():
     assert 'x1pro' in NAMES
 
 
+def test_rm001_pad_partition_preserves_contact_envelope():
+    """Separate materials must not thicken the fingers or leave a gap in them."""
+    pytest.importorskip('trimesh')
+    from table_1000.robots.prepare import load_mesh, outside_distance, slabs
+
+    source = ROOT / 'asset_sources/robots/x1pro_rm001'
+    for finger in ('left', 'right'):
+        stem = f'gripper_{finger}_link'
+        original = slabs(load_mesh(source / f'meshes/visual/{stem}.ply'), 0, 8)
+        for i in range(3, 8):
+            parts = [load_mesh(source / f'meshes/collision/{stem}_{suffix}.ply')
+                     for suffix in (str(i), f'pad{i}')]
+            # Micrometre snapping keeps float32 export from producing degenerate
+            # faces; permit its rounding error, not a change in contact shape.
+            assert outside_distance(original[i].vertices, parts).max() < 3e-6
+            vertices = np.concatenate([part.vertices for part in parts])
+            assert outside_distance(vertices, [original[i]]).max() < 3e-6
+            assert abs(sum(part.volume for part in parts) / original[i].volume - 1) < 1e-3
+
+
 @pytest.mark.parametrize('name', NAMES)
 def test_description_and_settings(name):
     import xml.etree.ElementTree as ET

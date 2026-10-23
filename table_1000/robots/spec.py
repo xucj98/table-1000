@@ -1,4 +1,4 @@
-"""Simulator-independent description of a robot with arms and parallel grippers.
+"""Simulator-independent description of a robot with arms and two-finger grippers.
 
 A robot's ``asset_sources/robots/<name>/robot.py`` fills a :class:`RobotSpec`:
 its arms (joints, TCP, two-finger gripper), and optionally a torso lift, a
@@ -20,13 +20,21 @@ import numpy as np
 
 @dataclass(frozen=True)
 class ArmSpec:
-    """One arm and its parallel gripper.
+    """One arm and its two-finger gripper.
 
     ``tcp`` is ``(parent_link, xyz)``: a frame fixed to ``parent_link`` with the
     parent's orientation. ``mount`` is the link the arm is mounted on; TCP
     targets of the pose controller are kept in its frame, so they move with
-    the torso and base. Fingers are driven in metres; ``finger_signs`` maps a
-    pad gap ``g`` to finger targets ``sign * g / 2``.
+    the torso and base.
+
+    The gripper is commanded by the pad gap ``g`` (0 to ``max_gap``), the two
+    fingers moving symmetrically: finger targets are ``sign * s`` with
+    ``finger_signs``. Sliding fingers are driven in metres, ``s = g / 2``.
+    Pivoting fingers (``finger_pivot``) are driven in radians: ``finger_pivot``
+    is ``(offset, (x, y))``, the distance of the first finger's pivot from the
+    centre line and its pad point in the finger frame at angle 0 (``y`` towards
+    the opening side), so the pad lies ``offset + x sin s + y cos s`` from the
+    centre line and ``g`` is twice that.
     """
     name: str
     joints: tuple
@@ -36,14 +44,26 @@ class ArmSpec:
     finger_links: tuple
     finger_signs: tuple = (1., -1.)
     max_gap: float = .1
+    finger_pivot: tuple = None
     mount: str = 'base_link'       # set it to the arm's mount link (the root link for a fixed arm)
     # Joint-space limits for time parameterization (rad/s, rad/s^2).
     velocity_limit: float = .8
     acceleration_limit: float = 1.5
 
     def finger_targets(self, gap):
-        gap = float(np.clip(gap, 0., self.max_gap))
-        return {joint: sign * gap / 2 for joint, sign in zip(self.fingers, self.finger_signs)}
+        half = float(np.clip(gap, 0., self.max_gap)) / 2
+        if self.finger_pivot is not None:
+            offset, (x, y) = self.finger_pivot
+            half = np.arctan2(-y, x) + np.arcsin((half - offset) / np.hypot(x, y))
+        return {joint: sign * float(half) for joint, sign in zip(self.fingers, self.finger_signs)}
+
+    def gap(self, q):
+        """Pad gap of finger positions ``q`` (their symmetric part)."""
+        s = float(np.dot(q, self.finger_signs)) / 2
+        if self.finger_pivot is not None:
+            offset, (x, y) = self.finger_pivot
+            s = offset + x * np.sin(s) + y * np.cos(s)
+        return 2 * s
 
 
 @dataclass(frozen=True)
@@ -144,6 +164,9 @@ class RobotSpec:
     arms: dict                     # name -> ArmSpec; the first is the primary arm
     base: BaseSpec = None          # mobile base, or None for a fixed robot
     lift: tuple = ()               # prismatic torso joints
+    # Torso lift limits for time parameterization (m/s, m/s^2).
+    lift_velocity_limit: float = .1
+    lift_acceleration_limit: float = .2
     head: tuple = ()               # head joints (yaw, pitch)
     keyframes: dict = field(default_factory=dict)   # name -> {joint: value}; 'zero' is implied
     cameras: dict = field(default_factory=dict)     # name -> CameraSpec (see override_cameras)

@@ -1,6 +1,8 @@
-"""The three scene steps without a simulator: seeds, initial-state files, merged batches, the choice of renders."""
+"""Batch runs and the three scene steps without a simulator: processes, seeds, initial-state files, merged batches,
+the choice of renders."""
 
 import json
+import sys
 
 import h5py
 import numpy as np
@@ -9,8 +11,8 @@ import pytest
 
 from scripts.scenes import build_scene, render, run_expert
 from table_1000.experts.generate import PROCESS_EXITED, summarize
-from table_1000.physics import test as physics_test
-from table_1000.scenes.batch import parse_seeds, seed_range, split
+from table_1000.common import batch as scene_batch
+from table_1000.common.batch import launch, parse_seeds, plan, run_jobs, seed_range, split
 from table_1000.scenes.initial import read_states, write_states
 from table_1000.scenes.recordings import merge, video_path, videos
 
@@ -24,6 +26,30 @@ def test_seeds_are_ranges_and_single_seeds():
     assert parse_seeds(seed_range([3, 4, 9]).split()) == [3, 4, 9]
     assert split(list(range(10)), 3) == [[0, 1, 2, 3], [4, 5, 6], [7, 8, 9]]
     assert split([5, 6], 8) == [[5], [6]]
+    assert plan(list(range(10)), lambda seed: None, None, 3) == [[0, 1, 2, 3], [4, 5, 6], [7, 8, 9]]
+
+
+def test_jobs_share_the_listed_gpus(tmp_path, monkeypatch):
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command[-1])
+        return type('Done', (), {'returncode': int(command[0] == 'bad')})
+
+    monkeypatch.setattr(scene_batch.subprocess, 'run', run)
+    jobs = [([name], tmp_path / name / 'run.log', name) for name in ('a', 'bad', 'c')]
+    assert run_jobs(jobs, [4, 5]) == ['bad']
+    assert len(calls) == 3 and set(calls) <= {'4', '5'}
+
+
+def test_launcher_runs_every_part_with_its_gpu(tmp_path):
+    """Each part runs through the launcher prefix without --gpu and reads the GPU the launcher set."""
+    show = 'from table_1000.common.batch import worker_gpu; import sys; print(worker_gpu(None)); sys.exit(len(sys.argv) - 1)'
+    jobs = [([sys.executable, '-c', show, *extra], tmp_path / name / 'run.log', name)
+            for name, extra in (('a', []), ('b', ['fail']))]
+    failed = launch(jobs, 'env CUDA_VISIBLE_DEVICES=5', 2)
+    assert failed == ['b']
+    assert (tmp_path / 'a' / 'run.log').read_text().strip() == '5'
 
 
 def test_initial_states_round_trip(tmp_path):
@@ -121,7 +147,7 @@ def test_render_keeps_other_videos(batch, tmp_path, monkeypatch):
     chosen = []
 
     def jobs(commands, gpus):
-        assert gpus == [0, 1, 0, 1]
+        assert gpus == [0, 1, 0, 1][:len(commands)]
         for command, _, _ in commands:
             seeds = parse_seeds(command[command.index('--seeds') + 1:command.index('--batch')])
             chosen.append(seeds)
@@ -132,9 +158,9 @@ def test_render_keeps_other_videos(batch, tmp_path, monkeypatch):
                 target.write_bytes(b'new')
         return []
 
-    monkeypatch.setattr(physics_test, 'run_jobs', jobs)
+    monkeypatch.setattr(scene_batch, 'run_jobs', jobs)
     monkeypatch.setattr(render, 'check_cameras', lambda *args: None)
-    common = ['000000', '--physics', 'isaac-cpu', '--gpus', '0', '1', '--jobs-per-gpu', '2',
+    common = ['000000', '--physics', 'isaac-cpu', '--gpus', '0', '1', '--jobs', '4',
               '--input', str(tmp_path / 'data'), '--root', str(tmp_path)]
     render.main([*common, '--cameras', 'wide', '--count', '2'])
     render.main([*common, '--cameras', 'wide', 'face_view', '--merge', '--failed'])
@@ -152,31 +178,37 @@ def test_run_expert_merges_parts(tmp_path, monkeypatch):
     write_states(initial / 'initial_states.hdf5', {seed: (0, STATE) for seed in range(4)},
                  {'scene': '000000', 'robot': 'x1pro'})
 
+    rounds = []
+
     def jobs(commands, gpus):
+        rounds.append(len(commands))
         for command, _, _ in commands:
             work = tmp_path / command[command.index('--work') + 1]
             seeds = parse_seeds(command[command.index('--seeds') + 1:command.index('--states')])
-            if seeds == [2, 3]:
-                continue       # the process stopped before writing anything
             (work / 'episodes').mkdir(parents=True)
+            # Seed 2 kills its process in every attempt, after its episode is recorded, before its report.
+            trajectory_file(work / 'trajectories.hdf5', [seed for seed in seeds if seed <= 2])
+            if 2 in seeds:
+                continue
             trajectory_file(work / 'trajectories.hdf5', seeds)
             for seed in seeds:
                 (work / 'episodes' / f'{seed}.json').write_text(json.dumps(
                     {'seed': seed, 'status': 'success', 'duration_s': 1., 'wall_s': 2.}))
-        return ['part1']
+        return []
 
-    monkeypatch.setattr(physics_test, 'run_jobs', jobs)
+    monkeypatch.setattr(scene_batch, 'run_jobs', jobs)
     monkeypatch.setattr(run_expert, 'scene_robot', lambda scene, root: 'x1pro')
     output = tmp_path / 'data'
-    with pytest.raises(SystemExit, match='part1'):
+    with pytest.raises(SystemExit, match='no episode: seeds 2;'):
         run_expert.main(['000000', '--physics', 'isaac-cpu', '--gpus', '0', '1', '--input', str(tmp_path / 'assets/scenes'),
                          '--output', str(output), '--root', str(tmp_path / 'checkout')])
+    assert rounds == [2, 2]          # seeds 2 and 3 once more
     directory = output / '000000' / 'isaac-cpu'
     summary = json.loads((directory / 'summary.json').read_text())
-    assert summary['failures'] == {PROCESS_EXITED: [2, 3]} and summary['succeeded'] == 2
-    assert sorted(path.name for path in (directory / 'episodes').iterdir()) == ['0.json', '1.json']
+    assert summary['failures'] == {PROCESS_EXITED: [2]} and summary['succeeded'] == 3
+    assert sorted(path.name for path in (directory / 'episodes').iterdir()) == ['0.json', '1.json', '3.json']
     with h5py.File(directory / 'trajectories.hdf5', 'r') as file:
-        assert sorted(file['data']) == ['demo_0', 'demo_1']
+        assert sorted(file['data']) == ['demo_0', 'demo_1', 'demo_3']
 
 
 def test_run_expert_rejects_another_robot(tmp_path, monkeypatch):
@@ -189,33 +221,47 @@ def test_run_expert_rejects_another_robot(tmp_path, monkeypatch):
 
 
 def test_build_scene_combines_parts(tmp_path, monkeypatch):
+    rounds = []
+
     def jobs(commands, gpus):
         for command, _, _ in commands:
             work = tmp_path / command[command.index('--work') + 1]
             seeds = parse_seeds(command[command.index('--seeds') + 1:command.index('--work')])
-            (work / 'images').mkdir(parents=True)
-            records = {seed: {'seed': seed, 'attempt': None if seed == 1 else 0,
-                              'attempts': [{'attempt': 0, 'settle': {'objects': {}, 'robot_contacts': []}}]}
-                       for seed in seeds}
-            write_states(work / 'states.hdf5', {seed: (0, STATE) for seed in seeds if seed != 1},
-                         {'scene': '000000', 'robot': 'x1pro'})
+            rounds.append(seeds)
+            for name in ('states', 'images', 'records'):
+                (work / name).mkdir(parents=True)
             for seed in seeds:
+                if seed == 2 and len(rounds) == 1 or seed == 3 and len(rounds) == 3:
+                    break      # the process died here: earlier seeds keep their results
                 if seed != 1:
+                    write_states(work / 'states' / f'{seed}.hdf5', {seed: (0, STATE)}, {'scene': '000000', 'robot': 'x1pro'})
                     Image.new('RGB', (64, 36), 'red').save(work / 'images' / f'{seed}.jpg')
-            (work / 'report.json').write_text(json.dumps({'robot': 'x1pro', 'camera': 'face_view', 'records': records}))
+                record = {'seed': seed, 'attempt': None if seed == 1 else 0,
+                          'attempts': [{'attempt': 0, 'settle': {'objects': {}, 'robot_contacts': []}}]}
+                if len(rounds) == 2:
+                    # seed 3 errs, then its rerun dies before it; seed 4 finds no valid state after the error
+                    (work / 'states' / f'{seed}.hdf5').unlink()
+                    record.update({'attempt': None, 'error': 'RuntimeError: CUDA error'} if seed == 3 else
+                                  {'attempt': None, 'after_error': 3})
+                (work / 'records' / f'{seed}.json').write_text(
+                    json.dumps({'robot': 'x1pro', 'camera': 'face_view', 'record': record}))
         return []
 
-    monkeypatch.setattr(physics_test, 'run_jobs', jobs)
+    monkeypatch.setattr(scene_batch, 'run_jobs', jobs)
     root = tmp_path / 'checkout'
     output = tmp_path / 'custom'
     (output / '000000' / 'initial').mkdir(parents=True)
-    with pytest.raises(SystemExit, match='without a valid state: 1'):
+    with pytest.raises(SystemExit, match=r'errors: seeds 3 \(see .*\); seeds without a valid state: 1$'):
         build_scene.main(['000000', '--seeds', '0:5', '--gpus', '0', '1', '--grid', '2x1', '--output', str(output),
                           '--root', str(root)])
+    assert rounds == [[0, 1, 2], [3, 4], [2, 3], [4]]  # seeds without a result or with an error run again
     directory = output / '000000'
     report = json.loads((directory / 'initial.json').read_text())
-    assert report['seeds'] == {'range': '0:5', 'count': 5} and report['without_state'] == [1]
-    assert list(read_states(directory / 'initial_states.hdf5')[1]) == [0, 2, 3, 4]
+    assert report['seeds'] == {'range': '0:5', 'count': 5} and report['without_state'] == [1, 3]
+    assert report['records']['3']['error'] == 'RuntimeError: CUDA error'
+    attrs, states = read_states(directory / 'initial_states.hdf5')
+    assert list(states) == [0, 2, 4] and attrs['scene'] == '000000' and attrs['robot'] == 'x1pro'
     assert Image.open(directory / 'initial_states.jpg').size == (2 * build_scene.TILE_WIDTH, 216 + build_scene.CAPTION)
     assert not (directory / 'initial').exists()            # replaced, and no --images this time
+    assert not (directory / 'staging').exists()            # the processes' results, removed once merged
     assert not (root / 'asset_sources').exists()           # a custom output keeps the thumbnail

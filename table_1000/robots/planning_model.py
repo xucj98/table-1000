@@ -4,7 +4,8 @@ The planning URDF is the robot source without visuals, with every joint
 outside the planned chain frozen at a given value and a named TCP frame added.
 Collision meshes are copied beside it, since MPlib resolves mesh names relative
 to the URDF; with ``use_convex`` it reads ``<mesh>.convex.stl`` beside each
-mesh, written here as the convex hull of the source mesh. Its SRDF disables collision checks only between bodies joined by a
+mesh, written here as the convex hull of the source mesh (simplified, see
+:func:`~table_1000.planning.world.simplify_hull`). Its SRDF disables collision checks only between bodies joined by a
 joint and between pairs already in contact in the frozen reference pose (for
 example, a shoulder housing seated in the torso), so every other pair stays
 checked.
@@ -57,6 +58,91 @@ def _grow_primitive(geometry, padding):
         sphere.set('radius', f'{float(sphere.get("radius")) + padding:.6g}')
 
 
+def _transform(element):
+    origin = element.find('origin')
+    transform = np.eye(4)
+    if origin is not None:
+        transform[:3, :3] = Rotation.from_euler('xyz', np.fromstring(origin.get('rpy', '0 0 0'), sep=' ')).as_matrix()
+        transform[:3, 3] = np.fromstring(origin.get('xyz', '0 0 0'), sep=' ')
+    return transform
+
+
+def _merge_convex(link, directory, output, tolerance=1.2):
+    """Replace ``link``'s mesh collisions by fewer meshes (written under ``output``): largest first,
+    each piece joins the first group whose common convex hull stays within ``tolerance`` times the
+    group's summed volume. Checks cost per pair of shapes, and an arm segment made of a dozen
+    convex pieces, or a chassis with sensors on its faces, is about convex."""
+    collisions = link.findall('collision')
+    meshes = [collision.find('geometry/mesh') for collision in collisions]
+    if len(collisions) < 2 or any(mesh is None or mesh.get('scale') for mesh in meshes):
+        return
+    pieces = []
+    for collision, mesh in zip(collisions, meshes):
+        hull = trimesh.load(directory / mesh.get('filename'), force='mesh').convex_hull
+        transform = _transform(collision)
+        pieces.append((hull.vertices @ transform[:3, :3].T + transform[:3, 3], hull.volume))
+    groups = []     # [points, summed volume]
+    for points, volume in sorted(pieces, key=lambda piece: -piece[1]):
+        for group in groups:
+            joined = np.vstack([group[0], points])
+            if trimesh.convex.convex_hull(joined).volume <= tolerance * (group[1] + volume):
+                group[0], group[1] = joined, group[1] + volume
+                break
+        else:
+            groups.append([points, volume])
+    if len(groups) == len(pieces):
+        return
+    for collision in collisions:
+        link.remove(collision)
+    for index, (points, _) in enumerate(groups):
+        name = Path('merged') / f'{link.get("name")}_{index}.stl'
+        (output / name).parent.mkdir(parents=True, exist_ok=True)
+        trimesh.convex.convex_hull(points).export(output / name)
+        ET.SubElement(ET.SubElement(ET.SubElement(link, 'collision'), 'geometry'), 'mesh', filename=name.as_posix())
+
+
+def _merge_finger(link, directory, output, groups=4):
+    """Replace a finger's mesh collisions by ``groups`` hulls along its contact part (the pieces
+    beside its ``*pad*`` collisions, each pad with the piece it overlaps most, in order along the
+    finger) and one hull of the rest, which does not touch objects."""
+    collisions = link.findall('collision')
+    meshes = [collision.find('geometry/mesh') for collision in collisions]
+    if any(mesh is None or mesh.get('scale') for mesh in meshes):
+        return
+    points = []
+    for collision, mesh in zip(collisions, meshes):
+        transform = _transform(collision)
+        hull = trimesh.load(directory / mesh.get('filename'), force='mesh').convex_hull
+        points.append(hull.vertices @ transform[:3, :3].T + transform[:3, 3])
+    pads = [i for i, collision in enumerate(collisions) if 'pad' in (collision.get('name') or '')]
+    if not pads or len(collisions) - len(pads) <= groups:
+        return
+    axis = np.argmax(np.ptp(np.vstack(points), axis=0))
+    span = [(p[:, axis].min(), p[:, axis].max()) for p in points]
+
+    def overlap(i, j):
+        return min(span[i][1], span[j][1]) - max(span[i][0], span[j][0])
+
+    pieces = [i for i in range(len(collisions)) if i not in pads]
+    front = sorted((i for i in pieces if any(overlap(i, pad) > 1e-3 for pad in pads)), key=lambda i: span[i][0])
+    if len(front) < groups:
+        return
+    members = {i: [i] for i in front}
+    for pad in pads:
+        members[max(front, key=lambda i: overlap(i, pad))].append(pad)
+    merged = [[k for i in chunk for k in members[i]] for chunk in np.array_split(front, groups)]
+    rest = [i for i in pieces if i not in front]
+    if rest:
+        merged.append(rest)
+    for collision in collisions:
+        link.remove(collision)
+    for index, group in enumerate(merged):
+        name = Path('merged') / f'{link.get("name")}_{index}.stl'
+        (output / name).parent.mkdir(parents=True, exist_ok=True)
+        trimesh.convex.convex_hull(np.vstack([points[i] for i in group])).export(output / name)
+        ET.SubElement(ET.SubElement(ET.SubElement(link, 'collision'), 'geometry'), 'mesh', filename=name.as_posix())
+
+
 def write_planning_urdf(source, output, active, frozen, tcp, padding=0., unpadded=()):
     """Write ``output`` and return it.
 
@@ -65,7 +151,9 @@ def write_planning_urdf(source, output, active, frozen, tcp, padding=0., unpadde
     list of them.
     The convex hulls, boxes, cylinders and spheres are grown by ``padding`` on
     every side, except those of the ``unpadded`` links (meshes shared with
-    padded links are not allowed).
+    padded links are not allowed); the other links' near-convex mesh sets are
+    merged (:func:`_merge_convex`), and the fingers' to a few hulls
+    (:func:`_merge_finger`).
     """
     source, output = Path(source), Path(output)
     root = ET.parse(source).getroot()
@@ -73,6 +161,12 @@ def write_planning_urdf(source, output, active, frozen, tcp, padding=0., unpadde
     for link in root.findall('link'):
         for visual in link.findall('visual'):
             link.remove(visual)
+    for link in root.findall('link'):
+        # The unpadded links touch objects (fingers): only their parts away from the pads merge.
+        if link.get('name') in unpadded:
+            _merge_finger(link, source.parent, output.parent)
+        else:
+            _merge_convex(link, source.parent, output.parent)
     grown = {}
     for link in root.findall('link'):
         for mesh in link.iter('mesh'):
@@ -85,13 +179,21 @@ def write_planning_urdf(source, output, active, frozen, tcp, padding=0., unpadde
             _grow_primitive(geometry, amount)
     for mesh in root.iter('mesh'):
         name = Path(mesh.get('filename'))
-        (output.parent / name).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source.parent / name, output.parent / name)
-        hull = trimesh.load(source.parent / name, force='mesh').convex_hull
+        # Meshes of a base robot (../<base>/meshes/...) are copied inside the output directory too.
+        copy = Path(*['up' if part == '..' else part for part in name.parts])
+        if name.parts[0] == 'merged':   # written by _merge_convex or _merge_finger
+            mesh_file = output.parent / name
+        else:
+            (output.parent / copy).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source.parent / name, output.parent / copy)
+            mesh_file = source.parent / name
+        from table_1000.planning.world import simplify_hull
+        hull = trimesh.Trimesh(simplify_hull(trimesh.load(mesh_file, force='mesh').convex_hull.vertices)).convex_hull
         if grown[mesh.get('filename')]:
             from table_1000.planning.world import grow
             hull = trimesh.Trimesh(grow(hull.vertices, grown[mesh.get('filename')]), hull.faces)
-        hull.export(output.parent / name.with_name(name.name + '.convex.stl'))
+        hull.export(output.parent / copy.with_name(copy.name + '.convex.stl'))
+        mesh.set('filename', copy.as_posix())
     for joint in root.findall('joint'):
         if joint.get('type') != 'fixed' and joint.get('name') not in active:
             _freeze(joint, float(frozen.get(joint.get('name'), 0.)))

@@ -15,6 +15,8 @@ README 说明每个文件放在哪里、由哪份规范约定。各文件的字�
 | `data/` | 生成的数据：专家轨迹（HDF5）及其录像 | 忽略 |
 | `outputs/` | 日志和临时实验 | 忽略 |
 
+`assets/isaac/` 是 Isaac Sim 5.1 运行时取用的在线资产（地面等）的本地镜像，由 `scripts/assets/download_isaac_assets.py` 从 NVIDIA 资产服务器下载，许可同 Isaac Sim；目录存在时仿真从这里加载，不再联网。
+
 同一资产在 `asset_sources/` 与 `assets/` 下使用相同的相对路径：对象 `objects/<category>/<六位编号>`、机器人 `robots/<名称>`、场景 `scenes/<六位编号>`；编号从 `000000` 开始。下面按资产类型列出每个文件，括号内为规范文档。
 
 **对象**
@@ -50,6 +52,7 @@ asset_sources/robots/x1pro/
   robot_test.py       验收设置
   README.md
   three_quarter.jpg   1920 × 960 缩略图
+asset_sources/robots/x1pro_rm001/    同一台机器人换 rm001 夹爪：只有夹爪网格，其余网格与 .py 引用 x1pro
 assets/robots/x1pro/
   raw/                厂商原始 URDF 包，存档于 Hugging Face 数据集，版本见 assets.lock.json
   import/             Isaac Sim URDF 导入结果
@@ -79,6 +82,9 @@ data/scenes/000000/<后端>/        一批专家轨迹：run_expert.py 生成，
   episodes/<seed>.json                           每条轨迹的报告
   videos/<seed>/<相机>.mp4                       成功轨迹的录像，每个相机一条；--merge 时为 videos/<seed>/merge.mp4
   fails/                                         失败轨迹的录像，结构同 videos/
+  checkpoints/step<k>.hdf5                       由步骤组成的专家：每个 seed 第 k 步结束时的场景状态
+  steps<k>-<m>/                                  run_expert.py --steps 只运行第 k 到 m 步的一批，结构同上；
+                                                 join_steps.py 把各步的批次接成完整轨迹，写回 <后端>/ 本身
 ```
 
 规范：[建模](modeling.md)、[几何预览](preview.md)、[物理属性](physics.md)、[行为插件](behaviors.md)、[物理测试](physics-tests.md)、[机器人](robots.md)、[场景与专家轨迹](scenes.md)。

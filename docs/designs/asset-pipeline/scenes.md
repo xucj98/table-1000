@@ -69,6 +69,7 @@
 | 运动原语（与物体无关） | `ctx.solver(arm)` 的 `move_to_pose_with_RRTConnect`、`move_to_pose_with_screw`、`open_gripper`、`close_gripper`、`first_reachable`（依次尝试候选目标）；规划世界 `add_table`、`add_object`（由碰撞几何生成，可按部件分组）、`allow`（允许手指接触某部件）、`attach`/`detach`（手中物体）、`carry`/`release`（随手移动的关节部件，如被拉的抽屉）；`ctx.hold`、`ctx.step` |
 | 状态与几何查询 | `ctx.pose(物体, 刚体)`、`ctx.joint(物体, 关节)`、`ctx.center_of_mass`、`ctx.part_box`（部件在刚体坐标系中的包围盒）、`ctx.geometry[物体]`（部件包围盒、关节轴）、`ctx.tcp()` |
 | 抓取几何 | `table_1000.experts.grasps`：`build_grasp_pose`、`compute_grasp_info_by_obb`（ManiSkill 的同名函数）、`standoff`、`translated` |
+| 原子技能 | `table_1000.experts.skills`（见下文）：`grasp`、`pick`、`move_by_displacement`、`push`、`release`、`place`、`make_room`、`ready`、`retry` |
 | 子任务 | `with ctx.subtask('put the pen into the drawer'):` 标记这段步数属于哪条英文指令 |
 | 随机 | `ctx.rng`：需要变化的选择（抓取位置、顺序）用它，不用其他随机源 |
 
@@ -79,7 +80,37 @@
 - 可以重试，但要写明候选（后撤距离、抬起高度；物理上等价的抓法与放法，如对称的手腕转向、绕圆柱轴侧倾、物体放置的两个方向）或次数上限（重新抓取），用 `ctx.note` 记下换用的候选。其余失败用 `ctx.fail(原因)` 或规划异常结束，记录子任务与原因。
 - TCP 约定：+X 为接近方向，+Y 为手指张开方向。
 
-规划用 MPlib（ManiSkill 也用它）：自由空间用 RRTConnect 到 IK 解，规划路径按 1 cm 关节步长复查碰撞，不过就重新规划；接触动作用直线 screw 路径。规划好的路径每个控制步（25 Hz）发送一个关节位置。
+规划用 MPlib（ManiSkill 也用它）：自由空间用 RRTConnect 到 IK 解，规划路径按 1 cm 关节步长复查碰撞，不过就重新规划；接触动作用直线 screw 路径。规划好的路径每个控制步（25 Hz）发送一个关节位置。RRTConnect 规划时碰撞几何膨胀 1 cm，起点和终点处已有的接触只在本次规划中允许，路径再按未膨胀的几何复查。底盘移动后，规划世界随之更新坐标系。
+
+### 原子技能
+
+`table_1000.experts.skills` 在运动原语之上提供以物体为单位的技能，接口仿照 RoboTwin 2.0 的任务 API，但和 `solve` 一样阻塞：每个调用在仿真中执行完、检查结果后才返回，做不到时以 `ctx.fail`（原因如 `no reachable grasp`、`object not held`、`no placement`）或规划异常结束；什么都够不着（没有可行的抓取、推或放置）时异常类型为 `Unreachable`。技能按物体的实时位姿和资产几何自己选择手臂、抓取候选和路径，每次换用候选都用 `ctx.note` 记下。场景 [000002](../../../asset_sources/scenes/000002/expert.py) 只用这些技能写成。
+
+| 技能 | 作用 |
+| --- | --- |
+| `grasp(ctx, 物体, 部件)` | 抓住物体或其一个部件（如把手）。可给接近方向 `approach`、与它的最大夹角 `max_angle`（给一组时依次放宽，够不着才用下一个）、抓住后的位移 `then`（候选须让这段位移也有 IK 解）。先试肩部离物体近的手臂；闭合后没夹住（手指间隙小于物体宽度）就退出重选，至多 `MAX_REGRASPS` 次；可达范围内没有候选时先移动底盘 |
+| `pick(ctx, 物体)` | `grasp` 后抬起 `height`；物体没跟着抬起时松手并失败（`object not lifted`） |
+| `move_by_displacement(ctx, 手臂, x, y, z)` | TCP 沿直线移动。`drag` 指定随手移动的关节部件（拉抽屉）；`least` 允许整段规划不通时只走一部分，返回走过的比例 |
+| `push(ctx, 物体, 部件, direction, distance)` | 闭合指尖抵住部件的面推动（推抽屉关上） |
+| `release(ctx, 手臂)` | 张开手指并沿接近方向退出 |
+| `place(ctx, 物体, region, near, keep_out)` | 把手中物体放在表面上的矩形区域内：`region = (表面坐标系, 低角, 高角)`，表面为坐标系的 z = 0 平面；朝向不限，按离 `near` 的距离、再按转角排序采样；物体轮廓避开 `keep_out` 矩形。可达范围内没有可行位置时先移动底盘 |
+| `make_room(ctx, 位姿)` | 移动底盘（相对起始位姿后退、转向）到能以关节余量够到给定 TCP 位姿的最小移动处；`path=True` 表示这些位姿是一条直线运动上的连续位姿。机器人没有底盘时不动 |
+| `ready(ctx)` | 空着的手臂回到起始姿态 |
+| `retry(ctx, 步骤)` | 步骤失败时先 `ready` 再重试，共至多 `ATTEMPTS`（3）次，不限时间；`Unreachable` 不重试：规划已经尝试过所有候选，这类失败比例高说明规划参数、碰撞或上一步留下的状态有问题，应优化规划而不是重试 |
+
+### 步骤
+
+专家可以把子任务分成步骤：`Step(名字, run, check)`，`run(ctx)` 执行其中的子任务，`check(ctx)` 检查结束状态是否满足下一步的起始条件，不满足就 `ctx.fail`。步骤之间手里不拿东西。步骤列表定义为模块级的 `STEPS`，`solve` 写成 `run_steps(ctx, STEPS)`（`run_expert.py --steps` 据此选择步骤）。
+
+### 逐步运行
+
+由步骤组成的专家，每一步通过 `check` 后保存一个检查点：完整场景状态（`InteractiveScene.get_state`，格式同 `initial_state`：物体位姿与关节，机器人的底盘、躯干、手臂和夹爪），以及该 seed 回合开始时机器人的关节和底盘位姿。一批的检查点按步骤存为 `checkpoints/step<k>.hdf5`，每个 seed 一组（属性 `seed`、`attempt`、`at` 即这一步结束时的控制步；`state`、`start`），文件属性记录场景、机器人、后端、提交、步骤序号和名字。
+
+`run_expert.py <场景> --steps k[-m]` 只运行第 k 到 m 步：k 为 1 时从初态开始；k 大于 1 时须给 `--from <批次目录>`，从那一批第 k − 1 步的检查点开始，先静置 0.2 s。有检查点的 seed 都会运行，输出格式与完整批次相同（目录为场景批次下的 `<后端>/steps<k>-<m>/`；完整批次替换 `<后端>/` 时保留这些子目录），并写出新的检查点。恢复后，空闲手臂回到的姿态和底盘的起始位姿仍取该 seed 回合开始时的，而不是检查点处的。从第 k 步开始时 `ctx.rng` 为 `default_rng([seed, attempt, 1, k])`，MPlib 的随机数也随 k 改变。
+
+`summary.json` 的 `steps` 给出每步的起始 seed 数、完成数、成功率（完成 / 起始）和逐步完成率（progressive completion rate，ManiSkill-HAB 的统计方式：这一步及之前各步都完成的 seed 占第 1 步起始 seed 的比例）；从检查点开始的批次沿用来源批次前几步的行，分母也取来源批次的。
+
+`join_steps.py <批次> ...` 把逐步运行的各批按顺序接成完整轨迹，默认写成场景的批次 `<后端>/` 本身（保留其中的 `steps*/`）：拼接的轨迹与一次跑完的完整轨迹只是生产方式不同：每段在下一批开始用的检查点处截断，接上下一批同一 seed 的轨迹，`subtasks` 和 `steps` 平移到接好后的位置，`parts` 记录每段的批次、提交、步骤、起点和长度。输出目录的格式与一批轨迹相同，可直接渲染。逐步迭代的方法见[操作手册 05](../../tutorials/05-step-by-step-expert.md)。
 
 ## 轨迹数据
 
@@ -91,7 +122,7 @@
 | `actions` `[T, A]` | 每个控制步的动作；各动作组的区间见文件的 `env_args.action_layout` |
 | `states` | 每步之后的场景状态 |
 | `obs/*` | 每步之前的机器人观测（`qpos`、`qvel`、`base_pose`、`tcp_<arm>`） |
-| 属性 | `scene`、`seed`、`attempt`、`instruction`、`subtasks`（每段的指令与起止步）、`status`、`failure` |
+| 属性 | `scene`、`seed`、`attempt`、`instruction`、`subtasks`（每段的指令与起止步）、`status`、`failure`；由步骤组成的专家另有 `steps`（完成的步骤及其结束的控制步）和 `from`（开始用的检查点文件，从初态开始时为空） |
 
 `env.reset_to(initial_state)` 后依次执行动作可在物理中重放；`scene.reset_to(states[t])` 精确恢复第 t 步，用于渲染。每条轨迹开始前用 seed 设置 MPlib 的随机数（`mplib.pymp.set_global_seed`），专家的 `ctx.rng` 为 `default_rng([seed, attempt, 1])`；RRTConnect 有规划时限，负载不同时路径仍可能不同。
 
@@ -116,7 +147,7 @@
 **量化指标**（不设硬性门槛）：
 
 - 初态（`initial.json`）：无法初始化的 seed、平均尝试次数、静置时的最大移动；
-- 轨迹（批次的 `summary.json`）：成功率（分母为全部 seed），失败的 seed 按“子任务: 原因”列出，原因来自专家的检查（`ctx.fail`）、规划失败或专家代码出错，进程中途退出时没有结果的 seed 记为 `-: process exited`；成功轨迹的平均时长、每条墙钟耗时；
+- 轨迹（批次的 `summary.json`）：成功率（分母为全部 seed），失败的 seed 按“子任务: 原因”列出，原因来自专家的检查（`ctx.fail`）、规划失败或专家代码出错，进程中途退出时没有结果的 seed 记为 `-: process exited`；什么都够不着（`Unreachable`）的 seed 另列在 `unreachable`，及其比例 `unreachable_rate`；成功轨迹的平均时长、每条墙钟耗时；
 - 每条轨迹的报告：规划次数、换用的候选、手指碰过的部件。手指以外的接触不统计：密集摆放时手臂碰到物体是正常的。
 
 **评审**：
@@ -124,7 +155,7 @@
 - 初态拼图（`build_scene.py --grid`，默认机器人主相机），人工查看摆放是否合理、多样；最小有效 seed 的图缩小后作为场景缩略图提交；
 - 前 5 条成功轨迹录制视频（机器人三个相机与 `wide` 视角合成一条，带标注），人工查看：流程完整，物体到位，手、臂与物体无可见穿模，夹持稳定，物体无异常滑移或跳动。失败的轨迹也录制视频（标注失败原因），用来判断是否值得修改专家。
 
-批量运行从固定提交的独立检出进行，运行期间不改代码、场景和资产；`initial.json` 与 `summary.json` 记下所用的提交和 seed。三个脚本都按 `--gpus` 和 `--jobs-per-gpu` 分进程并行：seed（或要渲染的轨迹）分成 `显卡数 × jobs-per-gpu` 段，每段一个进程；某一段失败不影响其他段。不渲染时物理在 CPU 上，每个进程只占约 0.5 GB 显存，可以在一张卡上并发多个。轨迹的后端用 `--physics` 指定，命名与物理测试一致（`isaac-cpu`；场景生成尚未在 GPU 上验证）；初态固定用 `isaac-cpu` 生成。
+批量运行从固定提交的独立检出进行，运行期间不改代码、场景和资产；`initial.json` 与 `summary.json` 记下所用的提交和 seed。三个脚本都分成 `--jobs` 个进程并行，本机平均分到 `--gpus` 列出的显卡上，或经 `--launcher` 交给作业调度器：seed 分成连续的段，要渲染的轨迹按帧数分配，每个进程一份；某个进程失败不影响其他进程，其中没有结果的 seed 按 `--retries` 重跑。不渲染时物理在 CPU 上，每个进程只占约 0.5 GB 显存，可以在一张卡上并发多个。轨迹的后端用 `--physics` 指定，命名与物理测试一致（`isaac-cpu`；场景生成尚未在 GPU 上验证）；初态固定用 `isaac-cpu` 生成。
 
 ## 已知限制
 
@@ -132,4 +163,5 @@
 - `surface_height`、`resting_pose`、`place` 的支撑面只有桌面和物体碰撞包围盒的顶面；放进容器、抽屉或叠放用 `drop` / `scatter`。
 - `drop` 停在第一次接触的位置，物体未必放稳，由落稳检查交给物理决定最终位置；落稳后的状态以文件为准。
 - 笔的帽与钢珠一直有微米级抖动，不休眠（不影响任务）。
+- `make_room` 和技能内部的底盘选位只考虑相对起始位姿后退（0–0.2 m）和转向（±20°），不侧移或前进。场景 000002 因此把柜子的横向范围限制在 ±0.22 m。
 - 摆放由 seed 完全确定，静置后的状态以 `initial_states.hdf5` 为准。专家轨迹：MPlib 的随机数按 seed 设置，但 RRTConnect 有规划时限，负载不同时路径仍可能不同。复现轨迹以录制文件为准。

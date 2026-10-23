@@ -1631,6 +1631,12 @@
         <mesh filename="meshes/collision/gripper_left_link_1.ply" />
       </geometry>
     </collision>
+    <collision name="left_arm_gripper_left_link_pad">
+      <origin xyz="0.069426 0 0.018" rpy="0 0 0" />
+      <geometry>
+        <box size="0.025 0.003 0.018" />
+      </geometry>
+    </collision>
   </link>
   <joint name="left_arm_gripper_left_joint" type="prismatic">
     <origin rpy="0 -0 0" xyz="0.080074 0 -0.018" />
@@ -1678,6 +1684,12 @@
       <origin rpy="0 0 0" xyz="0 0 0" />
       <geometry>
         <mesh filename="meshes/collision/gripper_right_link_2.ply" />
+      </geometry>
+    </collision>
+    <collision name="left_arm_gripper_right_link_pad">
+      <origin xyz="0.069426 0 -0.018" rpy="0 0 0" />
+      <geometry>
+        <box size="0.025 0.003 0.018" />
       </geometry>
     </collision>
   </link>
@@ -1783,6 +1795,12 @@
         <mesh filename="meshes/collision/gripper_left_link_1.ply" />
       </geometry>
     </collision>
+    <collision name="right_arm_gripper_left_link_pad">
+      <origin xyz="0.069426 0 0.018" rpy="0 0 0" />
+      <geometry>
+        <box size="0.025 0.003 0.018" />
+      </geometry>
+    </collision>
   </link>
   <joint name="right_arm_gripper_left_joint" type="prismatic">
     <origin rpy="0 -0 0" xyz="0.080074 0 -0.018" />
@@ -1830,6 +1848,12 @@
       <origin rpy="0 0 0" xyz="0 0 0" />
       <geometry>
         <mesh filename="meshes/collision/gripper_right_link_2.ply" />
+      </geometry>
+    </collision>
+    <collision name="right_arm_gripper_right_link_pad">
+      <origin xyz="0.069426 0 -0.018" rpy="0 0 0" />
+      <geometry>
+        <box size="0.025 0.003 0.018" />
       </geometry>
     </collision>
   </link>
