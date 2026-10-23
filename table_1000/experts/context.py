@@ -10,16 +10,20 @@ is done. ``ctx`` offers
   values and centres of mass, each object's
   :class:`~table_1000.scenes.geometry.AssetGeometry`, the TCP;
 - **subtasks** -- ``with ctx.subtask('open the bottom drawer of the cabinet'):``
-  marks the steps of one English instruction;
+  marks the steps of one English instruction; :class:`Step` groups subtasks into steps
+  that start and end with the hands empty, each with a check of the state it leaves
+  (:func:`run_steps`);
 - ``ctx.rng`` -- the episode's random generator (from the seed), for choices that
   vary the trajectory.
 
-Failures raise :class:`ExpertFailed` with the subtask and a reason; nothing is
-retried unless the expert does it.
+Failures raise :class:`ExpertFailed` (:class:`Unreachable` where nothing is in
+reach) with the subtask and a reason; nothing is retried unless the expert does it.
 """
 
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 import time
 
 import numpy as np
@@ -35,6 +39,32 @@ class ExpertFailed(RuntimeError):
     def __init__(self, subtask, reason, **details):
         super().__init__(f'{subtask}: {reason}')
         self.subtask, self.reason, self.details = subtask, reason, details
+
+
+@dataclass
+class Step:
+    """A step of an expert, between two states in which the hands hold nothing: ``run(ctx)`` does
+    its subtasks (:meth:`Context.subtask`); ``check(ctx)`` fails it (:meth:`Context.fail`) unless
+    the state it leaves is fit for the next step."""
+    name: str
+    run: Callable
+    check: Callable = None
+
+
+def run_steps(ctx, steps):
+    """Run ``steps`` (:class:`Step`) in order, each checked when done."""
+    for step in steps:
+        step.run(ctx)
+        if step.check:
+            ctx.current = step.name     # a failed check is the step's
+            try:
+                step.check(ctx)
+            finally:
+                ctx.current = None
+
+
+class Unreachable(ExpertFailed):
+    """Nothing the step could do is in reach (no grasp, push or placement has a motion)."""
 
 
 def steps(seconds):
@@ -136,8 +166,8 @@ class Context:
     def note(self, text, **values):
         self.events.append({'step': self.steps, 'subtask': self.current, 'note': text, **values})
 
-    def fail(self, reason, **details):
-        raise ExpertFailed(self.current, reason, **details)
+    def fail(self, reason, failure=ExpertFailed, **details):
+        raise failure(self.current, reason, **details)
 
     # -- state and geometry queries --------------------------------------------------
     def poses(self):
