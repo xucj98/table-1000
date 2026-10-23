@@ -135,8 +135,7 @@ def main(argv=None):
         states = checkpoint_path(args.source, first - 1).resolve()
         if not states.is_file():
             parser.error(f'no checkpoints of step {first - 1} in {args.source}')
-        if (args.source / 'summary.json').is_file():
-            parent = json.loads((args.source / 'summary.json').read_text())
+        parent = json.loads((args.source / 'summary.json').read_text())
     else:
         if first > 1:
             parser.error(f'steps {first}-: give --from <batch directory> with checkpoints of step {first - 1}')

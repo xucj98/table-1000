@@ -105,9 +105,8 @@ class Context:
     def robot_state(self):
         return {'qpos': self.env.obs['agent']['qpos'][0].copy(), 'base_pose': self.env.obs['agent']['base_pose'][0].copy()}
 
-    def base_transform(self, pose=None):
-        """World pose of the robot's root, now or at the base ``pose`` ``(x, y, yaw)``."""
-        x, y, yaw = self.env.obs['agent']['base_pose'][0] if pose is None else pose
+    def base_transform(self):
+        x, y, yaw = self.env.obs['agent']['base_pose'][0]
         transform = np.eye(4)
         transform[:3, :3] = Rotation.from_euler('z', yaw).as_matrix()
         transform[:2, 3] = x, y

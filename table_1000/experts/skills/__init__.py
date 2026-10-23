@@ -116,11 +116,8 @@ class Skills(Grasping, Motion, Placing, Base):
                                                                    merged=ctx.geometry[name].solid)]
                     solver.world.allow(parts, parts)
         # The arms' poses where the episode began, to return to (see ready), and the base's.
-        start = ctx.start
-        self.model.set_state(dict(zip(ctx.env.joints, start['qpos'])), ctx.base_transform(start['base_pose']))
-        self.home = self.model.q.copy()
-        ctx.sync_model()
-        self.start_base = np.asarray(start['base_pose'], dtype=float) if ctx.spec.base else None
+        self.home = self.model.vector(dict(zip(ctx.env.joints, ctx.start['qpos'])))
+        self.start_base = np.asarray(ctx.start['base_pose'], dtype=float) if ctx.spec.base else None
         self.held = {}      # arm -> {'target', 'supports', 'grasp'}
         self.log, self.rejected = [], {}
 
