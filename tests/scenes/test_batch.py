@@ -231,17 +231,18 @@ def test_build_scene_combines_parts(tmp_path, monkeypatch):
             for name in ('states', 'images', 'records'):
                 (work / name).mkdir(parents=True)
             for seed in seeds:
-                if seed == 2 and len(rounds) == 1:
-                    break      # the process died on seed 2: seeds 0 and 1 keep their results
+                if seed == 2 and len(rounds) == 1 or seed == 3 and len(rounds) == 3:
+                    break      # the process died here: earlier seeds keep their results
                 if seed != 1:
                     write_states(work / 'states' / f'{seed}.hdf5', {seed: (0, STATE)}, {'scene': '000000', 'robot': 'x1pro'})
                     Image.new('RGB', (64, 36), 'red').save(work / 'images' / f'{seed}.jpg')
                 record = {'seed': seed, 'attempt': None if seed == 1 else 0,
                           'attempts': [{'attempt': 0, 'settle': {'objects': {}, 'robot_contacts': []}}]}
-                if seed == 3 or (seed == 4 and len(rounds) == 2):
-                    # seed 3 errs every time; seed 4 errs in its first process only
+                if len(rounds) == 2:
+                    # seed 3 errs, then its rerun dies before it; seed 4 finds no valid state after the error
                     (work / 'states' / f'{seed}.hdf5').unlink()
-                    record.update(attempt=None, error='RuntimeError: CUDA error')
+                    record.update({'attempt': None, 'error': 'RuntimeError: CUDA error'} if seed == 3 else
+                                  {'attempt': None, 'after_error': 3})
                 (work / 'records' / f'{seed}.json').write_text(
                     json.dumps({'robot': 'x1pro', 'camera': 'face_view', 'record': record}))
         return []

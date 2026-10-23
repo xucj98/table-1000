@@ -8,7 +8,7 @@ on CPU PhysX. The seeds are split into ``--jobs`` contiguous parts, one process 
 over ``--gpus`` or submitted through ``--launcher`` (see ``table_1000/common/batch.py``); each
 seed's result is written when it is done, and seeds whose process stopped before theirs run
 again (``--retries``), as do seeds that raised an error (the error may be the process's: GPU memory,
-a lost device). Logs are in ``outputs/scenes/<scene>/build/``; the processes' results go to
+a lost device) and seeds without a valid state after an error in their process. Logs are in ``outputs/scenes/<scene>/build/``; the processes' results go to
 ``<output>/<scene>/staging/``, removed once merged. Into ``<output>/<scene>/``
 (``<output>`` = ``assets/scenes`` by default), replacing what an earlier run wrote:
 
@@ -95,6 +95,7 @@ def worker(args):
                 json.dumps({'robot': spec.name, 'camera': camera, 'record': record}, indent=1, default=float))
             os.replace(path.with_suffix('.tmp'), path)
 
+        erred = None      # the last seed that raised an error in this process
         for seed in parse_seeds(args.seeds):
             record = None
             try:
@@ -110,10 +111,14 @@ def worker(args):
                 print(seed, 'attempt', record['attempt'], flush=True)
             except InitializationFailed as error:
                 record = {'seed': seed, 'attempt': None, 'attempts': error.attempts}
+                if erred is not None:
+                    # The error may have broken the process: the seed runs again in a new one.
+                    record['after_error'] = erred
                 print(seed, 'no valid state', flush=True)
             except Exception:
                 # Kept as this seed's result if it errs again when retried in a new process.
                 traceback.print_exc()
+                erred = seed
                 (work / 'states' / f'{seed}.hdf5').unlink(missing_ok=True)
                 record = {'seed': seed, 'attempt': None, 'attempts': record['attempts'] if record else [],
                           'error': traceback.format_exc().strip().splitlines()[-1]}
@@ -180,8 +185,15 @@ def main(argv=None):
     staging, logs = output / 'staging', root / 'outputs' / 'scenes' / args.scene / 'build'
 
     def result(seed):
-        path = parts[seed] / 'records' / f'{seed}.json'
-        return json.loads(path.read_text()) if path.is_file() else None
+        """The seed's latest result and the process directory holding it, or ``(None, None)``."""
+        for work in reversed(parts[seed]):
+            if (work / 'records' / f'{seed}.json').is_file():
+                return json.loads((work / 'records' / f'{seed}.json').read_text()), work
+        return None, None
+
+    def rerun(seed):
+        done, _ = result(seed)
+        return not done or 'error' in done['record'] or 'after_error' in done['record']
 
     shutil.rmtree(staging, ignore_errors=True)
     shutil.rmtree(logs, ignore_errors=True)
@@ -191,7 +203,8 @@ def main(argv=None):
 
     def command(part, index, attempt):
         name = process_name(f'part{index}', attempt)
-        parts.update(dict.fromkeys(part, staging / name))
+        for seed in part:
+            parts.setdefault(seed, []).append(staging / name)
         argv = [sys.executable, str(Path(__file__).resolve()), args.scene, '--worker', '--seeds', *seed_range(part).split(),
                 '--work', str(staging / name), '--first', str(first), '--root', str(root), '--assets', str(args.assets.resolve())]
         argv += ['--images'] if args.images else []
@@ -200,11 +213,11 @@ def main(argv=None):
 
     started = time.perf_counter()
     missing = set(run_batch(seeds, command=command, count=jobs, gpus=args.gpus, launcher=args.launcher,
-                        retries=args.retries, missing=lambda seed: not result(seed) or 'error' in result(seed)['record']))
+                        retries=args.retries, missing=rerun))
 
     records, states, images, robot, camera = {}, {}, {}, None, None
     for seed in seeds:
-        work, done = parts[seed], result(seed)
+        done, work = result(seed)
         if not done:
             continue
         robot, camera, records[seed] = done['robot'], done['camera'], done['record']
