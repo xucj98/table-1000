@@ -27,6 +27,48 @@ def author_geometry(model, destination):
     UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
     root = UsdGeom.Xform.Define(stage, '/Asset')
     stage.SetDefaultPrim(root.GetPrim())
+
+    def define_material(path, settings):
+        """A UsdPreviewSurface material (plus OmniSurface for transmission) at ``path``."""
+        material = UsdShade.Material.Define(stage, path)
+        shader = UsdShade.Shader.Define(stage, path + '/Shader')
+        shader.CreateIdAttr('UsdPreviewSurface')
+        for key, field, kind in [('diffuseColor', 'color', Sdf.ValueTypeNames.Color3f),
+                                 ('roughness', 'roughness', Sdf.ValueTypeNames.Float),
+                                 ('metallic', 'metallic', Sdf.ValueTypeNames.Float)]:
+            value = Gf.Vec3f(*settings[field]) if field == 'color' else settings[field]
+            shader.CreateInput(key, kind).Set(value)
+        shader.CreateInput('opacity', Sdf.ValueTypeNames.Float).Set(settings['alpha'])
+        shader.CreateInput('ior', Sdf.ValueTypeNames.Float).Set(settings['ior'])
+        shader.CreateOutput('surface', Sdf.ValueTypeNames.Token)
+        material.CreateSurfaceOutput().ConnectToSource(shader.ConnectableAPI(), 'surface')
+        if settings['transmission'] > 0:
+            # PreviewSurface opacity is a cutout, not Principled transmission.
+            # Isaac's built-in OmniSurface carries the separate refractive lobe.
+            mdl = UsdShade.Shader.Define(stage, path + '/OmniSurface')
+            mdl.CreateImplementationSourceAttr(UsdShade.Tokens.sourceAsset)
+            mdl.SetSourceAsset(Sdf.AssetPath('OmniSurface.mdl'), 'mdl')
+            mdl.SetSourceAssetSubIdentifier('OmniSurface', 'mdl')
+            for key, value, kind in [
+                ('diffuse_reflection_weight', 1., Sdf.ValueTypeNames.Float),
+                ('diffuse_reflection_color', Gf.Vec3f(*settings['color']), Sdf.ValueTypeNames.Color3f),
+                ('metalness', settings['metallic'], Sdf.ValueTypeNames.Float),
+                ('specular_reflection_roughness', settings['roughness'], Sdf.ValueTypeNames.Float),
+                ('specular_reflection_ior', settings['ior'], Sdf.ValueTypeNames.Float),
+                ('enable_specular_transmission', True, Sdf.ValueTypeNames.Bool),
+                ('specular_transmission_weight', settings['transmission'], Sdf.ValueTypeNames.Float),
+                # Cycles Principled tints each solid interface with sqrt(base).
+                ('specular_transmission_color', Gf.Vec3f(*np.sqrt(np.clip(settings['color'], 0, 1))), Sdf.ValueTypeNames.Color3f),
+                ('enable_opacity', settings['alpha'] < 1, Sdf.ValueTypeNames.Bool),
+                ('geometry_opacity', settings['alpha'], Sdf.ValueTypeNames.Float),
+            ]:
+                mdl.CreateInput(key, kind).Set(value)
+            mdl.CreateOutput('out', Sdf.ValueTypeNames.Token)
+            for output in [material.CreateSurfaceOutput, material.CreateVolumeOutput,
+                           material.CreateDisplacementOutput]:
+                output('mdl').ConnectToSource(mdl.ConnectableAPI(), 'out')
+        return material
+
     paths, worlds = {}, {}
     for node in model['nodes']:
         name, parent = node['name'], node['parent']
@@ -65,44 +107,16 @@ def author_geometry(model, destination):
             obj.SetNormalsInterpolation('faceVarying')
             settings = node['material']
             obj.CreateDisplayColorAttr([Gf.Vec3f(*settings['color'])])
-            material = UsdShade.Material.Define(stage, path + '/Material')
-            shader = UsdShade.Shader.Define(stage, path + '/Material/Shader')
-            shader.CreateIdAttr('UsdPreviewSurface')
-            for key, field, kind in [('diffuseColor', 'color', Sdf.ValueTypeNames.Color3f),
-                                     ('roughness', 'roughness', Sdf.ValueTypeNames.Float),
-                                     ('metallic', 'metallic', Sdf.ValueTypeNames.Float)]:
-                value = Gf.Vec3f(*settings[field]) if field == 'color' else settings[field]
-                shader.CreateInput(key, kind).Set(value)
-            shader.CreateInput('opacity', Sdf.ValueTypeNames.Float).Set(settings['alpha'])
-            shader.CreateInput('ior', Sdf.ValueTypeNames.Float).Set(settings['ior'])
-            shader.CreateOutput('surface', Sdf.ValueTypeNames.Token)
-            material.CreateSurfaceOutput().ConnectToSource(shader.ConnectableAPI(), 'surface')
-            if settings['transmission'] > 0:
-                # PreviewSurface opacity is a cutout, not Principled transmission.
-                # Isaac's built-in OmniSurface carries the separate refractive lobe.
-                mdl = UsdShade.Shader.Define(stage, path + '/Material/OmniSurface')
-                mdl.CreateImplementationSourceAttr(UsdShade.Tokens.sourceAsset)
-                mdl.SetSourceAsset(Sdf.AssetPath('OmniSurface.mdl'), 'mdl')
-                mdl.SetSourceAssetSubIdentifier('OmniSurface', 'mdl')
-                for key, value, kind in [
-                    ('diffuse_reflection_weight', 1., Sdf.ValueTypeNames.Float),
-                    ('diffuse_reflection_color', Gf.Vec3f(*settings['color']), Sdf.ValueTypeNames.Color3f),
-                    ('metalness', settings['metallic'], Sdf.ValueTypeNames.Float),
-                    ('specular_reflection_roughness', settings['roughness'], Sdf.ValueTypeNames.Float),
-                    ('specular_reflection_ior', settings['ior'], Sdf.ValueTypeNames.Float),
-                    ('enable_specular_transmission', True, Sdf.ValueTypeNames.Bool),
-                    ('specular_transmission_weight', settings['transmission'], Sdf.ValueTypeNames.Float),
-                    # Cycles Principled tints each solid interface with sqrt(base).
-                    ('specular_transmission_color', Gf.Vec3f(*np.sqrt(np.clip(settings['color'], 0, 1))), Sdf.ValueTypeNames.Color3f),
-                    ('enable_opacity', settings['alpha'] < 1, Sdf.ValueTypeNames.Bool),
-                    ('geometry_opacity', settings['alpha'], Sdf.ValueTypeNames.Float),
-                ]:
-                    mdl.CreateInput(key, kind).Set(value)
-                mdl.CreateOutput('out', Sdf.ValueTypeNames.Token)
-                for output in [material.CreateSurfaceOutput, material.CreateVolumeOutput,
-                               material.CreateDisplacementOutput]:
-                    output('mdl').ConnectToSource(mdl.ConnectableAPI(), 'out')
-            UsdShade.MaterialBindingAPI.Apply(prim).Bind(material)
+            binding = UsdShade.MaterialBindingAPI.Apply(prim)
+            binding.Bind(define_material(path + '/Material', settings))
+            if 'materials' in node:     # per-face materials: one face subset bound to each slot
+                faces = np.array(node['face_materials'])
+                for index, slot in enumerate(node['materials']):
+                    members = np.flatnonzero(faces == index)
+                    if len(members):
+                        subset = binding.CreateMaterialBindSubset(f'material{index}', members.tolist())
+                        UsdShade.MaterialBindingAPI.Apply(subset.GetPrim()).Bind(
+                            define_material(f'{path}/Material{index}', slot))
     for row in model['joints']:
         path = '/Asset/Joints/' + Tf.MakeValidIdentifier(row['name'])
         cls = UsdPhysics.PrismaticJoint if row['type'] == 'SLIDER' else UsdPhysics.RevoluteJoint
@@ -151,7 +165,8 @@ def build(asset, source, output):
         root = packaged_stage.GetPrimAtPath('/Asset')
         root.RemoveProperty('omni:scripting:scripts')
         root.SetMetadata('apiSchemas', Sdf.TokenListOp.CreateExplicit([name for name in root.GetAppliedSchemas() if name != 'OmniScriptingAPI']))
-        if any(node.get('material', {}).get('transmission', 0) > 0 for node in model['nodes']):
+        if any(slot['transmission'] > 0 for node in model['nodes']
+               for slot in node.get('materials', [node['material']] if 'material' in node else [])):
             # MDL's runtime search path is separate from USD's asset resolver.
             mdl = next(Path(path) / 'OmniSurface.mdl' for path in get_mdl_lib_paths()
                        if (Path(path) / 'OmniSurface.mdl').is_file())
@@ -175,8 +190,12 @@ def build(asset, source, output):
             (output / 'behavior.py').unlink(missing_ok=True)
         packaged = Usd.Stage.Open(str(output / 'object.usdz'))
         rigid = [prim for prim in packaged.Traverse() if prim.HasAPI(UsdPhysics.RigidBodyAPI)]
-        assert len(rigid) == sum(node['rigid'] for node in model['nodes'])
+        # A physics layer may merge modelled bodies into one (table_1000.physics.rigid).
+        assert 0 < len(rigid) <= sum(node['rigid'] for node in model['nodes'])
         assert all(UsdPhysics.MassAPI(prim).GetMassAttr().Get() > 0 for prim in rigid)
+        # Authored centres of mass (body frame), for what the colliders' uniform density would put wrong.
+        centers = {prim.GetCustomDataByKey('table1000:name'): list(UsdPhysics.MassAPI(prim).GetCenterOfMassAttr().Get())
+                   for prim in rigid if UsdPhysics.MassAPI(prim).GetCenterOfMassAttr().HasAuthoredValue()}
         materials = {}
         for prim in packaged.Traverse():
             if prim.HasAPI(UsdPhysics.CollisionAPI):
@@ -192,6 +211,7 @@ def build(asset, source, output):
     (output / 'model.json').write_text(json.dumps(model) + '\n')
     report = {'rigid_bodies': len(rigid), 'parts': sum(node['part'] for node in model['nodes']),
               'colliders': len(materials), 'physics_materials': materials, 'paths': paths,
+              'centers_of_mass': centers,
               'geometry_layer': 'geometry.usdc', 'physics_source': 'physics.py', 'physics_layer': 'physics.usda',
               'entry': 'object.usda' if scripts else 'object.usdz',
               'behavior_scripts': [path.path for path in scripts],

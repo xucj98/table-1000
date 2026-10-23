@@ -1,6 +1,7 @@
 """Initial states of a scene: sampled and checked per seed, stored for the expert to start from.
 
 ``uv run python scripts/scenes/build_scene.py 000000 --seeds 0:100 --gpus 0 1 2 3 [--jobs-per-gpu 1] [--grid 5x5] [--images] [--camera NAME] [--output DIR]``
+``uv run python scripts/scenes/build_scene.py 000100 --end-states [NAME ...] [--grid 3x2] ...``
 
 For each seed, makes the initial state as in ``table_1000/scenes/initial.py``
 (``scene.initialize``, penetration and settling checks, retried with sub-seeds)
@@ -14,8 +15,13 @@ process each (logs in ``outputs/scenes/<scene>/build/``). Into ``<output>/<scene
 - ``initial_states.jpg`` with ``--grid NxM``: the first N × M valid states in N columns;
 - ``initial/<seed>.jpg`` with ``--images``: every valid state at the camera's resolution.
 
-Images come from ``--camera`` (default: the robot's first RGB camera; or a fixed
-view of the scene). When images are rendered into the default output, the
+With ``--end-states``, the scene's ``END_STATES`` (all, or the named ones) are built the same
+way instead, each ``arrange`` function as the initialization with seed 0, into
+``end_states.hdf5`` (one group per state, by name), ``end_states.json``, ``end_states.jpg``
+and ``end_states/<name>.jpg``; the initial states and the thumbnail are left alone.
+
+Images come from ``--camera`` (default: the scene's ``IMAGE_VIEW``, else the robot's first
+RGB camera; or another fixed view of the scene). When images are rendered into the default output, the
 smallest valid seed's image also becomes ``asset_sources/scenes/<scene>/thumbnail.jpg``
 (480 px wide). The exit status is non-zero when a part fails or a seed has no valid state.
 """
@@ -33,6 +39,7 @@ sys.path.insert(0, str(ROOT))
 
 TILE_WIDTH, CAPTION, THUMBNAIL_WIDTH = 384, 18, 480
 PRODUCTS = ('initial_states.hdf5', 'initial.json', 'initial_states.jpg', 'initial')
+END_PRODUCTS = ('end_states.hdf5', 'end_states.json', 'end_states.jpg', 'end_states')
 
 
 def grid_size(text):
@@ -48,9 +55,9 @@ def main_camera(spec):
 
 
 def worker(args):
-    """Initial states of ``args.seeds`` in this process, into ``args.work``: ``states.hdf5``,
-    ``report.json`` and ``images/<seed>.jpg`` (all valid seeds with ``--images``, else the first
-    ``--first`` valid ones)."""
+    """Initial states of ``args.seeds`` (or end states ``args.end_states``) in this process, into
+    ``args.work``: ``states.hdf5``, ``report.json`` and ``images/<seed or name>.jpg`` (all valid
+    ones with ``--images``, else the first ``--first`` valid ones)."""
     work = args.work.resolve()
     (work / 'images').mkdir(parents=True, exist_ok=True)
     render = args.images or args.first > 0
@@ -73,30 +80,31 @@ def worker(args):
         if render:
             from table_1000.sim.isaaclab import render as rendering
             rendering.configure()
-            camera = args.camera or main_camera(spec)
+            camera = args.camera or getattr(scene, 'IMAGE_VIEW', None) or main_camera(spec)
             if camera in scene.VIEWS:
                 kwargs['views'] = {camera: scene.VIEWS[camera]}
             else:
                 kwargs['cameras'] = {camera: spec.cameras[camera]}
         env = RobotEnv(scene, spec, assets, root=root, **kwargs)
         records, states, pictured = {}, {}, 0
-        for seed in parse_seeds(args.seeds):
+        for key in args.end_states or parse_seeds(args.seeds):
+            arrange = scene.END_STATES[key]['arrange'] if args.end_states else None
             try:
-                _, record = initial_state(env, scene, assets, seed)
+                _, record = initial_state(env, scene, assets, 0 if arrange else key, initialize=arrange)
             except InitializationFailed as error:
-                records[seed] = {'seed': seed, 'attempt': None, 'attempts': error.attempts}
-                print(seed, 'no valid state', flush=True)
+                records[key] = {'seed': key, 'attempt': None, 'attempts': error.attempts}
+                print(key, 'no valid state', flush=True)
                 continue
-            records[seed] = record
+            records[key] = record
             state = env.env.scene.get_state(is_relative=True)
-            states[seed] = (record['attempt'], to_numpy(state))
+            states[key] = (record['attempt'], to_numpy(state))
             if args.images or pictured < args.first:
                 # RT2 denoises over time: the first render after a state change blends in the last one.
                 env.render([camera])
-                Image.fromarray(env.render([camera])[camera]['rgb'][0]).save(work / 'images' / f'{seed}.jpg',
+                Image.fromarray(env.render([camera])[camera]['rgb'][0]).save(work / 'images' / f'{key}.jpg',
                                                                             quality=90)
                 pictured += 1
-            print(seed, 'attempt', record['attempt'], flush=True)
+            print(key, 'attempt', record['attempt'], flush=True)
         write_states(work / 'states.hdf5', states, {'scene': args.scene, 'robot': spec.name, 'physics': 'isaac-cpu',
                                                     'commit': commit(root) or ''})
         (work / 'report.json').write_text(json.dumps({'robot': spec.name, 'camera': camera, 'records': records},
@@ -137,12 +145,13 @@ def thumbnail(image, path):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('scene')
-    parser.add_argument('--seeds', nargs='+', required=True, help='a:b (a to b - 1) and single seeds')
+    parser.add_argument('--seeds', nargs='+', help='a:b (a to b - 1) and single seeds')
+    parser.add_argument('--end-states', nargs='*', help="build the scene's END_STATES (all, or these) instead of initial states")
     parser.add_argument('--gpus', type=int, nargs='+', default=[0], help='physical GPUs')
     parser.add_argument('--jobs-per-gpu', type=int, default=1, help='processes at a time on each GPU')
     parser.add_argument('--grid', type=grid_size, help='NxM: the first N x M valid states in N columns')
     parser.add_argument('--images', action='store_true', help='one image per valid state')
-    parser.add_argument('--camera', help="a robot camera or a view of the scene (default: the robot's first RGB camera)")
+    parser.add_argument('--camera', help="a robot camera or a view of the scene (default: the scene's IMAGE_VIEW, else the robot's first RGB camera)")
     parser.add_argument('--output', type=Path, help='results go to <output>/<scene>/ (default: assets/scenes)')
     parser.add_argument('--root', type=Path, default=ROOT, help='repository root holding the scene and robot sources')
     parser.add_argument('--assets', type=Path, default=ROOT / 'assets')
@@ -154,27 +163,38 @@ def main(argv=None):
     if args.worker:
         worker(args)
         return
+    from table_1000.scenes import load
     from table_1000.scenes.batch import commit, parse_seeds, run_parts, seed_range, seeds_record, split
     from table_1000.scenes.initial import read_states, summarize, write_states
     if args.jobs_per_gpu < 1:
         parser.error('--jobs-per-gpu must be positive')
-    seeds = parse_seeds(args.seeds)
-    if not seeds:
-        parser.error('no seeds')
     root = args.root.resolve()
+    ends = args.end_states is not None
+    if ends:
+        end_states = load(args.scene, 'scene', root).END_STATES
+        keys = args.end_states or list(end_states)
+        unknown = sorted(set(keys) - set(end_states))
+        if unknown:
+            parser.error(f'unknown end states: {", ".join(unknown)}')
+    else:
+        keys = parse_seeds(args.seeds or [])
+    if not keys:
+        parser.error('no seeds')
     output = ((args.output or args.assets / 'scenes') / args.scene).resolve()
     staging = root / 'outputs' / 'scenes' / args.scene / 'build'
     shutil.rmtree(staging, ignore_errors=True)
     checkout = commit(root)
     first = args.grid[0] * args.grid[1] if args.grid else 0
     jobs = []
-    for index, part in enumerate(split(seeds, len(args.gpus) * args.jobs_per_gpu)):
+    for index, part in enumerate(split(keys, len(args.gpus) * args.jobs_per_gpu)):
         work = staging / f'part{index}'
-        command = [sys.executable, str(Path(__file__).resolve()), args.scene, '--worker', '--seeds', *seed_range(part).split(),
+        selection = ['--end-states', *part] if ends else ['--seeds', *seed_range(part).split()]
+        command = [sys.executable, str(Path(__file__).resolve()), args.scene, '--worker', *selection,
                    '--work', str(work), '--first', str(first), '--root', str(root), '--assets', str(args.assets.resolve())]
         command += ['--images'] if args.images else []
         command += ['--camera', args.camera] if args.camera else []
-        jobs.append((command, staging / f'part{index}.log', f'{args.scene} part{index} seeds {seed_range(part)}'))
+        label = ' '.join(part) if ends else f'seeds {seed_range(part)}'
+        jobs.append((command, staging / f'part{index}.log', f'{args.scene} part{index} {label}'))
     started = time.perf_counter()
     failed = run_parts(jobs, args.gpus, args.jobs_per_gpu)
 
@@ -184,41 +204,45 @@ def main(argv=None):
             continue
         report = json.loads((work / 'report.json').read_text())
         robot, camera = report['robot'], report['camera']
-        records.update({int(seed): record for seed, record in report['records'].items()})
+        records.update({key if ends else int(key): record for key, record in report['records'].items()})
         part_attrs, part_states = read_states(work / 'states.hdf5')
         attrs = attrs or part_attrs
         states.update(part_states)
-    for seed in seeds:
-        records.setdefault(seed, {'seed': seed, 'attempt': None, 'attempts': [], 'problems': ['process exited']})
+    for key in keys:
+        records.setdefault(key, {'seed': key, 'attempt': None, 'attempts': [], 'problems': ['process exited']})
     output.mkdir(parents=True, exist_ok=True)
-    for name in PRODUCTS:
+    states_file, summary_file, grid_file, images_dir = END_PRODUCTS if ends else PRODUCTS
+    for name in (states_file, summary_file, grid_file, images_dir):
         path = output / name
         if path.is_dir():
             shutil.rmtree(path)
         else:
             path.unlink(missing_ok=True)
     attrs.update(commit=checkout or '')
-    write_states(output / 'initial_states.hdf5', states, attrs)
+    write_states(output / states_file, states, attrs)
+    selection = ({'states': {key: {'quality': end_states[key]['quality'], 'description': end_states[key]['description']}
+                             for key in keys}} if ends else {'seeds': seeds_record(keys)})
     summary = {'scene': args.scene, 'robot': robot, 'physics': 'isaac-cpu', 'commit': checkout,
-               'seeds': seeds_record(seeds), **summarize(records), 'camera': camera,
-               'total_s': time.perf_counter() - started}
-    (output / 'initial.json').write_text(json.dumps({**summary, 'records': dict(sorted(records.items()))},
-                                                    indent=1, default=float) + '\n')
-    images = {int(path.stem): path for path in staging.glob('part*/images/*.jpg')}
-    valid = sorted(seed for seed in images if records[seed]['attempt'] is not None)
+               **selection, **summarize(records), 'camera': camera, 'total_s': time.perf_counter() - started}
+    ordered = [(key, records[key]) for key in keys]
+    (output / summary_file).write_text(json.dumps({**summary, 'records': dict(ordered)}, indent=1, default=float) + '\n')
+    images = {(path.stem if ends else int(path.stem)): path for path in staging.glob('part*/images/*.jpg')}
+    valid = [key for key in keys if key in images and records[key]['attempt'] is not None]
     if args.grid and valid:
         shown = valid[:first]
-        grid([images[seed] for seed in shown], [f'seed {seed}  attempt {records[seed]["attempt"]}' for seed in shown],
-             args.grid[0], output / 'initial_states.jpg')
+        captions = [f'{key} ({end_states[key]["quality"]})  attempt {records[key]["attempt"]}' if ends else
+                    f'seed {key}  attempt {records[key]["attempt"]}' for key in shown]
+        grid([images[key] for key in shown], captions, args.grid[0], output / grid_file)
     if args.images and valid:
-        (output / 'initial').mkdir()
-        for seed in valid:
-            shutil.copy(images[seed], output / 'initial' / f'{seed}.jpg')
-    if valid and args.output is None:
+        (output / images_dir).mkdir()
+        for key in valid:
+            shutil.copy(images[key], output / images_dir / f'{key}.jpg')
+    if valid and args.output is None and not ends:
         thumbnail(images[valid[0]], root / 'asset_sources' / 'scenes' / args.scene / 'thumbnail.jpg')
     print(json.dumps(summary, indent=1, default=float))
     problems = ([f'failed: {", ".join(failed)}'] if failed else []) + (
-        [f'seeds without a valid state: {seed_range(summary["without_state"])}'] if summary['invalid'] else [])
+        [f'without a valid state: {" ".join(map(str, summary["without_state"])) if ends else seed_range(summary["without_state"])}']
+        if summary['invalid'] else [])
     if problems:
         raise SystemExit('; '.join(problems))
 

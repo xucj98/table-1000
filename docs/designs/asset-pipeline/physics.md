@@ -39,6 +39,28 @@ physics.py ──读取几何并配置──> physics.usda
 
 Stage 使用米、千克和 Z 向上。USD 原生转动关节/驱动角度使用度；Python 测试接口使用弧度，辅助工具负责转换。
 
+## 单刚体资产
+
+不需要机构行为的资产（大部分文具、容器）整体按一个刚体仿真，`physics.py` 只写总质量和一种接触材料，调用共用的 `table_1000.physics.rigid.author`：
+
+```python
+from table_1000.physics.rigid import author as author_rigid
+
+MASS_KG = 0.015
+FRICTION = (0.5, 0.4)          # 静摩擦、动摩擦
+
+
+def author(geometry_path, output_path):
+    author_rigid(geometry_path, output_path, MASS_KG, FRICTION)
+```
+
+- 几何层中的多个刚体合并成一个刚体，位于它们的公共父节点（都在资产根下时即资产根）；原有关节停用，笔帽、盒盖、长尾夹把手和按钮固定在建模时的位置。合并后的刚体沿用父节点的 `table1000:name`，资产根则名为 `object`。
+- 质心和惯量由引擎按碰撞形状计算；所有碰撞形状使用同一接触材料，恢复系数 0。
+- 圆柱形的资产（笔、胶棒、胶带、螺丝刀）另给 `angular_damping`（1/s），代替仿真中没有的滚动阻力，否则在桌上一直滚。
+- 碰撞形状的均匀密度给错重心时（花瓶里的花束、香薰瓶的藤条，体积大而实际很轻），另给 `center_of_mass`（m，刚体坐标系）。构建时把显式给出的质心写入 `physics_build.json` 的 `centers_of_mass`（`{刚体名: 质心}`），场景布局按它计算单刚体资产的稳定放置朝向（台灯的重底座让它正立）。
+- PhysX 会把超过 64 个顶点的凸包悄悄简化，物体因此下沉或倾倒；每个碰撞凸包不超过 64 个顶点。
+- 质量与摩擦是按实物估计的设计值，未经标定。
+
 ## 验证与交付
 
 构建后重新打开 USDZ，核对刚体、碰撞、关节及材料绑定。仅改变源码表达时，比较组合后有效属性、Schema、关系和材料解析结果；等价则无需重复动力学测试。改变质量、惯量或其他物理参数时，重新验证受影响的测试。
@@ -49,4 +71,4 @@ Stage 使用米、千克和 Z 向上。USD 原生转动关节/驱动角度使用
 
 ## 视觉材质
 
-导出保留 Blender 的颜色、粗糙度、金属度、IOR 和 Alpha；透射与 Alpha 分开处理。透射材质使用随 USDZ 打包的 OmniSurface 入口，运行时依赖 Isaac / Omniverse 标准 MDL 库；仅支持 USD Preview Surface 的查看器不能等价显示透射。
+导出保留 Blender 的颜色、粗糙度、金属度、IOR 和 Alpha；透射与 Alpha 分开处理。一个视觉网格可带多个材质槽，按面分配的材质导出为 USD 的面子集（`materialBind` 族），各自绑定。透射材质使用随 USDZ 打包的 OmniSurface 入口，运行时依赖 Isaac / Omniverse 标准 MDL 库；仅支持 USD Preview Surface 的查看器不能等价显示透射。
