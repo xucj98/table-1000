@@ -14,16 +14,16 @@ the subtasks and steps shifted to their place, ``status`` and ``failure`` of the
 and ``parts``: each part's batch, commit, steps, first step in the joined episode and
 length.
 
-``DIR`` (default ``<backend>-joined`` next to the batches, e.g.
-``data/scenes/<scene>/isaac-cpu-joined``) gets ``trajectories.hdf5`` and
-``trajectories_failed.hdf5`` (by the last part's status) and a ``summary.json``, so
-``render.py <scene> --physics <backend>-joined`` renders them.
+The joined episodes are the scene's batch like one run of the whole expert: ``DIR``
+(default the step batches' parent, ``data/scenes/<scene>/<backend>/``) is replaced, but
+for its step batches, by ``trajectories.hdf5`` and ``trajectories_failed.hdf5`` (by the
+last part's status) and a ``summary.json``; ``render.py <scene> --physics <backend>``
+renders them.
 """
 
 import argparse
 import json
 from pathlib import Path
-import shutil
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -46,11 +46,12 @@ def episodes(batch):
 def main(argv=None):
     import h5py
     from table_1000.common.batch import seeds_record
-    from table_1000.scenes.recordings import concatenate, decoded_attrs
+    from table_1000.scenes.recordings import clear_batch, concatenate, decoded_attrs
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('batches', type=Path, nargs='+', help='batch directories, in step order')
     parser.add_argument('--output', type=Path,
-                        help='the joined batch directory, replaced (default: <backend>-joined next to the batches)')
+                        help="the joined batch directory, replaced but for its step batches (default: the step "
+                             "batches' parent, the scene's <backend>/)")
     args = parser.parse_args(argv)
     summaries = []
     for index, batch in enumerate(args.batches):
@@ -61,7 +62,8 @@ def main(argv=None):
             parser.error(f'{batch} did not start from {args.batches[index - 1]}')
         summaries.append(summary)
     first = summaries[0]
-    args.output = args.output or args.batches[-1].parent / f'{first["physics"]}-joined'
+    # By default the scene's batch, <backend>/, which holds the step batches.
+    args.output = args.output or args.batches[-1].parent
     if (first.get('steps_run') or [1])[0] != 1 or first.get('from'):
         parser.error(f'{args.batches[0]} does not start from the initial states (step 1)')
     found = [episodes(batch) for batch in args.batches]
@@ -87,8 +89,7 @@ def main(argv=None):
             chain.append((index, group, status, cut, done))
             index += 1
         chains[seed] = chain
-    shutil.rmtree(args.output, ignore_errors=True)
-    args.output.mkdir(parents=True)
+    clear_batch(args.output)
     files = {kind: h5py.File(args.output / f'{kind}.hdf5', 'w') for kind in ('trajectories', 'trajectories_failed')}
     counts = {}
     try:

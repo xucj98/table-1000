@@ -114,7 +114,7 @@ def write_batch(directory, episodes, summary):
 
 def test_join_cuts_each_part_at_the_checkpoint_the_next_started_from(tmp_path):
     from scripts.scenes.join_steps import main
-    first, second = tmp_path / 'scene' / 'one', tmp_path / 'scene' / 'two'
+    first, second = tmp_path / 'scene' / 'isaac-cpu' / 'steps1-2', tmp_path / 'scene' / 'isaac-cpu' / 'steps2-3'
     # Steps 1-2 ran in the first batch; the second ran step 2-3 again from the step 1 checkpoint (at 2).
     write_batch(first, {
         0: ('success', [1, 2, 3, 4], {'steps': [{'step': 1, 'at': 2}, {'step': 2, 'at': 4}],
@@ -131,8 +131,11 @@ def test_join_cuts_each_part_at_the_checkpoint_the_next_started_from(tmp_path):
                                    'subtasks': [{'instruction': 'b', 'start': 0, 'end': 3}]}),
         2: ('success', [5, 6], {'steps': [{'step': 2, 'at': 1}, {'step': 3, 'at': 2}], 'subtasks': []})},
         {'steps_run': [2, 3], 'from': str(first), 'commit': 'c2'})
-    main([str(first), str(second), '--output', str(tmp_path / 'scene' / 'joined')])
-    with h5py.File(tmp_path / 'scene' / 'joined' / 'trajectories.hdf5', 'r') as file:
+    (tmp_path / 'scene' / 'isaac-cpu' / 'episodes').mkdir()     # an earlier batch's, replaced
+    main([str(first), str(second)])     # into the scene's batch, isaac-cpu/, keeping the step batches
+    joined = tmp_path / 'scene' / 'isaac-cpu'
+    assert not (joined / 'episodes').exists() and (first / 'summary.json').is_file()
+    with h5py.File(joined / 'trajectories.hdf5', 'r') as file:
         group = file['data/demo_0']
         assert group['actions'][:, 0].tolist() == [1, 2, 7, 8, 9]
         assert group['states/x'][:, 0].tolist() == [1, 2, 7, 8, 9] and group.attrs['num_samples'] == 5
@@ -141,10 +144,10 @@ def test_join_cuts_each_part_at_the_checkpoint_the_next_started_from(tmp_path):
             ('a', 0, 2), ('b', 2, 5)]
         assert [part['commit'] for part in json.loads(group.attrs['parts'])] == ['c1', 'c2']
         assert file['data/demo_2']['actions'][:, 0].tolist() == [1, 2, 5, 6]
-    with h5py.File(tmp_path / 'scene' / 'joined' / 'trajectories_failed.hdf5', 'r') as file:
+    with h5py.File(joined / 'trajectories_failed.hdf5', 'r') as file:
         assert json.loads(file['data/demo_1'].attrs['failure'])['reason'] == 'r'
         assert file['data/demo_3'].attrs['status'] == 'error'
-    summary = json.loads((tmp_path / 'scene' / 'joined' / 'summary.json').read_text())
+    summary = json.loads((joined / 'summary.json').read_text())
     assert (summary['succeeded'], summary['failed'], summary['error']) == (2, 1, 1)
     assert summary['seeds']['count'] == 4
     with pytest.raises(SystemExit):     # the first batch must start from the initial states

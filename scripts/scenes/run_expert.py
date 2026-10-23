@@ -7,9 +7,9 @@ Runs ``expert.py`` from every initial state of ``<input>/<scene>/initial_states.
 split into ``--jobs`` contiguous parts, one process each, spread over ``--gpus`` or
 submitted through ``--launcher`` (see ``table_1000/common/batch.py``); seeds whose
 process stopped before their episode run again (``--retries``). Logs and the parts'
-files are in ``outputs/scenes/<scene>/<backend>[-steps<k>-<m>]/``. The batch replaces
-``<output>/<scene>/<backend>/`` (``<output>`` = ``data/scenes``; ``<backend>-steps<k>-<m>`` with
-``--steps``), renders included:
+files are in ``outputs/scenes/<scene>/<backend>[/steps<k>-<m>]/``. The batch replaces
+``<output>/<scene>/<backend>/`` (``<output>`` = ``data/scenes``), renders included, but keeps the
+batches of some steps in it; with ``--steps`` it is ``<backend>/steps<k>-<m>/``:
 
 - ``trajectories.hdf5``, ``trajectories_failed.hdf5``: succeeded and failed episodes,
   ``data/demo_<seed>`` in Isaac Lab's recorder format;
@@ -117,7 +117,7 @@ def main(argv=None):
         return
     import h5py
     from table_1000.experts.generate import checkpoint_path, merge_checkpoints, step_rates, summarize
-    from table_1000.scenes.recordings import merge
+    from table_1000.scenes.recordings import STEPS_PREFIX, clear_batch, merge
     jobs = job_count(parser, args)
     root = args.root.resolve()
     first = args.steps[0] if args.steps else 1
@@ -153,13 +153,13 @@ def main(argv=None):
         parser.error(f'{states} was made on {attrs.get("physics")}, not {args.physics}')
     if not seeds:
         parser.error(f'{states} holds no initial states')
-    name = args.physics + (f'-steps{args.steps[0]}-{args.steps[1]}' if args.steps else '')
+    name = Path(args.physics) / (f'{STEPS_PREFIX}{args.steps[0]}-{args.steps[1]}' if args.steps else '')
     directory = (args.output / args.scene / name).resolve()
     staging = root / 'outputs' / 'scenes' / args.scene / name
     if args.source and directory == args.source.resolve():
         parser.error(f'the batch would replace {args.source}, which it starts from; give another --output')
-    shutil.rmtree(directory, ignore_errors=True)
-    shutil.rmtree(staging, ignore_errors=True)
+    clear_batch(directory)
+    clear_batch(staging)
     checkout = commit(root)
     works = {}
 
