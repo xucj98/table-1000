@@ -169,6 +169,38 @@ class Cylinder:
             yield axis, self.length, (np.array([np.cos(phi), np.sin(phi), 0.]),), [np.zeros(3)]
 
 
+# A part is taken for a cylinder when its collision vertices, seen along its longest extent, lie all
+# round it: no gap between their directions wider than ROUND_GAP (a polygonal barrel, not a square).
+ROUND_GAP = np.radians(50.)
+
+
+def fitted(points):
+    """``(shape, offset)`` for collision vertices ``points`` (``[N, 3]``, in a body frame): a
+    :class:`Cylinder` along their longest extent where they lie all round it (see ``ROUND_GAP``),
+    else their axis-aligned :class:`Box`; ``offset`` places the shape in the body frame."""
+    low, high = points.min(0), points.max(0)
+    offset = np.eye(4)
+    offset[:3, 3] = (low + high) / 2
+    size = high - low
+    axis = int(np.argmax(size))
+    across = [i for i in range(3) if i != axis]
+    local = points[:, across] - offset[across, 3]
+    radius = np.linalg.norm(local, axis=1)
+    if size[axis] > max(size[across]) and np.all(radius > 1e-6):
+        angles = np.sort(np.arctan2(local[:, 1], local[:, 0]))
+        gaps = np.diff(np.r_[angles, angles[0] + 2 * np.pi])
+        if gaps.max() <= ROUND_GAP:
+            # The cylinder's Z along the longest extent.
+            offset[:3, :3] = _along(axis)
+            return Cylinder(float(radius.max()), float(size[axis])), offset
+    return Box(tuple(size)), offset
+
+
+def _along(axis):
+    """A rotation taking Z to coordinate axis ``axis`` (a right-handed frame)."""
+    return np.eye(3)[:, [(axis + 1) % 3, (axis + 2) % 3, axis]]
+
+
 def _slides(extent, edge=.025):
     """Contact centres along an object side of ``extent``: the middle, and on a long side
     (more than 6 cm) also halfway to positions ``edge`` from its ends."""

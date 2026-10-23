@@ -6,7 +6,7 @@ import time
 import numpy as np
 
 from table_1000.experts.context import DT, Unreachable
-from table_1000.experts.grasps import SUPPORT_CLEARANCE, Box, grasp_candidates, standoff, translated
+from table_1000.experts.grasps import SUPPORT_CLEARANCE, fitted, grasp_candidates, standoff, translated
 from table_1000.experts.skills.common import (APPROACH, CANDIDATE_PLANS, IK_ATTEMPTS, ROOM_PLACES, SUPPORT_DISTANCE,
                                               Target, Unmet, collisions, normalized, planning_object)
 from table_1000.experts.solver import PlanningFailed
@@ -42,8 +42,9 @@ class Grasping:
     # -- what is grasped -----------------------------------------------------------------
     def target(self, obj, part=None, shape=None, offset=None, body=None):
         """The :class:`Target` of scene object ``obj`` (an asset, or a primitive with ``shape``):
-        ``part`` (a part or body name, default all of it), shaped by its collision box in the frame
-        of ``body`` (default the first body of the part), or by ``shape`` at ``offset`` there."""
+        ``part`` (a part or body name, default all of it), shaped in the frame of ``body`` (default
+        the first body of the part) by a cylinder where it is round, else its collision box (see
+        :func:`~table_1000.experts.grasps.fitted`), or by ``shape`` at ``offset`` there."""
         ctx = self.ctx
         offset = np.eye(4) if offset is None else np.asarray(offset, dtype=float)
         if obj not in ctx.scene.OBJECTS:
@@ -60,9 +61,7 @@ class Grasping:
             raise KeyError(f'{obj} has no part {part!r}')
         body = body or parts[0][0]
         if shape is None:
-            low, high = geometry.bounds(part, body)
-            shape, offset = Box(tuple(high - low)), np.eye(4)
-            offset[:3, 3] = (low + high) / 2
+            shape, offset = fitted(geometry.points(part, body))
         return Target(obj, [f'{obj}:{name}' for _, name in parts], f'{obj}:{body}', shape, offset,
                       geometry.points(None, body))
 
