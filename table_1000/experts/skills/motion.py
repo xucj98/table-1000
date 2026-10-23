@@ -4,7 +4,8 @@ import numpy as np
 
 from table_1000.experts.context import Unreachable, steps
 from table_1000.experts.grasps import standoff, translated
-from table_1000.experts.skills.common import CANDIDATE_PLANS, IK_ATTEMPTS, RETREATS, SUPPORT_DISTANCE, collisions, normalized
+from table_1000.experts.skills.common import (CANDIDATE_PLANS, IK_ATTEMPTS, RETREATS, ROOM_PLACES, SUPPORT_DISTANCE,
+                                              collisions, normalized)
 from table_1000.experts.solver import PlanningFailed, note_torso
 
 PARTIALS = (.75, .5, .25)     # fractions of a straight move tried when all of it does not plan
@@ -149,7 +150,7 @@ class Motion:
         before = ctx.poses()[target.body][:3, 3]
         # Either arm with the torso lift where it is (all the way through the push), then moving it too;
         # none in reach with the other arm out: again with it in.
-        tried, pushed, stowed = set(), False, False
+        tried, pushed, stowed, roomed = set(), False, False, False
         while not pushed:
             for lift, (index, (candidate, tilt, contact)) in ((lift, option) for lift in (False, True)
                                                               for option in enumerate(options)):
@@ -179,9 +180,22 @@ class Motion:
                     solver.allow(touched, False)
                     ctx.note('next push', arm=candidate, tilt=float(tilt), reason=error.reason, **collisions(error))
             if not pushed:
-                if stowed or not self.stow():
+                if not stowed and self.stow():
+                    tried, stowed = set(), True
+                elif not roomed and ctx.spec.base:
+                    # None in reach from here: the base moves to reach the first contacts (and the push
+                    # from them), then again.
+                    roomed = True
+                    paths = {}
+                    for candidate, _, contact in options:
+                        paths.setdefault(candidate, [])
+                        if len(paths[candidate]) < ROOM_PLACES:
+                            paths[candidate].append([translated(contact, -direction * PUSH_GAP), contact,
+                                                     translated(contact, direction * distance)])
+                    self.make_room(paths, need=1)
+                    tried, stowed = set(), True
+                else:
                     ctx.fail('no reachable push', Unreachable, target=target.names)
-                tried, stowed = set(), True
         try:
             self.move_by_displacement(candidate, direction * distance, drag=(target.obj, target.body.split(':', 1)[1]))
         finally:

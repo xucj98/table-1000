@@ -57,7 +57,8 @@ object and whatever rests on them.
 **push** -- the closed fingertips against the face of a part that ``direction``
 points into, then straight on by ``distance`` (a drawer pushed shut by its front);
 the hand comes level with the push or tilted down (``PUSH_TILTS``), and what the
-part's body carries moves with it as in a drag.
+part's body carries moves with it as in a drag; where none is in reach, the base first moves to
+reach the first ones.
 
 **release** -- open the fingers to the grasp's opening and back out along the
 approach (or up).
