@@ -185,7 +185,7 @@ class Grasping:
                         self.rejected['need'] += 1
                         continue
                     skip.add((arm, index))
-                    yield arm, grasp, supports, q_grasp, q_pre, lift
+                    yield arm, grasp, supports, q_grasp, q_pre, lift, (arm, index)
 
     def why(self, arm, pose, start, allowed):
         """Count, in ``self.rejected['collisions']``, what an IK solution of ``pose`` that ignores
@@ -214,8 +214,11 @@ class Grasping:
         if need is not None:
             arms = [a for a in arms if a in need.arms]
         skip, regrasps, started, roomed, stowed = set(), 0, time.perf_counter(), False, False
+        # Candidates no free-space plan reached: tried again only once the base has moved (stowing the
+        # other arm leaves the narrow way there as it was).
+        unplanned = set()
         while True:
-            reached = self.reach(target, arms, skip, point, approach, then, max_angle, need)
+            reached = self.reach(target, arms, skip, point, approach, then, max_angle, need, unplanned)
             # Candidates, none in reach with the other arm out: again with it in, before the base moves;
             # first the arms but the nearest (which may then reach from where it is), then all.
             # (None at all within max_angle: the next, wider one is tried instead.)
@@ -225,8 +228,8 @@ class Grasping:
                 nearest = min(self.arms, key=lambda a: np.linalg.norm((self.shoulder(a) - self.centre(target))[:2]))
                 for out in ([a for a in self.arms if a != nearest], None):
                     if reached is None and self.stow(out, why=self.rejected):
-                        skip = set()
-                        reached = self.reach(target, arms, skip, point, approach, then, max_angle, need)
+                        skip = set(unplanned)
+                        reached = self.reach(target, arms, skip, point, approach, then, max_angle, need, unplanned)
             if reached is None and not roomed and ctx.spec.base and base:
                 # None in reach from here: the base moves to reach the first candidates, then again.
                 roomed = True
@@ -234,9 +237,12 @@ class Grasping:
                 if any(paths.values()):
                     # The fingers touch what options lets them: the target and its supports.
                     _, supports = self.obstacles(arms[0], target, ctx.poses()[target.body] @ target.offset)
+                    before = self.base_pose()
                     self.make_room(paths, need=1, touch=[*target.names, *supports])
-                    skip = set()
-                    reached = self.reach(target, arms, skip, point, approach, then, max_angle, need)
+                    if not np.allclose(before, self.base_pose(), atol=1e-3):
+                        unplanned.clear()
+                    skip = set(unplanned)
+                    reached = self.reach(target, arms, skip, point, approach, then, max_angle, need, unplanned)
             if reached is None:
                 # With a need and the base held, only this stance failed: Unmet, for the chain to adapt (the base moves).
                 unmet = unmet or need is not None and (not base or self.rejected['need'])
@@ -293,12 +299,13 @@ class Grasping:
                 paths[arm].append(path)
         return paths
 
-    def reach(self, target, arms, skip, point, approach, then, max_angle=None, need=None):
+    def reach(self, target, arms, skip, point, approach, then, max_angle=None, need=None, unplanned=None):
         """Move to the first grasp of :meth:`options` whose motion plans, fingers open around the
-        object; ``(arm, grasp, supports)``, or None when no candidate is left."""
+        object; ``(arm, grasp, supports)``, or None when no candidate is left. Those whose free-space
+        plan failed go into ``unplanned`` (ids as in ``skip``)."""
         ctx, tried = self.ctx, {False: 0, True: 0}
-        for arm, grasp, supports, q_grasp, q_pre, lift in self.options(target, arms, skip, point, approach, then,
-                                                                      max_angle, tried, need):
+        for arm, grasp, supports, q_grasp, q_pre, lift, key in self.options(target, arms, skip, point, approach, then,
+                                                                           max_angle, tried, need):
             tried[lift] += 1
             solver = self.solvers[arm]
             try:
@@ -312,6 +319,8 @@ class Grasping:
             except PlanningFailed as error:
                 solver.allow([*target.names, *supports], False)
                 ctx.note('next grasp', arm=arm, cost=grasp.cost, lift=lift, reason=error.reason, **collisions(error))
+                if unplanned is not None and error.reason.startswith('RRTConnect'):
+                    unplanned.add(key)
                 if not lift and error.reason.startswith('RRTConnect'):
                     # No way there at this torso height: the other candidates held so share the narrow
                     # passage (a hand from high down to a low handle); on to those moving the lift.
