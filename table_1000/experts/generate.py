@@ -110,9 +110,10 @@ class Generator:
 
     DEVICES = {'isaac-cpu': 'cpu'}
 
-    def __init__(self, scene_name, output, assets, root, physics='isaac-cpu', steps=None, source=None):
+    def __init__(self, scene_name, output, assets, root, physics='isaac-cpu', steps=None, source=None, **env_kwargs):
         """``steps``: ``(first, last)`` of the expert's steps to run (all when None); ``source``: where
-        the states come from (a checkpoint file), for the reports."""
+        the states come from (a checkpoint file), for the reports; ``env_kwargs`` (cameras, views) go to
+        the :class:`~table_1000.sim.isaaclab.env.RobotEnv`."""
         from table_1000.robots import load_spec
         from table_1000.robots.kinematics import RobotModel
         from table_1000.sim.isaaclab import recording
@@ -127,7 +128,7 @@ class Generator:
                              f'{len(getattr(self.expert, "STEPS", ()))} STEPS')
         self.spec = load_spec(Path(self.scene.ROBOT['asset']).name, root)
         self.env = RobotEnv(self.scene, self.spec, self.assets, root=root, device=self.DEVICES[physics],
-                            recorders=recording.recorder_cfg(self.output))
+                            recorders=recording.recorder_cfg(self.output), **env_kwargs)
         self.model = RobotModel(self.spec, self.output / 'planning', root)
         for name in ('episodes', 'checkpoints'):
             (self.output / name).mkdir(parents=True, exist_ok=True)

@@ -64,8 +64,41 @@ uv run python scripts/scenes/run_expert.py 000002 --physics isaac-cpu --dev --na
     --from <批次> --seeds 4 44 --jobs 2 --launcher '<调度命令>'
 ```
 
+从前一步的检查点重跑，失败的那一步要从头做起，中间随机数和状态都和原来不同，失败不一定再出现。失败轨迹录下了每个控制步的完整场景状态，可以把失败的那一刻存成快照，从那里重跑：
+
+```bash
+uv run python scripts/experts/failure_snapshots.py <批次> [--seeds 4 44] [--before 0]
+uv run python scripts/scenes/run_expert.py 000002 --physics isaac-cpu --dev --from <快照批次> --steps 4 \
+    --seeds 4 44 --repeats 10 --jobs 2 --launcher '<调度命令>'
+```
+
+快照批次 `runs/expert/<场景>/<日期>-<时间>-<提交>-snapshots[-<标签>]/` 里，每个失败 seed 的快照存为它失败那一步 k 的起点 `checkpoints/step<k-1>.hdf5`：失败前 `--before` 秒（不早于这一步开始）整个场景的状态，加上那一控制步录下的动作，作为各动作项保持的指令（夹着笔的夹爪恢复后继续夹紧）。专家从这一步的第一个子任务重新开始，并不知道手里已经拿着东西。
+
 一个案例由“批次、步骤、seed”确定：所有历史运行都在 `runs/expert/<场景>/` 下，目录名带提交，`summary.json` 记录命令行和来源批次（`from`），可以据此整理各次运行的失败。
 
 ## 同一检查点重复运行
 
 同一检查点、同一提交重复运行，随机数相同（`ctx.rng` 和 MPlib 的种子由 seed 和起始步骤决定），但 RRTConnect 有规划时限，机器负载不同时路径可能不同，个别 seed 的结果可能不一致。
+
+## 人工遥操案例
+
+专家解不了的案例，可以人工遥操完成这一步，看可行的做法，并留下轨迹：
+
+```bash
+uv run python scripts/experts/teleop.py 000002 --gpu 0 --port 8765
+```
+
+在有 GPU 的机器上运行（`--gpu` 选显存空闲的卡），用浏览器打开 `http://<机器>:8765/`（例如先 `ssh -L 8765:localhost:8765 <机器>`）。左侧列出 `runs/expert/000002/` 下所有开发运行里失败过的案例（批次、失败的步骤、seed），`--batches <批次> ...` 另外加入其他批次；用 `--repeats` 跑过的批次按成功次数排序，成功率最低的在前。每个案例有两个起点：
+
+- step：失败那一步开始时的检查点；
+- failure：失败的那一刻，即失败轨迹的最后一个状态（失败时录了轨迹的运行才有，`--repeats` 的第 2 次起不录）；页面上的“s before the failure”设成 N 时，从失败前 N 秒开始（不早于这一步开始），用来看失败前发生了什么。
+
+选一个起点，仿真回到那个状态，由你来完成这一步：
+
+- 画面：一个第三视角（右键拖动转动，中键或 Shift+右键拖动平移，滚轮缩放）和机器人的 RGB 相机；左键拖动任一画面，在它的成像平面内移动末端目标（红点），Shift+滚轮沿视线前后移动；
+- 按钮选择控制哪只手、开合各自的夹爪（显示开口）；
+- 键盘：Z/X、C/V、B/N 旋转末端，I/K、J/L、U/O 沿底盘坐标轴平移末端，W/S、A/D 移动和转动底盘，R/F 升降，方向键转头，Tab 切换手臂，空格开合夹爪，P 暂停，按住 Shift 加速（先点一下页面）；
+- “Check”在当前状态上运行这一步的检查，只显示结果，不结束录制；
+- “Done”或“Not done”按你的判断结束这一步。检查可能写得不对，所以结果以你的判断为准，结束时的检查结果另外记录，两者不一致的案例说明检查需要修改。
+
+每次尝试是一个新批次 `runs/teleop/000002/<日期>-<时间>-<提交>-step<k>-seed<s>[-failure]/`，结构与 `run_expert.py --dev --steps k --from <批次>` 的结果相同：轨迹（Done 的在 `trajectories.hdf5`，否则在 `trajectories_failed.hdf5`）、`episodes/<seed>.json`（`teleop` 中记录案例、起点、每次检查和最终判断）、`summary.json`；Done 的还有第 k 步的检查点，后面的步骤可以 `--from` 它接着跑，`render.py --batch` 可以渲染录像。Ctrl+C 结束程序，进行中的那次尝试不保存。
