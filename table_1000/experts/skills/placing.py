@@ -161,12 +161,16 @@ class Placing:
                 # Held so (its parts carried with the hand), as it will be when it is put down.
                 solver, poses = self.solvers[arm], ctx.poses()
                 body = np.linalg.inv(poses[target.body])
-                parts = [name for name, obj in solver.world.objects.items() if name.startswith(obj_prefix)]
+                attached = solver.planner.planning_world.is_object_attached
+                # Those already carried (asked once picked) stay as they are held.
+                parts = [name for name, obj in solver.world.objects.items()
+                         if name.startswith(obj_prefix) and not attached(name)]
                 for name in parts:
                     solver.attach_at(name, tcp_object @ body @ poses[solver.world.objects[name].body])
                 try:
                     reached = (self.in_reach_down(arm, placed, tcp_object, clearance, above) for placed, _ in options)
-                    verdicts[key] = sum(itertools.islice((1 for ok in reached if ok), NEED_REACHED)) >= NEED_REACHED
+                    required = min(NEED_REACHED, len(options)) or 1     # a small region may have fewer
+                    verdicts[key] = sum(itertools.islice((1 for ok in reached if ok), required)) >= required
                 finally:
                     for name in parts:
                         solver.detach(name)
