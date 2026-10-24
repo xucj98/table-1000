@@ -136,29 +136,33 @@ class Generator:
                          'action_layout': self.env.action_layout}
         self.load_s = time.perf_counter() - started
 
-    def run(self, seed, attempt, state, start=None):
+    def run(self, seed, attempt, state, start=None, repeat=0):
         """Episode ``seed`` from its initial ``state`` (made by sub-seed ``attempt``), or from a
         checkpoint's with ``start`` the robot where the seed's episode began; its report has the
         machine's load meanwhile (``load``, see :class:`~table_1000.common.batch.Load`) and the CPU
-        seconds the process used (``cpu_s``)."""
+        seconds the process used (``cpu_s``). ``repeat`` r > 0 runs it again from the same state
+        with other random streams, for how its outcome varies: report ``episodes/<seed>-<r>.json``,
+        no trajectory and no checkpoints."""
         from table_1000.common.batch import Load
         with Load() as load:
-            report, started = self.episode(seed, attempt, state, start)
+            report, started = self.episode(seed, attempt, state, start, repeat)
         report.update(load=load.record(), cpu_s=sum(sample['cpu_s'] for sample in load.samples))
         return self.save(report, started)
 
-    def episode(self, seed, attempt, state, start):
+    def episode(self, seed, attempt, state, start, repeat):
         started = time.perf_counter()
         first = self.steps[0] if self.steps else 1
-        report = {'scene': self.name, 'seed': seed, 'attempt': attempt, 'steps_run': self.steps, 'from': self.source}
+        report = {'scene': self.name, 'seed': seed, 'attempt': attempt, 'steps_run': self.steps, 'from': self.source,
+                  'repeat': repeat}
         self.env.reset_to_state(state)
         init_s = time.perf_counter() - started
         self.recording.begin(self.env)
-        # MPlib's IK restarts and RRTConnect draw from its own generator; a later step from its own.
+        # MPlib's IK restarts and RRTConnect draw from its own generator; a later step, or a repeat,
+        # from its own.
         import mplib.pymp
-        mplib.pymp.set_global_seed(seed + 1 + 1_000_003 * (first - 1))   # OMPL rejects 0
-        ctx = Context(self.env, self.model, self.scene, self.assets,
-                      np.random.default_rng([seed, attempt, 1] + ([first] if first > 1 else [])), start=start,
+        mplib.pymp.set_global_seed(seed + 1 + 1_000_003 * (first - 1) + 2_000_029 * repeat)   # OMPL rejects 0
+        streams = [seed, attempt, 1] + ([first] if first > 1 or repeat else []) + ([repeat] if repeat else [])
+        ctx = Context(self.env, self.model, self.scene, self.assets, np.random.default_rng(streams), start=start,
                       only=self.steps)
         try:
             if start is not None:
@@ -187,6 +191,8 @@ class Generator:
                               for name, joints in self.env.privileged()['joints'].items()}},
             timings={'init_s': init_s, **{key: sum(s.timings[key] for s in ctx.solvers.values())
                                           for key in ('planning_s', 'executing_s')}})
+        if repeat:
+            return report, started
         checkpoints = ctx.checkpoints
         if first == 1 and start is None and hasattr(self.expert, 'STEPS'):
             checkpoints = [{'step': 0, 'name': INITIAL_STATE, 'at': 0, 'state': state}, *checkpoints]
@@ -204,7 +210,8 @@ class Generator:
 
     def save(self, report, started):
         report['wall_s'] = time.perf_counter() - started
-        (self.output / 'episodes' / f'{report["seed"]}.json').write_text(json.dumps(report, indent=1, default=float))
+        name = f'{report["seed"]}-{report["repeat"]}' if report['repeat'] else str(report['seed'])
+        (self.output / 'episodes' / f'{name}.json').write_text(json.dumps(report, indent=1, default=float))
         return report
 
     def close(self):
@@ -240,6 +247,22 @@ def step_rates(reports, seeds, parent=None):
                      'progressive_rate': completed / base if base else None})
         started = completed
     return {'seeds': base, 'rows': rows}
+
+
+def repeat_rates(reports, seeds, count):
+    """Of a batch run ``count`` times per seed (``--repeats``), from all its reports: each seed's
+    successes (out of ``count``; seeds without reports have fewer), the failures by ``"subtask:
+    reason"`` and seed with their number, and the success rate over all the runs."""
+    succeeded, failures = dict.fromkeys(map(str, seeds), 0), {}
+    for report in reports:
+        if report['status'] == 'success':
+            succeeded[str(report['seed'])] += 1
+        else:
+            seeds_failed = failures.setdefault(failure_key(report), {})
+            seeds_failed[str(report['seed'])] = seeds_failed.get(str(report['seed']), 0) + 1
+    return {'count': count, 'succeeded': succeeded,
+            'success_rate': sum(succeeded.values()) / (count * len(seeds)) if seeds else None,
+            'failures': dict(sorted(failures.items(), key=lambda item: -sum(item[1].values())))}
 
 
 def summarize(reports, seeds):

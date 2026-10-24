@@ -343,3 +343,14 @@ def test_build_scene_layouts(tmp_path, monkeypatch):
     attrs, states = read_states(directory / 'layouts' / '1' / 'initial_states.hdf5')
     assert attrs['layout'] == 1 and list(states) == [0, 1]
     assert Image.open(directory / 'layouts.jpg').size == (2 * build_scene.TILE_WIDTH, 2 * (216 + build_scene.CAPTION))
+
+
+def test_repeat_rates_count_every_run():
+    from table_1000.experts.generate import repeat_rates
+    reports = [{'seed': 4, 'repeat': 0, 'status': 'success'}, {'seed': 4, 'repeat': 1, 'status': 'failed',
+                                                               'failure': {'subtask': 'open', 'reason': 'no reachable grasp'}},
+               {'seed': 72, 'repeat': 0, 'status': 'failed', 'failure': {'subtask': 'take', 'reason': 'no reachable grasp'}},
+               {'seed': 72, 'repeat': 1, 'status': 'failed', 'failure': {'subtask': 'take', 'reason': 'no reachable grasp'}}]
+    rates = repeat_rates(reports, [4, 72], 2)
+    assert rates['succeeded'] == {'4': 1, '72': 0} and rates['success_rate'] == .25
+    assert rates['failures'] == {'take: no reachable grasp': {'72': 2}, 'open: no reachable grasp': {'4': 1}}
