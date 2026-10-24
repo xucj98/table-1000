@@ -138,7 +138,8 @@ class Placing:
              step=PLACE_STEP, margin=PLACE_MARGIN):
         """What :meth:`place` with these arguments needs of the hand that will hold ``obj`` (not held
         yet, at its pose now): an :class:`~table_1000.experts.skills.chain.InHand` accepting the holds
-        from which ``NEED_REACHED`` of its placements are in reach (IK at the release and above it)."""
+        from which ``NEED_REACHED`` of its placements are in reach (IK at the release and above it),
+        and the hands at the first of them (the TCP at the release and above it, per hold)."""
         from table_1000.experts.skills.chain import InHand
         ctx = self.ctx
         target = self.target(obj)
@@ -171,7 +172,11 @@ class Placing:
                         solver.detach(name)
                     solver.world.update(poses)
             return verdicts[key]
-        return InHand(obj, accepts, [arm for arm in self.arms if arm not in self.held])
+        def hands(arm, tcp_object):
+            # Down to each of the first NEED_REACHED of those placements, one path each: release, then above.
+            releases = [translated(placed, [0., 0., clearance]) @ np.linalg.inv(tcp_object) for placed, _ in options]
+            return [[release, translated(release, [0., 0., above])] for release in releases[:NEED_REACHED]]
+        return InHand(obj, accepts, [arm for arm in self.arms if arm not in self.held], hands)
 
     def in_reach_down(self, arm, placed, tcp_object, clearance, above):
         """Whether ``arm`` holding the object as ``tcp_object`` has IK at its release at ``placed``

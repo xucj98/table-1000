@@ -233,7 +233,7 @@ class Grasping:
             if reached is None and not roomed and ctx.spec.base and base:
                 # None in reach from here: the base moves to reach the first candidates, then again.
                 roomed = True
-                paths = self.grasp_paths(target, arms, point, approach, then, max_angle)
+                paths = self.grasp_paths(target, arms, point, approach, then, max_angle, need)
                 if any(paths.values()):
                     # The fingers touch what options lets them: the target and its supports.
                     _, supports = self.obstacles(arms[0], target, ctx.poses()[target.body] @ target.offset)
@@ -275,9 +275,11 @@ class Grasping:
         self.log.append(result)
         return result
 
-    def grasp_paths(self, target, arms, point=None, approach=None, then=None, max_angle=None):
+    def grasp_paths(self, target, arms, point=None, approach=None, then=None, max_angle=None, need=None):
         """``{arm: paths}``: the world TCP poses of the first ``ROOM_PLACES`` grasp candidates of each
-        arm, each with its pre-grasp before it (and the ``then`` move after it): what the base moves to reach."""
+        arm, each with its pre-grasp before it (and the ``then`` move after it): what the base moves to
+        reach; with a ``need`` that says where the hand takes the object next (``InHand.hands``), a path
+        per such place after it, so that the base stands where both are in reach."""
         transform = self.ctx.poses()[target.body] @ target.offset
         centre = transform[:3, 3]
         paths = {arm: [] for arm in arms}
@@ -296,6 +298,11 @@ class Grasping:
                     path.append(translated(grasp.pose, then))
                     if not lifting(then):
                         path.append(standoff(path[-1], APPROACH))   # letting go there (see options)
+                if need is not None and need.hands is not None:
+                    if arm in need.arms:
+                        body = self.ctx.poses()[target.body]
+                        paths[arm] += [path + hands for hands in need.hands(arm, np.linalg.inv(grasp.pose) @ body)]
+                    continue
                 paths[arm].append(path)
         return paths
 
