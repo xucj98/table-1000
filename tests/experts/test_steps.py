@@ -163,8 +163,26 @@ def test_join_cuts_each_part_at_the_checkpoint_the_next_started_from(tmp_path):
     assert summary['seeds']['count'] == 4
     with pytest.raises(SystemExit):     # the first batch must start from the initial states
         main([str(second), '--output', str(tmp_path / 'scene' / 'other')])
-    with pytest.raises(SystemExit):     # nor replace a batch it joins
+    with pytest.raises(SystemExit):     # nor replace a batch it joins, or one inside it
         main([str(first), str(second), '--output', str(second)])
+    with pytest.raises(SystemExit):
+        main([str(first), str(second), '--output', str(tmp_path / 'scene' / 'isaac-cpu')])
+    assert (first / 'summary.json').is_file()
+
+
+def test_a_failure_case_is_the_last_run_of_its_subtask():
+    from scripts.experts.failure_cases import case, failing_start
+    report = {'seed': 3, 'duration_s': 1., 'wall_s': 2., 'control_steps': 50,
+              'failure': {'subtask': 'pick', 'reason': 'no reachable grasp'},
+              'subtasks': [{'instruction': 'pick', 'start': 0, 'end': 10}, {'instruction': 'place', 'start': 10, 'end': 20},
+                           {'instruction': 'pick', 'start': 20, 'end': None}],
+              'events': [{'step': 5, 'subtask': 'pick', 'note': 'next grasp', 'reason': 'old'},
+                         {'step': 25, 'subtask': 'pick', 'note': 'next grasp', 'reason': 'goal in collision',
+                          'goal_collisions': [['finger', 'drawer', 'drawer']]}]}
+    assert failing_start(report) == 20
+    numbers = case(report)
+    assert numbers['rejections'] == {'goal in collision': 1} and numbers['collisions'] == {'finger - drawer': 1}
+    assert failing_start({**report, 'failure': {'subtask': None, 'reason': 'r'}}) == 50
 
 
 def test_the_steps_of_a_resumed_run_keep_the_seed_s_start():

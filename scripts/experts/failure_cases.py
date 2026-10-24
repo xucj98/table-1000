@@ -6,8 +6,8 @@ and where the episode stopped, with the numbers of its report.
 Runs on a GPU. For every failed seed of the batch (``--seeds``: only those), into
 ``<out>/<seed>/`` (``<out>`` = ``<batch>/cases``):
 
-- ``start_<view>.jpg``, ``end_<view>.jpg``: the first state of the failing subtask and the last
-  state, from the robot's head camera (``face_view``), the scene's own views (``wide``, ``close``)
+- ``start_<view>.jpg``, ``end_<view>.jpg``: the state where the failing subtask began (its
+  last run) and the final state, from the robot's head camera (``face_view``), the scene's own views (``wide``, ``close``)
   and four around the scene's ``wide`` target (``top``, ``right``, ``left``, ``front``);
 - ``start.jpg``, ``end.jpg``: those views tiled;
 - ``case.json``: the commit and seed, the failure (subtask, reason, details), what the motion
@@ -46,12 +46,21 @@ def views(scene):
                               for name, (offset, focal) in AROUND.items()}}
 
 
+def failing_start(report):
+    """The control step the failing subtask began at, its last run (a subtask may run again); the
+    episode's end when the failure is outside a subtask."""
+    runs = [entry for entry in report['subtasks'] if entry['instruction'] == report['failure']['subtask']]
+    return runs[-1]['start'] if runs else report['control_steps']
+
+
 def case(report):
-    """The numbers of a failed episode's report for its case."""
-    failure = report['failure']
-    events = [event for event in report['events'] if event['subtask'] == failure['subtask']]
+    """The numbers of a failed episode's report for its case: of the failing subtask's last run."""
+    failure, start = report['failure'], failing_start(report)
+    events = [event for event in report['events'] if event['subtask'] == failure['subtask'] and event['step'] >= start]
     tried = [event for event in events if event['note'].startswith('next ')]     # an option given up for the next
-    collisions = Counter(f'{link} - {other}' for event in tried for link, other, _ in event.get('collisions', []))
+    collisions = Counter(f'{link} - {other}' for event in tried
+                         for key in ('collisions', 'start_collisions', 'goal_collisions')
+                         for link, other, _ in event.get(key, []))
     return {'seed': report['seed'], 'failure': failure, 'events': Counter(event['note'] for event in events),
             'rejections': dict(Counter(event['reason'] for event in tried).most_common()),
             'collisions': dict(collisions.most_common()), 'duration_s': report['duration_s'],
@@ -69,8 +78,10 @@ def main(argv=None):
     args = parser.parse_args(argv)
     args.out = args.out or args.batch / 'cases'
     from table_1000.common.batch import parse_seeds, worker_gpu
+    from table_1000.experts.generate import PROCESS_EXITED
     summary = json.loads((args.batch / 'summary.json').read_text())
-    failures = sorted(seed for seeds in summary['failures'].values() for seed in seeds)
+    # Seeds whose process stopped have no episode to show.
+    failures = sorted(seed for key, seeds in summary['failures'].items() if key != PROCESS_EXITED for seed in seeds)
     seeds = parse_seeds(args.seeds) if args.seeds else failures
     if absent := sorted(set(seeds) - set(failures)):
         parser.error(f'seeds {absent} did not fail in {args.batch}')
@@ -96,8 +107,8 @@ def main(argv=None):
         for seed in seeds:
             episode = episodes[f'demo_{seed}']
             report = json.loads((args.batch / 'episodes' / f'{seed}.json').read_text())
-            subtask, last = report['failure']['subtask'], episode.length - 1
-            start = next((t for t in range(episode.length) if episode.subtask(t) == subtask), last)
+            subtask, last = report['failure']['subtask'], episode.length     # state(length): after the last step
+            start = min(failing_start(report), last)
             out = args.out / str(seed)
             out.mkdir(parents=True, exist_ok=True)
             for moment, t in (('start', start), ('end', last)):

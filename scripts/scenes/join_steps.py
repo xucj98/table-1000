@@ -22,6 +22,7 @@ renders them.
 
 import argparse
 import json
+import shlex
 from pathlib import Path
 import sys
 
@@ -61,11 +62,18 @@ def main(argv=None):
             parser.error(f'{batch} did not start from {args.batches[index - 1]}')
         summaries.append(summary)
     first = summaries[0]
+    default = args.output is None
     args.output = args.output or ROOT / 'data' / 'scenes' / first['scene'] / first['physics']
     if (first.get('steps_run') or [1])[0] != 1:
         parser.error(f'{args.batches[0]} does not start from the initial states (step 1)')
-    if any(Path(batch).resolve() == Path(args.output).resolve() for batch in args.batches):
-        parser.error(f'{args.output} is one of the batches joined; give another --output')
+    output = Path(args.output).resolve()
+    for batch in map(Path.resolve, args.batches):
+        if batch.is_relative_to(output) or output.is_relative_to(batch):
+            parser.error(f'{args.output} would replace {batch}, one of the batches joined; give another --output')
+    if '--seeds' in shlex.split(first.get('command') or '') and default:
+        parser.error(f'{args.batches[0]} ran some seeds only, not the scene\'s data; give --output')
+    if any((summary.get('steps_run') or [1])[0] == 1 for summary in summaries[1:]):
+        parser.error('only the first batch starts at step 1')
     found = [episodes(batch) for batch in args.batches]
     if not found[0]:
         parser.error(f'{args.batches[0]} has no episodes')

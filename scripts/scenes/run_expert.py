@@ -40,6 +40,7 @@ seed has no episode. See ``table_1000/experts/generate.py``.
 import argparse
 import json
 from pathlib import Path
+import shlex
 import shutil
 import sys
 import time
@@ -181,7 +182,9 @@ def main(argv=None):
     if args.dev:
         run = run_name(checkout, args.name)
         directory = ((args.output or root / 'runs' / 'expert') / args.scene / run).resolve()
-        if directory.exists():
+        try:        # claims the name: another run started in the same second gets an error
+            directory.mkdir(parents=True)
+        except FileExistsError:
             parser.error(f'{directory} exists; give another --name')
     else:
         run = None
@@ -223,7 +226,7 @@ def main(argv=None):
     for path in sorted(staging.glob('part*/episodes/*.json')):
         reports.append(json.loads(path.read_text()))
         shutil.move(path, directory / 'episodes' / path.name)
-    summary = {'run': run, 'command': ' '.join(sys.argv if argv is None else ['run_expert.py', *argv]),
+    summary = {'run': run, 'command': shlex.join(sys.argv if argv is None else ['run_expert.py', *argv]),
                'scene': args.scene, 'robot': robot, 'physics': args.physics, 'commit': checkout,
                'steps_run': args.steps, 'from': str(args.source.resolve()) if args.source else None,
                **summarize(reports, seeds), 'steps': step_rates(reports, seeds, parent),
