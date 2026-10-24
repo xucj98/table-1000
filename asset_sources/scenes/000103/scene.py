@@ -52,7 +52,9 @@ CABLES = {'cable': 'cable_coil/000000', 'network_cable': 'cable_coil/000001'}
 DESK = {'keyboard': 'keyboard/000000', 'wireless_mouse': 'computer_mouse/000001', 'logbook': 'lab_notebook/000000',
         'calculator': 'calculator/000000', 'graphing_calculator': 'calculator/000001'}
 LITTER = {'label_1': 'paper_label/000000', 'label_2': 'paper_label/000001', 'label_3': 'paper_label/000002',
-          'label_4': 'paper_label/000003', 'wire_end': 'wire_scrap/000000', 'wire_bit': 'wire_scrap/000001',
+          'label_4': 'paper_label/000003', 'label_5': 'paper_label/000000', 'label_6': 'paper_label/000001',
+          'label_7': 'paper_label/000002', 'label_8': 'paper_label/000000', 'label_9': 'paper_label/000003',
+          'label_10': 'paper_label/000001', 'wire_end': 'wire_scrap/000000', 'wire_bit': 'wire_scrap/000001',
           'offcut': 'plastic_scrap/000000', 'parts_bag': 'zip_bag/000000', 'receipt': 'receipt/000000',
           'empty_can': 'drink_can/000001'}
 EMPTY_BOTTLE = {'empty_bottle': 'water_bottle/000001'}
@@ -85,7 +87,7 @@ BOTTLE_IN_BIN = 0.                # yaw of the empty bottle lying in the bin: al
 # The photo, by name: (x, y, yaw degrees), dropped in this order so that what rests on something
 # comes after it.
 PHOTO = [
-    ('empty_bottle', (.45, .38, 0.)),       # on the backboard's foot rail
+    ('empty_bottle', (.64, .31, 0.)),       # on the instrument box beside the can
     ('logbook', (.15, -.02, -8.)),
     ('meter', (.10, .02, 85.)),
     ('keyboard', (-.27, -.24, 13.)),
@@ -105,10 +107,16 @@ PHOTO = [
     ('lead_red', (.08, -.27, 25.)),
     ('lead_black', (.12, -.36, -10.)),
     ('parts_bag', (.11, -.20, 20.)),
-    ('label_1', (.25, -.21, 10.)),
-    ('label_2', (.08, -.38, -15.)),
     ('label_3', (-.03, -.22, 5.)),
+    ('label_1', (.26, -.40, 10.)),          # the slips at the front right
+    ('label_2', (.30, -.39, -35.)),
     ('label_4', (.29, -.46, 80.)),
+    ('label_5', (.33, -.43, 25.)),
+    ('label_6', (.27, -.44, -60.)),
+    ('label_7', (.35, -.47, 5.)),
+    ('label_8', (.31, -.48, -20.)),
+    ('label_9', (.37, -.35, 40.)),
+    ('label_10', (.33, -.46, 100.)),
     ('wire_end', (-.20, -.44, 60.)),
     ('wire_bit', (.21, -.30, 20.)),
     ('offcut', (-.40, -.46, 0.)),
