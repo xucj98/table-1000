@@ -422,7 +422,7 @@ def grasp_candidates(shape, transform, hand, obstacles, preferred, center_of_mas
                 for flip in (1., -1.):
                     choices.append((angle, len(choices), approach, flip * closing, slide, width, open_gap))
     choices.sort(key=lambda choice: choice[:2])
-    placed_grasps = []
+    placed_grasps, closest = [], None
     for angle, order, approach, closing, slide, width, open_gap in choices:
         while placed_grasps and placed_grasps[0][0] <= angle:
             yield heapq.heappop(placed_grasps)[2]
@@ -434,9 +434,11 @@ def grasp_candidates(shape, transform, hand, obstacles, preferred, center_of_mas
         tcp, backoff, gap, contact, held = placed
         cost = angle + cost_offset * float(np.linalg.norm(contact - com)) + cost_backoff * backoff \
             + cost_hold * max(0., HOLD_AREA - held)
+        # Choices are placed by angle: the first that places comes closest of all to the preferred approach.
+        closest = angle if closest is None else closest
         heapq.heappush(placed_grasps, (cost, order, Grasp(tcp, open_gap, float(width), backoff, cost, {
             'approach_deg': float(np.degrees(angle)), 'slide': float(np.linalg.norm(slide)), 'contact_gap': gap,
-            'held_mm2': held * 1e6})))
+            'held_mm2': held * 1e6, 'closest_deg': float(np.degrees(closest))})))
     while placed_grasps:
         yield heapq.heappop(placed_grasps)[2]
 

@@ -125,8 +125,9 @@ class Grasping:
             obstacles, supports = self.obstacles(arm, target, transform)
             found[arm] = supports, Replayed(grasp_candidates(target.shape, transform, self.hands[arm], obstacles,
                                                              preferred, center_of_mass=point, approach_distance=APPROACH))
-        closest = min((grasp.info['approach_deg'] for _, candidates in found.values()
-                       for grasp in itertools.islice(candidates, MAX_IK)), default=0.)
+        # The approach any candidate of either arm comes closest to (each knows it from its first).
+        closest = min((grasp.info['closest_deg'] for _, candidates in found.values()
+                       for grasp in itertools.islice(candidates, 1)), default=0.)
         for lift in (False, True):
             limit = np.degrees(max_angle) if max_angle is not None else np.inf
             if not lift:
