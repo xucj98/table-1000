@@ -17,6 +17,7 @@ import time
 
 import numpy as np
 
+from table_1000.common.timing import timed
 from table_1000.experts.context import DT, ExpertFailed, steps
 from table_1000.planning.world import PlanningScene, asset_objects, box_object, pose
 
@@ -90,12 +91,15 @@ class MotionSolver:
             self.world.add(obj, poses[obj.body])
         return objects
 
+    @timed('world_update')
     def sync(self):
         """Move planning objects to their live poses (and all of them where the base moved)."""
         frame = np.linalg.inv(self.model.base)
+        poses = self.ctx.poses()
         if not np.allclose(frame, self.world.frame, atol=1e-6):
-            self.world.set_frame(frame)
-        self.world.update(self.ctx.poses())
+            self.world.set_frame(frame, poses)
+        else:
+            self.world.update(poses)
 
     def allow(self, names, allowed=True):
         """Permit (or revoke) planned contact between the fingers and planning objects ``names``."""
@@ -142,6 +146,7 @@ class MotionSolver:
         return self.arm.gap(self.ctx.env.qpos(self.arm.fingers)[0])
 
     # -- planning ------------------------------------------------------------------------
+    @timed('motion_plan')
     def _plan(self, kind, function, goals=()):
         self.world.set_padding(PADDING if kind == 'rrt' else 0.)
         self.sync()
@@ -218,6 +223,7 @@ class MotionSolver:
                     raise
         self._rrt(target, planning_time, attempts, free[-1], goals)
 
+    @timed('departure_check')
     def touching(self):
         """``[(finger or TCP link, object)]`` within the free-space padding of each other now, not allowed."""
         self.world.set_padding(PADDING)

@@ -102,7 +102,7 @@ def worker(args):
         else:
             states = {seed: (attempt, state, None) for seed, (attempt, state) in read_states(args.states)[1].items()}
         generator = Generator(args.scene, work, args.assets.resolve(), args.root.resolve(), physics=args.physics,
-                              steps=args.steps, source=str(args.states) if args.checkpoints else None)
+                              steps=args.steps, source=str(args.states) if args.checkpoints else None, profile=args.profile)
         for seed, repeat in itertools.product(parse_seeds(args.seeds), range(args.repeats)):
             report = generator.run(seed, *states[seed], repeat=repeat)
             print(seed, *([f'repeat {repeat}'] if repeat else []), report['status'],
@@ -127,6 +127,7 @@ def main(argv=None):
     parser.add_argument('--output', type=Path,
                         help='the batch goes to <output>/<scene>/<backend>/ (replaced; default data/scenes), with '
                              '--dev to <output>/<scene>/<run>/ (default runs/expert)')
+    parser.add_argument('--profile', action='store_true', help='record nested planning wall times in episode reports')
     parser.add_argument('--dev', action='store_true', help='a development run, kept apart from the data')
     parser.add_argument('--name', help="a label at the end of a development run's name")
     parser.add_argument('--root', type=Path, default=ROOT, help='repository root holding the scene and robot sources')
@@ -216,7 +217,7 @@ def main(argv=None):
                 '--seeds', *seed_range(part).split(), '--states', str(states), '--work', str(staging / name),
                 '--root', str(root), '--assets', str(args.assets.resolve()), '--repeats', str(args.repeats),
                 *(['--steps', '-'.join(map(str, args.steps))] if args.steps else []),
-                *(['--checkpoints'] if args.source else [])]
+                *(['--checkpoints'] if args.source else []), *(['--profile'] if args.profile else [])]
         return argv, staging / f'{name}.log', f'{args.scene} {args.physics} {name} seeds {seed_range(part)}'
 
     started = time.perf_counter()

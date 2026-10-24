@@ -12,6 +12,8 @@ import heapq
 
 import numpy as np
 
+from table_1000.common.timing import timed
+
 
 def normalized(vector):
     vector = np.asarray(vector, dtype=float)
@@ -377,6 +379,7 @@ def lengthwise(closings):
     return widths[-1] if long else None
 
 
+@timed('grasp_candidates')
 def grasp_candidates(shape, transform, hand, obstacles, preferred, center_of_mass=None, approach_distance=.05,
                      step=np.radians(15), max_up=.05, cost_offset=40., cost_backoff=10., cost_hold=.5 / 30e-6):
     """Grasps of ``shape`` (:class:`Box` or :class:`Cylinder`) at world ``transform`` by ``hand``

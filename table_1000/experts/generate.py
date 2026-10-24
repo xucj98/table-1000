@@ -110,7 +110,7 @@ class Generator:
 
     DEVICES = {'isaac-cpu': 'cpu'}
 
-    def __init__(self, scene_name, output, assets, root, physics='isaac-cpu', steps=None, source=None):
+    def __init__(self, scene_name, output, assets, root, physics='isaac-cpu', steps=None, source=None, profile=False):
         """``steps``: ``(first, last)`` of the expert's steps to run (all when None); ``source``: where
         the states come from (a checkpoint file), for the reports."""
         from table_1000.robots import load_spec
@@ -121,6 +121,7 @@ class Generator:
         started = time.perf_counter()
         self.name, self.output, self.assets = scene_name, Path(output), Path(assets)
         self.steps, self.source = steps, source
+        self.profile_enabled = profile
         self.scene, self.expert = load(scene_name, 'scene', root), load(scene_name, 'expert', root)
         if steps and not 1 <= steps[0] <= steps[1] <= len(getattr(self.expert, 'STEPS', ())):
             raise ValueError(f'steps {steps[0]}-{steps[1]}: the expert of {scene_name} has '
@@ -165,10 +166,12 @@ class Generator:
                                    else seed + 1 + 1_000_003 * (first - 1))   # OMPL rejects 0
         ctx = Context(self.env, self.model, self.scene, self.assets, np.random.default_rng(streams), start=start,
                       only=self.steps)
+        physics_before = self.env.timings['step_s']
         try:
-            if start is not None:
-                ctx.hold(RESUME_S)
-            self.expert.solve(ctx)
+            with ctx.profile.record(self.profile_enabled):
+                if start is not None:
+                    ctx.hold(RESUME_S)
+                self.expert.solve(ctx)
             report['status'] = 'success'
         except ExpertFailed as error:
             report.update(status='failed', failure={'subtask': error.subtask, 'reason': error.reason,
@@ -192,6 +195,13 @@ class Generator:
                               for name, joints in self.env.privileged()['joints'].items()}},
             timings={'init_s': init_s, **{key: sum(s.timings[key] for s in ctx.solvers.values())
                                           for key in ('planning_s', 'executing_s')}})
+        if self.profile_enabled:
+            report['wall_profile'] = ctx.profile.snapshot()
+            report['subtask_profiles'] = ctx.subtask_profiles
+            # Existing simulator timer: action, physics and recording, excluding observations.
+            report['timings']['physics_step_s'] = self.env.timings['step_s'] - physics_before
+            for entry, checkpoint in zip(report['steps'], ctx.checkpoints):
+                entry['wall_profile'] = checkpoint['wall_profile']
         if repeat:
             return report, started
         checkpoints = ctx.checkpoints

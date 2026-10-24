@@ -19,6 +19,7 @@ import itertools
 import numpy as np
 from scipy.spatial.transform import Rotation
 
+from table_1000.common.timing import timed
 from table_1000.experts.grasps import grasp_candidates, standoff
 from table_1000.experts.skills.common import APPROACH, CANDIDATE_PLANS, IK_ATTEMPTS, Unmet, collisions, normalized
 from table_1000.experts.skills.grasping import HELD_TOLERANCE
@@ -62,6 +63,7 @@ class Handing:
                                       pose))
         return [pose for *_, pose in sorted(poses, key=lambda option: option[:2])]
 
+    @timed('handover_search')
     def handoffs(self, target, giver, to, need):
         """Feasible handovers ``(pose, q_give, grasp)``, the first grasp of each pose, as they are found
         (see the module docstring)."""
@@ -130,6 +132,7 @@ class Handing:
             if found is not None:
                 yield pose, q_give, found
 
+    @timed('handover')
     def handover(self, obj, to=None, need=None):
         """Hand the held ``obj`` to arm ``to`` (default: the other one ``need`` takes), held as
         ``need`` (an :class:`~table_1000.experts.skills.chain.InHand`) asks; see the module
