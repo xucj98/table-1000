@@ -265,3 +265,43 @@ def test_build_scene_combines_parts(tmp_path, monkeypatch):
     assert not (directory / 'initial').exists()            # replaced, and no --images this time
     assert not (directory / 'staging').exists()            # the processes' results, removed once merged
     assert not (root / 'asset_sources').exists()           # a custom output keeps the thumbnail
+
+
+def test_build_scene_layouts(tmp_path, monkeypatch):
+    built = []
+
+    def jobs(commands, gpus):
+        for command, _, _ in commands:
+            work = tmp_path / command[command.index('--work') + 1]
+            layout = int(command[command.index('--layout') + 1])
+            seeds = parse_seeds(command[command.index('--seeds') + 1:command.index('--work')])
+            for name in ('states', 'images', 'records'):
+                (work / name).mkdir(parents=True)
+            for seed in seeds:
+                built.append((layout, seed))
+                write_states(work / 'states' / f'{seed}.hdf5', {seed: (0, STATE)}, {})
+                Image.new('RGB', (64, 36), 'red').save(work / 'images' / f'{seed}.jpg')
+                record = {'seed': seed, 'attempt': 0, 'attempts': [{'attempt': 0, 'settle': None}]}
+                (work / 'records' / f'{seed}.json').write_text(
+                    json.dumps({'robot': 'x1pro', 'camera': 'top', 'record': record}))
+        return []
+
+    monkeypatch.setattr(scene_batch, 'run_jobs', jobs)
+    root = tmp_path / 'checkout'
+    (root / 'asset_sources' / 'scenes' / '000100').mkdir(parents=True)
+    (root / 'asset_sources' / 'scenes' / '000100' / 'scene.py').write_text(
+        "LAYOUTS = {1: {'quality': 'good', 'description': 'tidy', 'arrange': None},\n"
+        "           2: {'quality': 'bad', 'description': 'a heap', 'arrange': None}}\n")
+    output = tmp_path / 'custom'
+    with pytest.raises(SystemExit):
+        build_scene.main(['000100', '--layouts', '3', '--seeds', '0', '--output', str(output), '--root', str(root)])
+    build_scene.main(['000100', '--layouts', '0:3', '--seeds', '0', '1', '--jobs', '3', '--grid', '2x1',
+                      '--output', str(output), '--root', str(root)])
+    assert sorted(built) == [(layout, seed) for layout in range(3) for seed in range(2)]
+    directory = output / '000100'
+    assert list(read_states(directory / 'initial_states.hdf5')[1]) == [0, 1]
+    report = json.loads((directory / 'layouts' / '2' / 'initial.json').read_text())
+    assert report['layout'] == 2 and report['quality'] == 'bad' and report['valid'] == 2
+    attrs, states = read_states(directory / 'layouts' / '1' / 'initial_states.hdf5')
+    assert attrs['layout'] == 1 and list(states) == [0, 1]
+    assert Image.open(directory / 'layouts.jpg').size == (2 * build_scene.TILE_WIDTH, 2 * (216 + build_scene.CAPTION))

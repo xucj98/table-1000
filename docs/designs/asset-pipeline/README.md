@@ -25,8 +25,8 @@ README 说明每个文件放在哪里、由哪份规范约定。各文件的字�
 asset_sources/objects/cabinet/000000/
   object.py           建模入口：坐标系、刚体子树、视觉与碰撞、关节（建模）
   preview.json        几何姿态、相机、关键帧与预览输出（几何预览）
-  physics.py          质量、接触材料、驱动（物理属性）
-  physics_test.py     物理实验的初态、动作与记录（物理测试）
+  physics.py          精细物理资产：质量、接触材料、驱动（物理属性）；单刚体资产不写，数值在 configs/rigid_physics.json
+  physics_test.py     精细物理资产：物理实验的初态、动作与记录（物理测试）
   behavior.py         可选，随资产加载的附加力或状态转换（行为插件）
   metadata.json       UUID，见下文
   README.md           外观、尺寸、资产树、物理实测，见下文
@@ -34,6 +34,7 @@ asset_sources/objects/cabinet/000000/
 assets/objects/cabinet/000000/
   object.blend        object.py 构建的模型
   geometry.usdc       导出的 USD 几何层
+  physics.py          所用物理脚本的快照：资产自己的，或由 configs/rigid_physics.json 生成
   physics.usda        physics.py 生成的物理层
   object.usdz         加载入口；带行为时另有 object.usda 与行为依赖
   *.py、*.json、README.md、three_quarter.jpg    源码快照
@@ -64,14 +65,16 @@ assets/robots/x1pro/
 
 ```text
 asset_sources/scenes/000000/
-  scene.py            桌子、机器人、物体、录像视角、随机初始化（场景）
-  expert.py           专家程序
+  scene.py            桌子、机器人、物体、录像视角、随机初始化（布局 0）、可选的其他布局（场景）
+  expert.py           专家程序（可以以后补）
   thumbnail.jpg       最小有效 seed 初态的机器人主相机图像，480 × 270
 assets/scenes/000000/            build_scene.py 的产出，与后端无关
   initial_states.hdf5 每个有效 seed 静置后的场景状态，专家轨迹从这里开始
   initial.json        初态检查：汇总与每次尝试的结果
   initial_states.jpg  可选，前 N × M 个有效初态的拼图
   initial/<seed>.jpg  可选，每个有效初态的相机原图
+  layouts/<n>/        --layouts：布局 n 的同一套文件（initial.json 另记布局的好坏与说明）
+  layouts.jpg         可选，多个布局时每个布局最小有效 seed 的拼图
 data/scenes/000000/<后端>/        一批专家轨迹：run_expert.py 生成，render.py 补上录像
   summary.json        验收入口：提交、seed、成功率、失败的 seed、耗时、有录像的 seed
   trajectories.hdf5、trajectories_failed.hdf5    成功与失败的轨迹，每条 data/demo_<seed>

@@ -1,0 +1,144 @@
+{
+  "front.jpg": {
+    "camera": [
+      0,
+      -1,
+      0,
+      0,
+      0,
+      1
+    ]
+  },
+  "back.jpg": {
+    "camera": [
+      0,
+      1,
+      0,
+      0,
+      0,
+      1
+    ]
+  },
+  "left.jpg": {
+    "camera": [
+      -1,
+      0,
+      0,
+      0,
+      0,
+      1
+    ]
+  },
+  "right.jpg": {
+    "camera": [
+      1,
+      0,
+      0,
+      0,
+      0,
+      1
+    ]
+  },
+  "top.jpg": {
+    "camera": [
+      0,
+      0,
+      1,
+      0,
+      1,
+      0
+    ]
+  },
+  "bottom.jpg": {
+    "camera": [
+      0,
+      0,
+      -1,
+      0,
+      -1,
+      0
+    ]
+  },
+  "three_quarter.jpg": {
+    "camera": [
+      0.82,
+      -0.82,
+      0.72,
+      0,
+      0,
+      1
+    ]
+  },
+  "open_three_quarter.jpg": {
+    "camera": [
+      0.82,
+      -0.82,
+      0.72,
+      0,
+      0,
+      1
+    ],
+    "joints": {
+      "makeup_organizer.drawer1.slide": 0.17,
+      "makeup_organizer.drawer2.slide": 0.17,
+      "makeup_organizer.drawer3.slide": 0.17
+    }
+  },
+  "open.mp4": {
+    "fps": 24,
+    "frames": [
+      {
+        "frame": 0,
+        "camera": [
+          0.82,
+          -0.82,
+          0.72,
+          0,
+          0,
+          1
+        ],
+        "joints": {
+          "makeup_organizer.drawer1.slide": 0,
+          "makeup_organizer.drawer2.slide": 0,
+          "makeup_organizer.drawer3.slide": 0
+        }
+      },
+      {
+        "frame": 12,
+        "joints": {
+          "makeup_organizer.drawer1.slide": 0.17
+        }
+      },
+      {
+        "frame": 24,
+        "joints": {
+          "makeup_organizer.drawer2.slide": 0.17
+        }
+      },
+      {
+        "frame": 36,
+        "joints": {
+          "makeup_organizer.drawer3.slide": 0.17
+        }
+      },
+      {
+        "frame": 48,
+        "joints": {
+          "makeup_organizer.drawer1.slide": 0
+        }
+      },
+      {
+        "frame": 60,
+        "joints": {
+          "makeup_organizer.drawer2.slide": 0
+        }
+      },
+      {
+        "frame": 72,
+        "joints": {
+          "makeup_organizer.drawer3.slide": 0
+        }
+      }
+    ]
+  }
+}

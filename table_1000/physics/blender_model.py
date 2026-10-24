@@ -6,6 +6,17 @@ from pathlib import Path
 import sys
 
 
+def describe(surface):
+    shader = surface.node_tree.nodes.get('Principled BSDF')
+    return {'name': surface.name,
+            'color': list(shader.inputs['Base Color'].default_value[:3]),
+            'roughness': float(shader.inputs['Roughness'].default_value),
+            'metallic': float(shader.inputs['Metallic'].default_value),
+            'transmission': float(shader.inputs['Transmission Weight'].default_value),
+            'ior': float(shader.inputs['IOR'].default_value),
+            'alpha': float(shader.inputs['Alpha'].default_value)}
+
+
 def extract(blend):
     import bpy
     from table_1000.modeling.asset_tree import asset_forest
@@ -44,15 +55,10 @@ def extract(blend):
                     if row['shape'] == 'SPHERE':
                         row['radius'] = checks.spheres[obj.name]
                 else:
-                    surface = mesh.materials[0]
-                    shader = surface.node_tree.nodes.get('Principled BSDF')
-                    row['material'] = {'name': surface.name,
-                        'color': list(shader.inputs['Base Color'].default_value[:3]),
-                        'roughness': float(shader.inputs['Roughness'].default_value),
-                        'metallic': float(shader.inputs['Metallic'].default_value),
-                        'transmission': float(shader.inputs['Transmission Weight'].default_value),
-                        'ior': float(shader.inputs['IOR'].default_value),
-                        'alpha': float(shader.inputs['Alpha'].default_value)}
+                    row['material'] = describe(mesh.materials[0])
+                    if len(mesh.materials) > 1:     # per-face materials: every slot and each face's slot
+                        row['materials'] = [describe(surface) for surface in mesh.materials]
+                        row['face_materials'] = [face.material_index for face in mesh.polygons]
                     row['normals'] = [list(mesh.corner_normals[index].vector)
                                       for face in mesh.polygons for index in face.loop_indices]
             finally:

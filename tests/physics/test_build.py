@@ -24,6 +24,19 @@ class PhysicsAuthorTest(unittest.TestCase):
             self.assertEqual((output / 'physics.usda').read_text(), 'geometry:physics')
             self.assertEqual((output / 'physics.py').read_bytes(), (source / 'physics.py').read_bytes())
 
+    def test_configured_rigid_asset_gets_a_generated_script(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source, output = Path(directory) / 'source', Path(directory) / 'asset'
+            source.mkdir()
+            output.mkdir()
+            values = {'mass_kg': .02, 'friction': (.4, .3), 'angular_damping': 2.}
+            with patch('table_1000.physics.rigid.author') as author:
+                author_physics(source, output, values)
+            author.assert_called_once_with(output / 'geometry.usdc', output / 'physics.usda', **values)
+            self.assertIn('configs/rigid_physics.json', (output / 'physics.py').read_text())
+            with self.assertRaises(FileNotFoundError):
+                author_physics(source, output)
+
 
 class PhysicsBatchTest(unittest.TestCase):
     def test_discovery_and_selection_share_one_application(self):
@@ -33,9 +46,10 @@ class PhysicsBatchTest(unittest.TestCase):
                 path = source / reference
                 path.mkdir(parents=True)
                 (path / 'physics.py').write_text('')
+            rigid = {'battery/000000': {'mass_kg': .02, 'friction': (.4, .3)}}
             for selected in [None, ['pen/000002', 'cabinet/000000']]:
                 arguments = ['--source', str(source), '--output', str(output), '--gpu', '3']
-                references = ['cabinet/000000', 'pen/000002']
+                references = ['battery/000000', 'cabinet/000000', 'pen/000002']
                 if selected:
                     arguments += ['--assets', *selected]
                     references = selected
@@ -43,10 +57,12 @@ class PhysicsBatchTest(unittest.TestCase):
                 simulation_app = Mock(return_value=app)
                 with self.subTest(selected=selected), patch.dict(sys.modules, {'isaacsim': SimpleNamespace(SimulationApp=simulation_app)}), \
                         patch('table_1000.common.path.configure_isaac_paths') as configure_paths, \
+                        patch('table_1000.physics.build.rigid_assets', return_value=rigid), \
                         patch('table_1000.physics.build.build') as build:
                     main(arguments)
                     configure_paths.assert_called_once_with()
-                    self.assertEqual(build.call_args_list, [call(output/ref, source/ref, output/ref) for ref in references])
+                    self.assertEqual(build.call_args_list, [call(output/ref, source/ref, output/ref, rigid.get(ref))
+                                                            for ref in references])
                     simulation_app.assert_called_once()
                     self.assertEqual(simulation_app.call_args.args[0]['active_gpu'], 3)
                     app.close.assert_called_once_with(wait_for_replicator=False)
