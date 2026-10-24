@@ -137,7 +137,16 @@ class Generator:
 
     def run(self, seed, attempt, state, start=None):
         """Episode ``seed`` from its initial ``state`` (made by sub-seed ``attempt``), or from a
-        checkpoint's with ``start`` the robot where the seed's episode began."""
+        checkpoint's with ``start`` the robot where the seed's episode began; its report has the
+        machine's load meanwhile (``load``, see :class:`~table_1000.common.batch.Load`) and the CPU
+        seconds the process used (``cpu_s``)."""
+        from table_1000.common.batch import Load
+        with Load() as load:
+            report, started = self.episode(seed, attempt, state, start)
+        report.update(load=load.record(), cpu_s=sum(sample['cpu_s'] for sample in load.samples))
+        return self.save(report, started)
+
+    def episode(self, seed, attempt, state, start):
         started = time.perf_counter()
         first = self.steps[0] if self.steps else 1
         report = {'scene': self.name, 'seed': seed, 'attempt': attempt, 'steps_run': self.steps, 'from': self.source}
@@ -166,7 +175,7 @@ class Generator:
             for solver in ctx.solvers.values():
                 solver.world.clear()
         report.update(
-            step_names=ctx.step_names, steps=[{key: entry[key] for key in ('step', 'name', 'at', 'wall_s')}
+            step_names=ctx.step_names, steps=[{key: entry[key] for key in ('step', 'name', 'at', 'wall_s', 'cpu_s')}
                                               for entry in ctx.checkpoints],
             control_steps=ctx.steps, duration_s=ctx.steps / CONTROL_HZ, subtasks=ctx.subtasks, events=ctx.events,
             expert_wall_s=time.perf_counter() - ctx.started, subtask_wall_s=ctx.subtask_wall_s,
@@ -187,7 +196,7 @@ class Generator:
         if 'failure' in report:
             attrs['failure'] = {key: report['failure'][key] for key in ('subtask', 'reason')}
         self.recording.finish(self.env, seed, report['status'] == 'success', attrs, self.env_args)
-        return self.save(report, started)
+        return report, started
 
     def save(self, report, started):
         report['wall_s'] = time.perf_counter() - started
