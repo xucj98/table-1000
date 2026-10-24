@@ -201,7 +201,9 @@ PROFILES = {
     "receipt": {"default": {"size": (0.090, 0.055), "thickness": 0.001, "fold_x": 0.022,
                             "lift_deg": 9}},
     "trash_bin": {"default": {"bottom": (0.126, 0.096, 0.012), "top": (0.140, 0.110, 0.015),
-                              "height": 0.120, "wall": 0.0035, "floor": 0.005, "rim": 0.002}},
+                              "height": 0.120, "wall": 0.0035, "floor": 0.005, "rim": 0.002},
+                  "floor": {"bottom": (0.240, 0.180, 0.030), "top": (0.290, 0.220, 0.035),
+                            "height": 0.300, "wall": 0.004, "floor": 0.006, "rim": 0.003}},
     "drink_can": {"opened": {}},
     "water_bottle": {"empty": {
         "rings": [(0.0, 0.0255), (0.003, 0.0305), (0.008, 0.0322), (0.030, 0.0322),

@@ -11,7 +11,7 @@ the same in every layout: a backboard with parts drawers and four pegs along the
 monitor, the oscilloscope, the soldering station with the iron stand and the instrument box in front
 of it, the bench power supply on the left and the desk lamp on the right reaching over the bench.
 The red tool chest (three drawers) stands at the front right turned to face the robot, the waste bin
-on the floor off the bench's front right corner.
+(not in the photo; big enough for the empty bottle) on the floor off the bench's front right corner.
 
 ``initialize`` is the photo: the keyboard, the logbook under the big multimeter, calculators, boards,
 leads and tools piled up in the middle, litter among them, the cutters on a peg, the iron in its stand;
@@ -39,7 +39,7 @@ ROBOT = {
 BACKGROUND = {'backboard': 'bench_backboard/000000', 'monitor': 'monitor/000000', 'psu': 'bench_power_supply/000000',
               'scope': 'oscilloscope/000000', 'box': 'instrument_box/000000', 'lamp': 'desk_lamp/000000',
               'station': 'soldering_station/000000', 'holder': 'iron_holder/000000'}
-CONTAINERS = {'chest': 'tool_chest/000000', 'bin': 'trash_bin/000000'}
+CONTAINERS = {'chest': 'tool_chest/000000', 'bin': 'trash_bin/000001'}
 TOOLS = {'meter': 'multimeter/000000', 'pocket_meter': 'multimeter/000001', 'pliers': 'pliers/000000',
          'cutters': 'pliers/000001', 'hands': 'helping_hands/000000', 'driver_set': 'screwdriver_set/000000'}
 SOLDERING = {'iron': 'soldering_iron/000000', 'spool': 'solder_spool/000000', 'flux': 'flux_tin/000000',
@@ -55,15 +55,16 @@ LITTER = {'label_1': 'paper_label/000000', 'label_2': 'paper_label/000001', 'lab
           'label_4': 'paper_label/000003', 'wire_end': 'wire_scrap/000000', 'wire_bit': 'wire_scrap/000001',
           'offcut': 'plastic_scrap/000000', 'parts_bag': 'zip_bag/000000', 'receipt': 'receipt/000000',
           'empty_can': 'drink_can/000001'}
-EMPTY_BOTTLE = {'empty_bottle': 'water_bottle/000001'}      # too tall for the bin: it stands beside it
+EMPTY_BOTTLE = {'empty_bottle': 'water_bottle/000001'}
 
 OBJECTS = {name: {'asset': f'objects/{asset}'}
            for group in (BACKGROUND, CONTAINERS, TOOLS, SOLDERING, GEAR, CABLES, DESK, LITTER, EMPTY_BOTTLE)
            for name, asset in group.items()}
 
 VIEWS = {
-    # From above the robot's head: the whole bench and the floor on both sides, where the bin stands.
-    'top': {'position': (0., -.55, 2.45), 'target': (0., -.08, .45), 'focal_length_mm': 15,
+    # From above the robot's head: the whole bench, the shelf over it and the floor on both sides, where the
+    # bin stands.
+    'top': {'position': (0., -.55, 2.7), 'target': (0., .15, .45), 'focal_length_mm': 15,
             'resolution': (1280, 960)},
     # The photo's camera: a person seated at the bench looking over it at the back wall.
     'photo': {'position': (.02, -.83, 1.28), 'target': (.03, .04, .80), 'focal_length_mm': 13.,
@@ -80,6 +81,7 @@ FIXED = [('backboard', (0., .43, 0.)), ('monitor', (-.46, .26, 0.)), ('psu', (-.
 LAMP = (.60, -.03, -80.)        # stood last: its arm reaches over the bench
 CHEST = (.45, -.24, -45.)       # front right, turned to face the robot
 BIN = (.85, -.62, 0.)           # on the floor off the bench's front right corner, in sight from above
+BOTTLE_IN_BIN = 0.                # yaw of the empty bottle lying in the bin: along its long side
 # The photo, by name: (x, y, yaw degrees), dropped in this order so that what rests on something
 # comes after it.
 PHOTO = [
@@ -168,9 +170,11 @@ def bin_at(layout, at=BIN):
     on_floor(layout, 'bin', (x, y), math.radians(yaw))
 
 
-def lying(layout, name):
-    """A random resting orientation of ``name`` on its side (a knocked over can or bottle)."""
-    side = yaw_pose(0., 0., 0., layout.rng.uniform(-math.pi, math.pi))[:3, :3] @ UPRIGHT.T
+def lying(layout, name, yaw=None):
+    """A resting orientation of ``name`` on its side (a knocked over can or bottle), turned by ``yaw``
+    (random when ``None``)."""
+    yaw = layout.rng.uniform(-math.pi, math.pi) if yaw is None else yaw
+    side = yaw_pose(0., 0., 0., yaw)[:3, :3] @ UPRIGHT.T
     return layout.geometry[name].stable_rotation(side)
 
 
@@ -245,16 +249,13 @@ def on_chest(layout, names=('network_cable', 'cable', 'driver_set')):
         layout.drop(name, spots[name], math.pi / 2 if name == 'driver_set' else 0., frame='chest')
 
 
-def binned(layout, at=BIN, bottle=(.13, 0.)):
-    """The bin on the floor with the litter in it, the empty can at the bottom; the empty bottle standing
-    beside it (``bottle``: offset from the bin)."""
+def binned(layout, at=BIN):
+    """The bin on the floor with the empty bottle lying at the bottom and the rest of the litter on it."""
     bin_at(layout, at)
-    layout.drop('empty_can', (0., 0.), 0., frame='bin')
+    layout.drop('empty_bottle', (0., 0.), rotation=lying(layout, 'empty_bottle', BOTTLE_IN_BIN), frame='bin')
     for name in LITTER:
-        if name != 'empty_can':
-            layout.scatter(name, ((-.035, -.025), (.035, .025)), yaw=(-math.pi, math.pi), frame='bin',
-                           onto=['bin', *LITTER])
-    on_floor(layout, 'empty_bottle', (at[0] + bottle[0], at[1] + bottle[1]))
+        layout.scatter(name, ((-.07, -.05), (.07, .05)), yaw=(-math.pi, math.pi), frame='bin',
+                       onto=['bin', 'empty_bottle', *LITTER])
 
 
 def computer(layout, keyboard=(-.10, -.41), mouse=(.20, -.42)):
@@ -334,7 +335,7 @@ def mirrored(layout):
     chest_at(layout, (-.49, -.35, 0.))
     stored_gear(layout)
     on_chest(layout)
-    binned(layout, at=(-.85, -.62, 0.), bottle=(-.13, 0.))
+    binned(layout, at=(-.85, -.62, 0.))
     tidy_desk(layout, mirror=True)
 
 
@@ -398,7 +399,7 @@ def pile(layout):
     fixtures(layout)
     chest_at(layout)
     bin_at(layout)
-    on_floor(layout, 'empty_bottle', (BIN[0] + .13, BIN[1]))
+    on_floor(layout, 'empty_bottle', (BIN[0] + .22, BIN[1]))
     for name in sorted(remaining(layout), key=lambda name: footprint_area(layout, name), reverse=True):
         layout.scatter(name, ((-.32, -.40), (.12, -.14)), yaw=(-math.pi, math.pi), tries=200)
 
@@ -410,7 +411,7 @@ def wrong_places(layout):
     bin_at(layout)
     # The pliers, a clip lead, the pen and the connector thrown in the bin; litter, the iron and the mouse
     # on top of the chest; the reel and flux on the power supply; the rest strewn over the bench.
-    into(layout, ['pliers', 'lead_red', 'pen', 'connector'], 'bin', (.03, .02))
+    into(layout, ['pliers', 'lead_red', 'pen', 'connector'], 'bin', (.07, .05))
     for name in ('iron', 'label_1', 'label_2', 'offcut', 'parts_bag', 'mouse'):
         layout.scatter(name, ((-.10, -.06), (.10, .06)), yaw=(-math.pi, math.pi), frame='chest',
                        onto=['chest', *LITTER, 'iron'])
@@ -428,7 +429,7 @@ def half_done(layout):
     hang(layout, 'cutters', 1)
     chest_at(layout)
     bin_at(layout)
-    into(layout, ['label_1', 'label_2', 'receipt'], 'bin', (.035, .025))
+    into(layout, ['label_1', 'label_2', 'receipt'], 'bin', (.07, .05))
     # The left half done: the logbook and calculators, the keyboard, the meters in a row; the right half and
     # the chest still strewn with everything else.
     desk_stack(layout)
@@ -436,7 +437,7 @@ def half_done(layout):
     layout.place('keyboard', ((-.14, -.41), (-.14, -.41)))
     strewn(layout, [name for name in remaining(layout) if name != 'empty_bottle'], region=((-.25, -.47), (.22, -.10)),
            onto=None)      # crowded: things land on each other
-    on_floor(layout, 'empty_bottle', (BIN[0] + .13, BIN[1]))
+    on_floor(layout, 'empty_bottle', (BIN[0] + .22, BIN[1]))
 
 
 def left_open(layout):
@@ -485,7 +486,7 @@ LAYOUTS = {
                        'the solder reel and flux tin on the station; probe, heat sink, pen and wick in the top '
                        'drawer, the boards, display, adapter and connector in the middle one, the clip leads and '
                        'the mouse in the bottom one (all closed); the two coiled cables and the screwdriver set on '
-                       'the chest; all litter in the bin with the empty bottle beside it; the keyboard and wireless '
+                       'the chest; all litter and the empty bottle in the bin; the keyboard and wireless '
                        'mouse squared up at the front, the calculators on the logbook at the front left, the two '
                        'meters side by side behind them and the third hand in the middle.'},
     2: {
