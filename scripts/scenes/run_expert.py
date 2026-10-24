@@ -27,15 +27,18 @@ batch ``--from <batch directory>``. Every seed with such a checkpoint runs; the 
 rates count from the seeds of that batch's first step. See
 ``table_1000/experts/generate.py`` and ``scripts/scenes/join_steps.py``.
 
-``--draw r`` runs each seed with other random streams (``ctx.rng``, MPlib's): ``r`` = 0, the
-default, its own. Batches of the same states with ``--draw`` 0 to K - 1 (each into its own
-``--output``) give each seed's chance of success at the step, from the start it had.
+``--repeats K`` runs each seed K times from its state, with K sets of random streams (``ctx.rng``,
+MPlib's), the first the seed's own as without it: how often it succeeds from there. The other runs'
+reports are ``episodes/<seed>-<r>.json`` (r = 1 .. K - 1), without trajectories or checkpoints;
+the batch's figures are those of the first runs, and ``summary.json``'s ``repeats`` gives each
+seed's successes out of K and the failures with their number per seed.
 
 Failed episodes are part of the result; the exit status is non-zero only when a
 seed has no episode. See ``table_1000/experts/generate.py``.
 """
 
 import argparse
+import itertools
 import json
 from pathlib import Path
 import shutil
@@ -83,11 +86,10 @@ def worker(args):
         else:
             states = {seed: (attempt, state, None) for seed, (attempt, state) in read_states(args.states)[1].items()}
         generator = Generator(args.scene, work, args.assets.resolve(), args.root.resolve(), physics=args.physics,
-                              steps=args.steps, source=str(args.states) if args.checkpoints else None,
-                              draw=args.draw)
-        for seed in parse_seeds(args.seeds):
-            report = generator.run(seed, *states[seed])
-            print(seed, report['status'], report.get('failure', {}).get('reason', ''), f'{report["wall_s"]:.0f} s',
+                              steps=args.steps, source=str(args.states) if args.checkpoints else None)
+        for seed, repeat in itertools.product(parse_seeds(args.seeds), range(args.repeats)):
+            report = generator.run(seed, *states[seed], repeat=repeat)
+            print(seed, *([f'repeat {repeat}'] if repeat else []), report['status'], report.get('failure', {}).get('reason', ''), f'{report["wall_s"]:.0f} s',
                   flush=True)
     except Exception:
         traceback.print_exc()
@@ -112,8 +114,8 @@ def main(argv=None):
     parser.add_argument('--steps', type=step_range, help="k[-m]: run steps k to m of the expert (see run_steps)")
     parser.add_argument('--from', dest='source', type=Path,
                         help='a batch directory whose checkpoints of step k - 1 the steps start from')
-    parser.add_argument('--draw', type=int, default=0,
-                        help='random streams to run each seed with: 0 its own, others to see how its outcome varies')
+    parser.add_argument('--repeats', type=int, default=1,
+                        help='runs of each seed from its state, with other random streams after the first')
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--seeds', nargs='+', help=argparse.SUPPRESS)
     parser.add_argument('--states', type=Path, help=argparse.SUPPRESS)
@@ -124,7 +126,7 @@ def main(argv=None):
         worker(args)
         return
     import h5py
-    from table_1000.experts.generate import checkpoint_path, merge_checkpoints, step_rates, summarize
+    from table_1000.experts.generate import checkpoint_path, merge_checkpoints, repeat_rates, step_rates, summarize
     from table_1000.scenes.recordings import STEPS_PREFIX, clear_batch, merge
     jobs = job_count(parser, args)
     root = args.root.resolve()
@@ -171,19 +173,23 @@ def main(argv=None):
     checkout = commit(root)
     works = {}
 
+    def last(seed):
+        """The name of a seed's last report (of its last run)."""
+        return f'{seed}-{args.repeats - 1}' if args.repeats > 1 else str(seed)
+
     def command(part, index, attempt):
         name = process_name(f'part{index}', attempt)
         works.update(dict.fromkeys(part, staging / name))
         argv = [sys.executable, str(Path(__file__).resolve()), args.scene, '--worker', '--physics', args.physics,
                 '--seeds', *seed_range(part).split(), '--states', str(states), '--work', str(staging / name),
-                '--root', str(root), '--assets', str(args.assets.resolve()), '--draw', str(args.draw),
+                '--root', str(root), '--assets', str(args.assets.resolve()), '--repeats', str(args.repeats),
                 *(['--steps', '-'.join(map(str, args.steps))] if args.steps else []),
                 *(['--checkpoints'] if args.source else [])]
         return argv, staging / f'{name}.log', f'{args.scene} {args.physics} {name} seeds {seed_range(part)}'
 
     started = time.perf_counter()
     missing = run_batch(seeds, command=command, count=jobs, gpus=args.gpus, launcher=args.launcher, retries=args.retries,
-                        missing=lambda seed: not (works[seed] / 'episodes' / f'{seed}.json').is_file())
+                        missing=lambda seed: not (works[seed] / 'episodes' / f'{last(seed)}.json').is_file())
     parts = sorted(staging.glob('part*/'))
     (directory / 'episodes').mkdir(parents=True)
     for name in ('trajectories', 'trajectories_failed'):
@@ -199,14 +205,17 @@ def main(argv=None):
                                            'commit': checkout})
     for path in staging.glob('part*/checkpoints/*.hdf5'):
         path.unlink()
-    reports = []
-    for path in sorted(staging.glob('part*/episodes/*.json')):
-        reports.append(json.loads(path.read_text()))
+    # A seed's runs again elsewhere after its process stopped: its last reports count.
+    runs = {}
+    for path in sorted(staging.glob('part*/episodes/*.json'), key=lambda path: path.stat().st_mtime):
+        runs[path.name] = json.loads(path.read_text())
         shutil.move(path, directory / 'episodes' / path.name)
+    reports = [report for report in runs.values() if not report.get('repeat')]
     summary = {'scene': args.scene, 'robot': robot, 'physics': args.physics, 'commit': checkout,
-               'steps_run': args.steps, 'from': str(args.source.resolve()) if args.source else None, 'draw': args.draw,
+               'steps_run': args.steps, 'from': str(args.source.resolve()) if args.source else None,
                **summarize(reports, seeds), 'steps': step_rates(reports, seeds, parent),
-               'load': load_record(reports), 'total_s': time.perf_counter() - started, 'videos': {}, 'fails': {}}
+               'repeats': repeat_rates(list(runs.values()), seeds, args.repeats) if args.repeats > 1 else None,
+               'load': load_record(list(runs.values())), 'total_s': time.perf_counter() - started, 'videos': {}, 'fails': {}}
     (directory / 'summary.json').write_text(json.dumps(summary, indent=1, ensure_ascii=False, default=float) + '\n')
     print('SUMMARY', directory / 'summary.json',
           json.dumps({key: summary[key] for key in ('succeeded', 'success_rate', 'failures')}, default=float), flush=True)

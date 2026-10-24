@@ -265,3 +265,14 @@ def test_build_scene_combines_parts(tmp_path, monkeypatch):
     assert not (directory / 'initial').exists()            # replaced, and no --images this time
     assert not (directory / 'staging').exists()            # the processes' results, removed once merged
     assert not (root / 'asset_sources').exists()           # a custom output keeps the thumbnail
+
+
+def test_repeat_rates_count_every_run():
+    from table_1000.experts.generate import repeat_rates
+    reports = [{'seed': 4, 'repeat': 0, 'status': 'success'}, {'seed': 4, 'repeat': 1, 'status': 'failed',
+                                                               'failure': {'subtask': 'open', 'reason': 'no reachable grasp'}},
+               {'seed': 72, 'repeat': 0, 'status': 'failed', 'failure': {'subtask': 'take', 'reason': 'no reachable grasp'}},
+               {'seed': 72, 'repeat': 1, 'status': 'failed', 'failure': {'subtask': 'take', 'reason': 'no reachable grasp'}}]
+    rates = repeat_rates(reports, [4, 72], 2)
+    assert rates['succeeded'] == {'4': 1, '72': 0} and rates['success_rate'] == .25
+    assert rates['failures'] == {'take: no reachable grasp': {'72': 2}, 'open: no reachable grasp': {'4': 1}}
