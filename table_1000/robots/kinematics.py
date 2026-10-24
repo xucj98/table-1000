@@ -253,6 +253,18 @@ class RobotModel:
         finally:
             self.planners[arm].robot.set_qpos(self.q, True)
 
+    def object_collisions(self, arm, q):
+        """``[(link, object, object link)]`` between the robot at full configuration ``q`` (every
+        joint, not only ``arm``'s) and the objects of ``arm``'s planning world, those it holds included."""
+        planner = self.planners[arm]
+        robot = planner.robot.get_name()
+        try:
+            planner.robot.set_qpos(q, True)
+            return sorted({(c.link_name1, c.object_name2, c.link_name2) for c in planner.planning_world.check_collision()
+                           if c.object_name2 != robot})
+        finally:
+            planner.robot.set_qpos(self.q, True)
+
     def check_path(self, arm, positions, step=.01, lift=None):
         """First collision along a path of ``arm`` joint rows (with ``lift`` rows of the torso
         lift, else the lift where it is), interpolated so that no joint moves more than ``step``

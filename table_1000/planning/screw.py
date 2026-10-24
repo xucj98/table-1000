@@ -112,7 +112,10 @@ def plan_screw(planner, goal, qpos, *, qpos_step=.03, time_step=.004,
 
     if len(path) == 1:
         path.append(path[0])
-    times, positions, velocities, accelerations, duration = planner.TOPP(np.vstack(path), time_step)
+    try:
+        times, positions, velocities, accelerations, duration = planner.TOPP(np.vstack(path), time_step)
+    except RuntimeError:    # MPlib's "Fail to parameterize path"
+        return {'status': 'screw plan failed', 'reason': 'time_parameterization', **state}
     positions = np.asarray(positions)
     if len(positions) < 2 or not np.isfinite(positions).all():
         return {'status': 'screw plan failed', 'reason': 'time_parameterization_samples', **state}

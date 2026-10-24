@@ -24,16 +24,25 @@ frame, also for a scene primitive that is not an asset). Every asset of the scen
 is in each arm's planning world, one planning object per part (``<object>:<part>``);
 the table too.
 
-**grasp** -- (where none is in reach, the base first moves to reach the first ones) candidates of the shape at its live pose
+Each skill reaches with the least of the robot it can, in this order: one arm with the torso
+lift where it is, the other arm so, the torso lift moving too, the free arms that are out back
+at their start pose (where none is in reach as they are), then the base moving
+(:func:`make_room`); a free-space plan (RRTConnect) that may move the torso lift holds it first
+where its goal leaves it where it is.
+
+**grasp** -- candidates of the shape at its live pose
 (:func:`~table_1000.experts.grasps.grasp_candidates`, cheapest first: close to the
 ``approach`` direction, default reaching out and down from the arm's shoulder;
 centred on ``point``, default the shape's centre) are tried per arm, the arm whose
-shoulder is nearer first. Every other planning object is an obstacle of the
+shoulder is nearer first, in the order above (where none is in reach, the base first moves
+to reach the first ones). Every other planning object is an obstacle of the
 candidates' hand; the ones within ``SUPPORT_DISTANCE`` of the shape are its supports,
 which the hand may touch (overlapping them by at most ``-SUPPORT_CLEARANCE``). A
 candidate is kept when the grasp and a pre-grasp ``APPROACH`` behind it have
 collision-free IK solutions, and so does the grasp moved by ``then`` (the motion that
-follows, if given). The hand plans (RRTConnect, the torso lift with the arm) to the
+follows, if given), straight all along; a ``then`` other than a lift up also needs the hand to
+leave straight back ``APPROACH`` from its end, where it lets go (a drawer pulled up to the body
+leaves the arm no room to). The hand plans (RRTConnect) to the
 pre-grasp with the fingers open to the object's width plus a margin, moves straight
 in (the only move in which the fingers may touch the object), and closes; the finger
 gap must stop within ``HELD_TOLERANCE`` of the gap at which the pads touch the object, else it backs out, re-observes the
@@ -50,7 +59,8 @@ object and whatever rests on them.
 **push** -- the closed fingertips against the face of a part that ``direction``
 points into, then straight on by ``distance`` (a drawer pushed shut by its front);
 the hand comes level with the push or tilted down (``PUSH_TILTS``), and what the
-part's body carries moves with it as in a drag.
+part's body carries moves with it as in a drag; where none is in reach, the base first moves to
+reach the first ones.
 
 **release** -- open the fingers to the grasp's opening and back out along the
 approach (or up).
@@ -64,10 +74,17 @@ IK screens them above and at the release (``MAX_PLACE_IK``), and the first of th
 (``MAX_PLACES`` planned) is taken: above it, straight down to ``clearance`` over the
 surface, then :func:`release`.
 
-**make_room** -- move the base (backed off along its start heading, turned) to the
-least move from where given TCP poses are reachable with every joint a margin inside
-its limits, the free arms back at their start pose first (``move_base`` drives it
-straight and turns it in place).
+**make_room** -- move the base to where given TCP poses (each a pose, or the poses along a
+straight move) are reachable with every joint a margin inside its limits: where it stands
+if they are, else the base pose that it gets to soonest among poses sampled around them
+(facing them, at a distance), the robot clear of the planning world there and on the way
+(the table's legs included). The free arms go back to their start pose first where they would
+sweep something on the way; the base turns in place, drives straight and turns in place. Given no poses, the base goes back to where it
+started.
+
+**handover** -- the held object passed to the other hand, held as the next action needs
+(:mod:`~table_1000.experts.skills.handover`, after WRS): the giving arm brings it in front of the
+body, the receiving one grasps it, the giving one lets go.
 
 **ready** -- the arms that hold nothing back at their start pose (each step then starts
 alike, out of the way of the other arm).
@@ -76,11 +93,20 @@ alike, out of the way of the other arm).
 first, so that its choices start afresh; not when nothing was in reach (``Unreachable``: the
 planners sampled their candidates already, a high share of it points at the planning).
 
+**chain** -- actions (:class:`Pick`, :class:`Place`) run in order, each asked for what the next
+needs of it: a place needs the object held by a hand, and with a hold, from which one of its
+placements is in reach (an :class:`InHand`), and the pick takes only such grasps; where none is in
+reach (:class:`Unmet`) the object is picked as it can be and handed over to the other hand, else
+the pick runs again with the base free to move (see :mod:`~table_1000.experts.skills.chain`)::
+
+    skills.chain(ctx, [skills.Pick('pen', instruction='pick up the pen from the table'),
+                       skills.Place('pen', region, near=point, instruction='put the pen into the drawer')])
+
 Each choice of another candidate is noted (``ctx.note``). A skill that finds nothing in reach
 (no grasp, push or placement) fails with :class:`~table_1000.experts.context.Unreachable`.
 
 The skills are one :class:`Skills` per context (``ctx.skills()``), put together from
-``grasping`` (grasp, pick), ``motion`` (straight moves, push, release), ``placing`` and ``base``
+``grasping`` (grasp, pick), ``handover``, ``motion`` (straight moves, push, release), ``placing`` and ``base``
 (the base, ready); ``common`` holds what they share.
 """
 
@@ -89,14 +115,17 @@ import numpy as np
 from table_1000.experts.context import ExpertFailed, Unreachable
 from table_1000.experts.grasps import Hand
 from table_1000.experts.skills.base import Base
+from table_1000.experts.skills.chain import InHand, Pick, Place, chain
+from table_1000.experts.skills.common import Unmet
 from table_1000.experts.skills.grasping import LIFT, Grasping
+from table_1000.experts.skills.handover import Handing
 from table_1000.experts.skills.motion import Motion
 from table_1000.experts.skills.placing import PLACE_ABOVE, PLACE_CLEARANCE, PLACE_MARGIN, PLACE_STEP, Placing
 
 ATTEMPTS = 3            # tries of a step under retry
 
 
-class Skills(Grasping, Motion, Placing, Base):
+class Skills(Grasping, Handing, Motion, Placing, Base):
     """The skills of ``ctx``'s arms (``arms``: names, default all); see the module docstring."""
 
     def __init__(self, ctx, arms=None):
@@ -120,6 +149,7 @@ class Skills(Grasping, Motion, Placing, Base):
         self.start_base = np.asarray(ctx.start['base_pose'], dtype=float) if ctx.spec.base else None
         self.held = {}      # arm -> {'target', 'supports', 'grasp'}
         self.log, self.rejected = [], {}
+        self.reaches = {}   # arm -> its reach (see Base.arm_reach)
 
 
 def _skills(ctx):
@@ -154,14 +184,17 @@ def retry(ctx, step, attempts=ATTEMPTS):
 
 def relaxed(limits, attempt):
     """``attempt(limit)`` for each of ``limits`` (one value, a list or None) in turn while it is
-    :class:`Unreachable`."""
+    :class:`Unreachable`; :class:`Unmet` if one of them was."""
     limits = list(np.atleast_1d(limits)) if limits is not None else [None]
-    for limit in limits[:-1]:
+    unmet = None
+    for limit in limits:
         try:
             return attempt(limit)
-        except Unreachable:
-            pass
-    return attempt(limits[-1])
+        except Unmet as failure:
+            unmet = failure
+        except Unreachable as failure:
+            last = failure
+    raise unmet or last
 
 
 def grasp(ctx, obj, part=None, *, arm=None, shape=None, offset=None, body=None, point=None, approach=None, then=None,
@@ -174,11 +207,13 @@ def grasp(ctx, obj, part=None, *, arm=None, shape=None, offset=None, body=None, 
 
 
 def pick(ctx, obj, part=None, *, arm=None, shape=None, offset=None, body=None, point=None, approach=None, height=LIFT,
-         max_angle=None):
-    """Grasp scene object ``obj`` (or its ``part``) and lift it by ``height``; ``max_angle`` as for :func:`grasp`."""
+         max_angle=None, need=None, base=True):
+    """Grasp scene object ``obj`` (or its ``part``) and lift it by ``height``; ``max_angle`` as for
+    :func:`grasp`; ``need``: held as that :class:`~table_1000.experts.skills.chain.InHand` asks, else
+    :class:`Unmet`; ``base``: whether the base may move."""
     skills = _skills(ctx)
     target = skills.target(obj, part, shape, offset, body)
-    return relaxed(max_angle, lambda angle: skills.pick(target, arm, point, approach, height, angle))
+    return relaxed(max_angle, lambda angle: skills.pick(target, arm, point, approach, height, angle, need, base))
 
 
 def move_by_displacement(ctx, arm, x=0., y=0., z=0., drag=None, least=1.):
@@ -202,6 +237,11 @@ def place(ctx, obj, region, *, arm=None, near=None, keep_out=(), clearance=PLACE
           step=PLACE_STEP, margin=PLACE_MARGIN):
     """Put the held ``obj`` down in ``region`` (see :meth:`Skills.place`) and release it."""
     return _skills(ctx).place(obj, region, arm, near, keep_out, clearance, above, step, margin)
+
+
+def handover(ctx, obj, *, to=None, need=None):
+    """Hand the held ``obj`` to the other hand (``to``), held as ``need`` asks (see :meth:`Skills.handover`)."""
+    return _skills(ctx).handover(obj, to, need)
 
 
 def open_gripper(ctx, arm, gap=None):

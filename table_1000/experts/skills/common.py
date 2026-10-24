@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from table_1000.experts.context import Unreachable
 from table_1000.experts.grasps import Box
 from table_1000.planning.world import PlanningObject
 
@@ -13,6 +14,11 @@ IK_ATTEMPTS = 20        # IK restarts per pose
 SUPPORT_DISTANCE = .003 # m, planning objects this close to the grasped one support it
 ROOM_PLACES = 10        # first placements (grasps, per arm) the base moves to reach when none is in reach
 RETREATS = (APPROACH, .03)   # m, back-off after releasing, tried in order
+
+
+class Unmet(Unreachable):
+    """What the next action needs of this one (a :class:`~table_1000.experts.skills.chain.InHand`)
+    is not in reach: some candidates were, but none that meets it."""
 
 
 def collisions(error):
