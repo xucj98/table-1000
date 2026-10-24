@@ -51,6 +51,9 @@ UP = np.cos(np.radians(10.))  # least cosine between an upward face and the vert
 LEVEL = .005            # m within which support hits share a height
 NEAR = .30              # m about a given near point that a region is cut down to (fewer spots to rank)
 ON_TOLERANCE = .03      # m an object's lowest point may be above the surface it is on
+# m an object put on a surface keeps inside its edges: room for the fingers that pick it up again
+# (a pen 1 cm from the table's edge was grasped with the edge between the fingers)
+EDGE = .04
 
 
 def require(ctx, ok, reason, **details):
@@ -374,17 +377,23 @@ def around(region, near):
     return frame, np.maximum(low, point - NEAR), np.minimum(high, point + NEAR)
 
 
+def inset(region, margin):
+    """``region`` shrunk by ``margin`` on every side."""
+    frame, low, high = region
+    return frame, np.asarray(low) + margin, np.asarray(high) - margin
+
+
 # -- placing -------------------------------------------------------------------------------------
 def on_region(obj, surface, part=None, near=None, keep_out=()):
     """``where(ctx) -> (region, keep_out)``: where on ``surface`` (the table, an object, or its body
     or ``part``) to put ``obj`` down in the state then, out of ``keep_out`` rectangles besides what
-    stands there, within NEAR of ``near`` (world point) if given; for
-    :func:`~table_1000.experts.skills.place` (or a :class:`~table_1000.experts.skills.Place`).
+    stands there and EDGE inside the surface's edges, within NEAR of ``near`` (world point) if given;
+    for :func:`~table_1000.experts.skills.place` (or a :class:`~table_1000.experts.skills.Place`).
     See :func:`support_region`."""
     def where(ctx):
         region, blocked = support_region(scene_shapes(ctx, exclude=(obj,)), surface, part, headroom=headroom(ctx, obj))
         require(ctx, region is not None, 'no support', surface=surface, part=part)
-        return around(region, near), [*blocked, *keep_out]
+        return around(inset(region, EDGE), near), [*blocked, *keep_out]
     return where
 
 

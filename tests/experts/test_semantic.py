@@ -125,3 +125,11 @@ def test_what_hangs_high_over_a_floor_is_no_obstacle():
     assert low[1] == pytest.approx(.09, abs=semantic.SUPPORT_STEP / 2 + 1e-9)
     (_, low, high), keep_out = semantic.support_region(shapes, 'cab', 'cab.drawer', floor=True, headroom=.09)
     assert np.allclose([low[1], high[1]], [0., .18], atol=semantic.SUPPORT_STEP / 2 + 1e-9) and keep_out == []
+
+
+def test_put_on_keeps_room_at_the_edges():
+    """On the table, an object stays EDGE inside its edges (fingers reach past it when picking it up)."""
+    region, _ = semantic.support_region([semantic.table_shape(TABLE)], 'table')
+    frame, low, high = semantic.around(semantic.inset(region, semantic.EDGE), [0., -.39, TABLE['height']])
+    assert np.allclose(low, [-.3, -.4 + semantic.EDGE], atol=semantic.SUPPORT_STEP)
+    assert np.allclose(high, [.3, -.09], atol=semantic.SUPPORT_STEP)
