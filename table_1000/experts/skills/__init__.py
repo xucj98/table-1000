@@ -40,7 +40,9 @@ candidates' hand; the ones within ``SUPPORT_DISTANCE`` of the shape are its supp
 which the hand may touch (overlapping them by at most ``-SUPPORT_CLEARANCE``). A
 candidate is kept when the grasp and a pre-grasp ``APPROACH`` behind it have
 collision-free IK solutions, and so does the grasp moved by ``then`` (the motion that
-follows, if given). The hand plans (RRTConnect) to the
+follows, if given), straight all along; a ``then`` other than a lift up also needs the hand to
+leave straight back ``APPROACH`` from its end, where it lets go (a drawer pulled up to the body
+leaves the arm no room to). The hand plans (RRTConnect) to the
 pre-grasp with the fingers open to the object's width plus a margin, moves straight
 in (the only move in which the fingers may touch the object), and closes; the finger
 gap must stop within ``HELD_TOLERANCE`` of the gap at which the pads touch the object, else it backs out, re-observes the

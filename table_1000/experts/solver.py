@@ -272,7 +272,8 @@ class MotionSolver:
                 return move(target)
             except PlanningFailed as error:
                 if index == len(targets) - 1 or not error.reason.startswith(
-                        ('IK Failed', 'joint_limit', 'collision', 'path collision', 'RRTConnect')):
+                        ('IK Failed', 'joint_limit', 'collision', 'path collision', 'RRTConnect', 'no_progress',
+                         'iteration_limit', 'time_parameterization')):
                     raise
 
     # -- execution -----------------------------------------------------------------------

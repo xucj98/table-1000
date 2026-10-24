@@ -6,7 +6,7 @@ import time
 import numpy as np
 
 from table_1000.experts.context import DT, Unreachable
-from table_1000.experts.grasps import SUPPORT_CLEARANCE, Box, grasp_candidates, standoff, translated
+from table_1000.experts.grasps import SUPPORT_CLEARANCE, fitted, grasp_candidates, standoff, translated
 from table_1000.experts.skills.common import (APPROACH, CANDIDATE_PLANS, IK_ATTEMPTS, ROOM_PLACES, SUPPORT_DISTANCE,
                                               Target, Unmet, collisions, normalized, planning_object)
 from table_1000.experts.solver import PlanningFailed
@@ -21,6 +21,12 @@ MAX_PLANS = 6           # candidates whose motion is tried per grasp attempt, wi
 HELD_SLACK = 15.
 MIN_RISE = .05          # m the object must rise in pick's lift
 WHY_LIMIT = 20          # rejected grasps per choice whose collisions are counted for the report
+
+
+def lifting(then):
+    """Whether the move ``then`` after a grasp is straight up (a pick's lift, not a drag)."""
+    then = np.asarray(then, dtype=float)
+    return np.linalg.norm(then[:2]) < 1e-9 and then[2] > 0.
 
 
 class Replayed:
@@ -42,8 +48,9 @@ class Grasping:
     # -- what is grasped -----------------------------------------------------------------
     def target(self, obj, part=None, shape=None, offset=None, body=None):
         """The :class:`Target` of scene object ``obj`` (an asset, or a primitive with ``shape``):
-        ``part`` (a part or body name, default all of it), shaped by its collision box in the frame
-        of ``body`` (default the first body of the part), or by ``shape`` at ``offset`` there."""
+        ``part`` (a part or body name, default all of it), shaped in the frame of ``body`` (default
+        the first body of the part) by a cylinder where it is round, else its collision box (see
+        :func:`~table_1000.experts.grasps.fitted`), or by ``shape`` at ``offset`` there."""
         ctx = self.ctx
         offset = np.eye(4) if offset is None else np.asarray(offset, dtype=float)
         if obj not in ctx.scene.OBJECTS:
@@ -60,9 +67,7 @@ class Grasping:
             raise KeyError(f'{obj} has no part {part!r}')
         body = body or parts[0][0]
         if shape is None:
-            low, high = geometry.bounds(part, body)
-            shape, offset = Box(tuple(high - low)), np.eye(4)
-            offset[:3, 3] = (low + high) / 2
+            shape, offset = fitted(geometry.points(part, body))
         return Target(obj, [f'{obj}:{name}' for _, name in parts], f'{obj}:{body}', shape, offset,
                       geometry.points(None, body))
 
@@ -112,7 +117,7 @@ class Grasping:
         transform = body @ target.offset
         centre = transform[:3, 3]
         then = None if then is None else np.asarray(then, dtype=float)
-        upward = then is not None and np.linalg.norm(then[:2]) < 1e-9 and then[2] > 0.
+        upward = then is not None and lifting(then)
         arms = sorted(arms, key=lambda arm: np.linalg.norm((self.shoulder(arm) - centre)[:2]))
         found = {}
         for arm in arms:
@@ -120,8 +125,9 @@ class Grasping:
             obstacles, supports = self.obstacles(arm, target, transform)
             found[arm] = supports, Replayed(grasp_candidates(target.shape, transform, self.hands[arm], obstacles,
                                                              preferred, center_of_mass=point, approach_distance=APPROACH))
-        closest = min((grasp.info['approach_deg'] for _, candidates in found.values()
-                       for grasp in itertools.islice(candidates, MAX_IK)), default=0.)
+        # The approach any candidate of either arm comes closest to (each knows it from its first).
+        closest = min((grasp.info['closest_deg'] for _, candidates in found.values()
+                       for grasp in itertools.islice(candidates, 1)), default=0.)
         for lift in (False, True):
             limit = np.degrees(max_angle) if max_angle is not None else np.inf
             if not lift:
@@ -155,15 +161,21 @@ class Grasping:
                         self.rejected['pre-grasp IK'] += 1
                         continue
                     if then is not None:
-                        status, _ = self.model.ik(arm, translated(grasp.pose, then), q_grasp, world=True, lift=lift,
-                                                  attempts=IK_ATTEMPTS)
+                        end = translated(grasp.pose, then)
+                        status, q_end = self.model.ik(arm, end, q_grasp, world=True, lift=lift, attempts=IK_ATTEMPTS)
                         if status == 'Success' and not upward:
                             # All the way along, as the move goes: an arm folding into itself half way (a
                             # drawer pulled out towards the body) makes it stop there. (A lift up has the
-                            # torso lift rise where the arm alone stops.)
+                            # torso lift rise where the arm alone stops.) Then, as the hand lets go there,
+                            # straight back out the way it came in: a hand that pulled a drawer up to the
+                            # body may have no room left to leave it. (The dragged part stays where it is in
+                            # the planning world: this checks the arm's kinematics and the body, not the part.)
                             solver.allow([*target.names, *supports])
-                            status = self.model.plan_screw(arm, translated(grasp.pose, then), q_grasp, world=True,
-                                                           time_step=DT, lift=lift)['status']
+                            status = self.model.plan_screw(arm, end, q_grasp, world=True, time_step=DT,
+                                                           lift=lift)['status']
+                            if status == 'Success':
+                                status = self.model.plan_screw(arm, standoff(end, APPROACH), q_end, world=True,
+                                                               time_step=DT, lift=lift)['status']
                             solver.allow([*target.names, *supports], False)
                         # Close to the body the hand may not reach higher; then the torso must rise that far.
                         headroom = self.model.limits[self.model.lift_indices(), 1] - q_grasp[self.model.lift_indices()]
@@ -219,9 +231,11 @@ class Grasping:
             if reached is None and not roomed and ctx.spec.base and base:
                 # None in reach from here: the base moves to reach the first candidates, then again.
                 roomed = True
-                paths = self.grasp_paths(target, arms, point, approach, then, max_angle)
+                paths = self.grasp_paths(target, arms, point, approach, then, max_angle, need)
                 if any(paths.values()):
-                    self.make_room(paths, need=1)
+                    # The fingers touch what options lets them: the target and its supports.
+                    _, supports = self.obstacles(arms[0], target, ctx.poses()[target.body] @ target.offset)
+                    self.make_room(paths, need=1, touch=[*target.names, *supports])
                     skip = set()
                     reached = self.reach(target, arms, skip, point, approach, then, max_angle, need)
             if reached is None:
@@ -256,9 +270,11 @@ class Grasping:
         self.log.append(result)
         return result
 
-    def grasp_paths(self, target, arms, point=None, approach=None, then=None, max_angle=None):
+    def grasp_paths(self, target, arms, point=None, approach=None, then=None, max_angle=None, need=None):
         """``{arm: paths}``: the world TCP poses of the first ``ROOM_PLACES`` grasp candidates of each
-        arm, each with its pre-grasp before it (and the ``then`` move after it): what the base moves to reach."""
+        arm, each with its pre-grasp before it (and the ``then`` move after it): what the base moves to
+        reach; with a ``need`` that says where the hand takes the object next (``InHand.hands``), a path
+        per such place after it, so that the base stands where both are in reach."""
         transform = self.ctx.poses()[target.body] @ target.offset
         centre = transform[:3, 3]
         paths = {arm: [] for arm in arms}
@@ -275,6 +291,13 @@ class Grasping:
                 path = [standoff(grasp.pose, APPROACH), grasp.pose]
                 if then is not None:
                     path.append(translated(grasp.pose, then))
+                    if not lifting(then):
+                        path.append(standoff(path[-1], APPROACH))   # letting go there (see options)
+                if need is not None and need.hands is not None:
+                    if arm in need.arms:
+                        body = self.ctx.poses()[target.body]
+                        paths[arm] += [path + hands for hands in need.hands(arm, np.linalg.inv(grasp.pose) @ body)]
+                    continue
                 paths[arm].append(path)
         return paths
 

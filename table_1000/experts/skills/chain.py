@@ -4,26 +4,30 @@ An expert says what to do with the objects; :func:`chain` runs the actions in or
 for what the next needs of it (its :meth:`Action.requirements`: an :class:`InHand` for a place,
 the hands and holds from which the object is put down). Where an action cannot meet that
 (:class:`~table_1000.experts.skills.common.Unmet`), it is done as it can and the need is met
-after, the first of ``adapt`` that does: ``'handover'`` (the object handed to the other hand,
-held as needed), ``'base'`` (the action again with the need and the base free to move; what is
-still unmet is left to the next action, which may move the base itself).
+after, the first of ``adapt`` that does: ``'base'`` (the action again with the need and the base
+free to move: one stance from which it is done and the next one can be, a pick and the place of
+what it holds), ``'handover'`` (done as it can, then the object handed to the other hand, held as
+needed; what is still unmet is left to the next action, which may move the base itself).
 """
 
 from contextlib import nullcontext
 from dataclasses import dataclass
 
+from table_1000.experts.context import Unreachable
 from table_1000.experts.skills.common import Unmet
 
-ADAPT = ('handover', 'base')
+ADAPT = ('base', 'handover')
 
 
 @dataclass
 class InHand:
     """``obj`` held by one of ``arms`` with a hold that ``accepts(arm, tcp_object)`` takes
-    (``tcp_object``: the object's 4x4 pose in the TCP frame)."""
+    (``tcp_object``: the object's 4x4 pose in the TCP frame); ``hands(arm, tcp_object)``, where
+    given, are the world TCP poses the next action takes it to held so (for the base to reach too)."""
     obj: str
     accepts: callable
     arms: list
+    hands: callable = None
 
 
 class Action:
@@ -127,10 +131,10 @@ def adapted(ctx, action, need, adapt, failure):
                 ctx.note('need unmet', action='Handover', reason=unmet.reason)
                 return [result]     # the next action moves the base where it must
         if way == 'base':
-            with subtask(ctx, action.instruction):
-                try:
+            try:
+                with subtask(ctx, action.instruction):
                     return [action.run(ctx, need)]
-                except Unmet as unmet:
-                    ctx.note('need unmet', action=type(action).__name__, reason=unmet.reason)
-                    return [action.run(ctx)]
+            except Unreachable as unmet:     # also nothing in reach with the need from anywhere: on as it can
+                ctx.note('need unmet', action=type(action).__name__, reason=unmet.reason)
+                failure = unmet
     raise failure

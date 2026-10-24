@@ -100,14 +100,15 @@ class Base:
             solver.sync()
         ctx.note('base moved', forward=forward, turn=turn, pose=self.base_pose().tolist())
 
-    def base_for(self, poses, arms=None, need=None, path=False):
+    def base_for(self, poses, arms=None, need=None, path=False, touch=None):
         """World pose ``(x, y, yaw)`` of the base from where one of ``arms`` (default the free ones)
         reaches ``need`` (default all) of ``poses`` with each joint ``BASE_MARGIN`` inside its limits:
         where it stands if they are reached from there, else the sampled pose (see the constants)
         the base gets to soonest, the robot clear of the planning world there and on its way; else
         the one reaching most, with the widest margin (None when none reaches any). No poses: its start pose. Each of ``poses`` is a world TCP pose or a list of them
         along a straight move, each solved from the one before at the torso height of the first
-        (``path``: ``poses`` are one such list); ``{arm: poses}`` gives each arm its own."""
+        (``path``: ``poses`` are one such list); ``{arm: poses}`` gives each arm its own. The fingers
+        may touch the planning objects ``touch`` there (default: any; see :meth:`reached`)."""
         model, ctx = self.model, self.ctx
         if not isinstance(poses, dict):
             arms = list(arms) if arms else [a for a in self.arms if a not in self.held]
@@ -152,7 +153,7 @@ class Base:
                         rejected['collisions'][key] = rejected['collisions'].get(key, 0) + 1
                     continue
                 checked.append(pose)
-                reached, margin = self.reached(groups, need)
+                reached, margin = self.reached(groups, need, touch)
                 if reached < need:
                     rejected['IK'] += 1
                     if (reached, margin) > most:
@@ -219,14 +220,16 @@ class Base:
                 return True
         return False
 
-    def reached(self, groups, need):
+    def reached(self, groups, need, touch=None):
         """``(groups, margin)``: the most of an arm's ``groups`` (``{arm: groups}``) it reaches with
-        ``BASE_MARGIN`` (see :meth:`path_margin`), and its widest margin."""
+        ``BASE_MARGIN`` (see :meth:`path_margin`), and its widest margin; the fingers may touch the
+        planning objects ``touch`` (default: any)."""
         most = (0, -np.inf)
         for arm, own in groups.items():
-            # The hand reaching the poses touches what it reaches (a handle, an object to grasp).
+            # The hand reaching the poses touches what it reaches (a handle, an object to grasp), as
+            # the skill moving it there lets it: no more, or the base stays where the skill cannot.
             world, fingers = self.solvers[arm].world, self.ctx.spec.arms[arm].finger_links
-            touched = [(name, finger) for name in world.objects for finger in fingers
+            touched = [(name, finger) for name in (world.objects if touch is None else touch) for finger in fingers
                        if frozenset((name, finger)) not in world.permissions]
             for name, finger in touched:
                 world.allow([name], [finger])
@@ -257,13 +260,13 @@ class Base:
                                                          model.limits[indices, 1] - q[indices]))))
         return margin
 
-    def make_room(self, poses, arms=None, need=None, path=False):
+    def make_room(self, poses, arms=None, need=None, path=False, touch=None):
         """Move the base (see :meth:`base_for`) to where ``poses`` are reachable with a margin: the
         free arms in where they would sweep something on the way, turned in place, straight on,
         turned in place."""
         if not self.ctx.spec.base:
             return
-        chosen = self.base_for(poses, arms, need, path)
+        chosen = self.base_for(poses, arms, need, path, touch)
         self.ctx.note('room', chosen=None if chosen is None else [float(v) for v in chosen])
         if chosen is None:
             return

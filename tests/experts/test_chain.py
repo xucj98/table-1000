@@ -61,9 +61,11 @@ def test_chain_hands_over_when_the_pick_cannot_meet_the_place(picking, monkeypat
     monkeypatch.setattr(skills, 'handover', handover, raising=False)
     ctx = Context()
     results = chain(ctx, [Pick('pen', instruction='pick up the pen'), Placing(picking)])
-    assert picking == ['pick unmet', 'pick right', 'handover', 'place']
+    # Unmet from here, unmet with the base free (adapt: base, then handover), so picked as it can and handed over.
+    assert picking == ['pick unmet', 'pick unmet', 'pick right', 'handover', 'place']
     assert results == [[{'arm': 'right'}, {'arm': 'left'}], 'placed']
-    assert ctx.subtasks == ['pick up the pen', 'pick up the pen', 'hand the pen over to the left hand', 'put the pen in']
+    assert ctx.subtasks == ['pick up the pen', 'pick up the pen', 'pick up the pen', 'hand the pen over to the left hand',
+                            'put the pen in']
 
 
 def test_chain_leaves_the_rest_to_the_next_action_when_no_handover_meets_it(picking, monkeypatch):
@@ -71,7 +73,7 @@ def test_chain_leaves_the_rest_to_the_next_action_when_no_handover_meets_it(pick
         raise Unmet('handover', 'no handover')
     monkeypatch.setattr(skills, 'handover', handover, raising=False)
     results = chain(Context(), [Pick('pen'), Placing(picking)])
-    assert picking == ['pick unmet', 'pick right', 'place']
+    assert picking == ['pick unmet', 'pick unmet', 'pick right', 'place']
     assert results == [[{'arm': 'right'}], 'placed']
 
 
@@ -79,3 +81,18 @@ def test_chain_runs_actions_without_needs_as_they_are(picking):
     results = chain(Context(), [Pick('pen'), Pick('cup')])
     assert picking == ['pick right', 'pick right']
     assert results == [{'arm': 'right'}, {'arm': 'right'}]
+
+
+def test_chain_moves_the_base_where_the_pick_meets_the_place(monkeypatch):
+    log = []
+
+    def pick(ctx, obj, need=None, base=True, **options):
+        if need is not None and not base:
+            log.append('pick unmet')
+            raise Unmet('pick', 'no reachable grasp')
+        log.append('pick left, the base moved' if need is not None else 'pick right')
+        return {'arm': 'left' if need is not None else 'right'}
+    monkeypatch.setattr(skills, 'pick', pick)
+    results = chain(Context(), [Pick('pen'), Placing(log)])
+    assert log == ['pick unmet', 'pick left, the base moved', 'place']
+    assert results == [[{'arm': 'left'}], 'placed']
