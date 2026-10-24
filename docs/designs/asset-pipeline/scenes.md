@@ -158,7 +158,7 @@
 
 `summary.json` 的 `steps` 给出每步的起始 seed 数、完成数、成功率（完成 / 起始）和逐步完成率（progressive completion rate，ManiSkill-HAB 的统计方式：这一步及之前各步都完成的 seed 占第 1 步起始 seed 的比例）；从检查点开始的批次沿用来源批次前几步的行，分母也取来源批次的。每条轨迹的 `episodes/<seed>.json` 记下每步结束时的控制步数、专家的墙钟秒数和进程的 CPU 秒数（`steps` 的 `at`、`wall_s`、`cpu_s`）与每个子任务的墙钟秒数（`subtask_wall_s`）；`scripts/experts/step_times.py` 按步骤和子任务汇总批次的仿真时长、墙钟时间和规划耗时。
 
-`join_steps.py <批次> ...` 把逐步运行的各批按顺序接成完整轨迹，默认写成场景的数据 `data/scenes/<场景>/<后端>/`：拼接的轨迹与一次跑完的完整轨迹只是生产方式不同：每段在下一批开始用的检查点处截断，接上下一批同一 seed 的轨迹，`subtasks` 和 `steps` 平移到接好后的位置，`parts` 记录每段的批次、提交、步骤、起点和长度。输出目录的格式与一批轨迹相同，可直接渲染。逐步迭代的方法见[操作手册 05](../../tutorials/05-step-by-step-expert.md)。
+`join_steps.py <批次> ...` 把逐步运行的各批按顺序接成完整轨迹，默认写成场景的数据 `data/scenes/<场景>/<后端>/`：拼接的轨迹与一次跑完的完整轨迹只是生产方式不同：每段在下一批开始用的检查点处截断，接上下一批同一 seed 的轨迹，`subtasks` 和 `steps` 平移到接好后的位置，`parts` 记录每段的批次、提交、步骤、起点和长度。每个 seed 的 `episodes/<seed>.json` 取最后一段的报告并平移到接好后的位置，`summary.json` 按同样的方式统计成功率和失败，所以输出目录的格式与一批轨迹相同，可直接渲染、分析失败案例。只有所有 seed 跑完所有步骤的拼接才默认写成场景的数据，否则须给 `--output`。逐步迭代的方法见[操作手册 05](../../tutorials/05-step-by-step-expert.md)。
 
 ## 轨迹数据
 
