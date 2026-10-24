@@ -22,8 +22,8 @@ batches of some steps in it; with ``--steps`` it is ``<backend>/steps<k>-<m>/``:
 
 ``--steps k[-m]`` runs steps ``k`` to ``m`` of the expert (``m`` = ``k`` when left out):
 from the initial states for ``k`` = 1, else from the checkpoints of step ``k - 1`` of the
-batch ``--from <batch directory>``. Every seed with such a checkpoint runs; the progressive
-rates count from the seeds of that batch's first step. See
+batch ``--from <batch directory>``. Every seed with such a checkpoint runs (``--seeds``: only
+those); the progressive rates count from the seeds of that batch's first step. See
 ``table_1000/experts/generate.py`` and ``scripts/scenes/join_steps.py``.
 
 Failed episodes are part of the result; the exit status is non-zero only when a
@@ -92,7 +92,7 @@ def worker(args):
 
 
 def main(argv=None):
-    from table_1000.common.batch import add_arguments, commit, job_count, process_name, run_batch, seed_range
+    from table_1000.common.batch import add_arguments, commit, job_count, parse_seeds, process_name, run_batch, seed_range
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('scene')
     parser.add_argument('--physics', choices=BACKENDS, required=True, help='simulation backend')
@@ -107,7 +107,7 @@ def main(argv=None):
     parser.add_argument('--from', dest='source', type=Path,
                         help='a batch directory whose checkpoints of step k - 1 the steps start from')
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
-    parser.add_argument('--seeds', nargs='+', help=argparse.SUPPRESS)
+    parser.add_argument('--seeds', nargs='+', help='only these seeds of the initial states or checkpoints: 12 27, 0:20')
     parser.add_argument('--states', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--checkpoints', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--work', type=Path, help=argparse.SUPPRESS)
@@ -151,6 +151,11 @@ def main(argv=None):
                      f'{robot}; run build_scene.py again')
     if args.source and attrs.get('physics') != args.physics:
         parser.error(f'{states} was made on {attrs.get("physics")}, not {args.physics}')
+    if args.seeds:
+        chosen = parse_seeds(args.seeds)
+        if absent := sorted(set(chosen) - set(seeds)):
+            parser.error(f'{states} holds no states of seeds {seed_range(absent)}')
+        seeds = chosen
     if not seeds:
         parser.error(f'{states} holds no initial states')
     name = Path(args.physics) / (f'{STEPS_PREFIX}{args.steps[0]}-{args.steps[1]}' if args.steps else '')
