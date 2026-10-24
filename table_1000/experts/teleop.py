@@ -14,21 +14,21 @@ step's checkpoint, so later steps can run from it (``run_expert.py --from``).
 
 Input (:class:`Operator`, fed by the page of ``scripts/experts/teleop.py``):
 
-=================  =================================================================
-drag on a view     the TCP target in the view's image plane (through the target)
-wheel on a view    the TCP target toward / away from the view's camera
-Z / X, C / V,      TCP target roll, pitch, yaw (+ / -), about the base's axes
-B / N
-I / K, J / L,      TCP target along the base's x, y, z (+ / -)
-U / O
-W / S, A / D       base forward / back, turn left / right
-R / F              torso lift up / down
-arrows             head yaw / pitch
-Tab                switch the controlled arm
-Space              open / close its gripper
-P                  pause / resume the simulation
-Shift              faster
-=================  =================================================================
+=====================  =============================================================
+left drag on a view    the TCP target in the view's image plane (through the target)
+Shift + wheel          the TCP target toward / away from the view's camera
+right drag, wheel      (the outside view, :class:`Orbit`) turn about its target, zoom
+middle / Shift+right   (the outside view) pan
+Z / X, C / V, B / N    TCP target roll, pitch, yaw (+ / -), about the base's axes
+I / K, J / L, U / O    TCP target along the base's x, y, z (+ / -)
+W / S, A / D           base forward / back, turn left / right
+R / F                  torso lift up / down
+arrows                 head yaw / pitch
+Tab, or the buttons    switch the controlled arm
+Space, or the buttons  open / close a gripper
+P                      pause / resume the simulation
+Shift                  faster
+=====================  =============================================================
 """
 
 import json
@@ -47,6 +47,7 @@ LINEAR, ROTATION = .10, .6       # TCP target m/s, rad/s from keys
 BASE_SPEED, BASE_TURN = .3, .6   # m/s, rad/s
 LIFT_SPEED, HEAD_SPEED = .1, .6  # m/s, rad/s
 WHEEL = .01                      # m per wheel notch
+ORBIT, ZOOM = .005, 1.1          # rad per pixel an outside view turns, distance factor per wheel notch
 JOINT_SPEED = 1.5                # rad/s an arm joint target moves at most
 GRIPPER_TIME = .6                # s for the gripper to open or close fully
 APERTURE = 20.955                # mm, a view camera's horizontal aperture (see sim.isaaclab.cameras)
@@ -132,19 +133,52 @@ def drag(camera, point, dx, dy, wheel=0.):
     return rotation @ np.array([dx * depth / fx, dy * depth / fx, -wheel * WHEEL])
 
 
+class Orbit:
+    """An outside view (a scene view ``{'position', 'target', ...}``) the operator moves: turned about
+    its target, panned, zoomed (:meth:`move`)."""
+
+    def __init__(self, view):
+        self.view = dict(view)
+
+    def move(self, kind, dx, dy):
+        """``orbit`` or ``pan`` by ``(dx, dy)`` pixels of a drag, ``zoom`` by ``dy`` wheel notches (+: closer)."""
+        position, target = np.asarray(self.view['position'], float), np.asarray(self.view['target'], float)
+        offset = position - target
+        distance = np.linalg.norm(offset)
+        if kind == 'orbit':
+            yaw = np.arctan2(offset[1], offset[0]) - dx * ORBIT
+            pitch = np.clip(np.arcsin(offset[2] / distance) + dy * ORBIT, -1.45, 1.45)
+            offset = distance * np.array([np.cos(pitch) * np.cos(yaw), np.cos(pitch) * np.sin(yaw), np.sin(pitch)])
+        elif kind == 'pan':
+            rotation, _, fx = view_camera(self.view)
+            target = target + rotation @ np.array([-dx, -dy, 0.]) * distance / fx
+        elif kind == 'zoom':
+            offset = offset * ZOOM ** -dy
+        else:
+            raise ValueError(f'unknown view move {kind}')
+        self.view.update(position=tuple(target + offset), target=tuple(target))
+
+    def camera(self):
+        return view_camera(self.view)
+
+
 # -- operating ---------------------------------------------------------------------------------
 class Operator:
     """The operator's input, shared between the page's thread and the simulation loop: held keys,
-    drags and commands (``check``, ``done``, ``not done``, ``load`` of a case)."""
+    drags, moves of the outside views and commands (``check``, ``done``, ``not done``, ``arm``,
+    ``gripper``, ``load`` of a case)."""
 
     def __init__(self):
         self.keys = Keys()
-        self.drags, self.commands = queue.Queue(), queue.Queue()
+        self.drags, self.views, self.commands = queue.Queue(), queue.Queue(), queue.Queue()
         self.lock = threading.Lock()
         self.status = {}
 
     def drag(self, view, dx, dy, wheel=0.):
         self.drags.put((view, float(dx), float(dy), float(wheel)))
+
+    def move_view(self, view, kind, dx, dy):
+        self.views.put((view, kind, float(dx), float(dy)))
 
     def command(self, name, **values):
         self.commands.put({'command': name, **values})
@@ -202,6 +236,11 @@ def operate(ctx, step, operator, show, cameras, log):
                 if command['command'] == 'check':
                     last_check = {**check(ctx, step), 'at': ctx.steps}
                     log['checks'].append(last_check)
+                elif command['command'] == 'arm':
+                    arm = command['arm']
+                elif command['command'] == 'gripper':
+                    name = command.get('arm', arm)
+                    wanted[name] = OPEN_GAP if wanted[name] < OPEN_GAP / 2 else 0.
                 elif command['command'] in ('done', 'not done'):
                     log['verdict'] = command['command']
                     log['final_check'] = {**check(ctx, step), 'at': ctx.steps}
@@ -232,7 +271,7 @@ def operate(ctx, step, operator, show, cameras, log):
             if turn.any():
                 target[:3, :3] = Rotation.from_rotvec(turn * ROTATION * k * dt).as_matrix() @ target[:3, :3]
             if paused:
-                show(ctx, status(ctx, arm, paused, reached, last_check), targets, arm)
+                show(ctx, status(ctx, arm, paused, reached, last_check, wanted), targets, arm)
                 time.sleep(dt)
                 continue
             action = {}
@@ -255,17 +294,20 @@ def operate(ctx, step, operator, show, cameras, log):
                                                               keys.axis('ArrowDown', 'ArrowUp')])[:len(head)]
                 action['head'] = head[None]
             ctx.step(action)
-            show(ctx, status(ctx, arm, paused, reached, last_check), targets, arm)
+            show(ctx, status(ctx, arm, paused, reached, last_check, wanted), targets, arm)
             spare = dt - (time.perf_counter() - started)
             if spare > 0:
                 time.sleep(spare)
 
 
-def status(ctx, arm, paused, reached, last_check):
+def status(ctx, arm, paused, reached, last_check, wanted):
     """The status the page shows."""
     from table_1000.sim import CONTROL_HZ
     tcp = ctx.tcp(arm)[:3, 3]
-    return {'arm': arm, 'paused': paused, 'time_s': ctx.steps / CONTROL_HZ,
+    grippers = {name: {'gap': round(float(spec.gap(ctx.env.qpos(spec.fingers)[0])), 3),
+                       'closing': bool(wanted[name] < 1e-6)} for name, spec in ctx.spec.arms.items()}
+    return {'arm': arm, 'arms': list(ctx.spec.arms), 'grippers': grippers, 'paused': paused,
+            'time_s': ctx.steps / CONTROL_HZ,
             'steps': ctx.steps, 'tcp': [round(float(v), 3) for v in tcp],
             'unreachable': [name for name, ok in reached.items() if not ok], 'check': last_check}
 

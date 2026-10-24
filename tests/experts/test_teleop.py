@@ -6,7 +6,7 @@ import types
 import numpy as np
 
 from table_1000.experts.context import ExpertFailed, Step
-from table_1000.experts.teleop import HumanExpert, cases, check, drag, failed_step, view_camera
+from table_1000.experts.teleop import HumanExpert, Orbit, cases, check, drag, failed_step, view_camera
 
 NAMES = ['open', 'move', 'close']
 
@@ -81,3 +81,16 @@ def test_a_check_reports_its_verdict_and_keeps_the_subtask():
         {'passed': False, 'reason': 'pen not on the table'}
     assert check(ctx, Step('b', None, lambda ctx: None)) == {'passed': True, 'reason': None}
     assert ctx.current == 'take the pen'
+
+
+def test_an_outside_view_turns_about_its_target_pans_and_zooms():
+    view = {'position': (0., -2., 1.), 'target': (0., 0., 1.), 'focal_length_mm': 20.955, 'resolution': (100, 50)}
+    orbit = Orbit(view)
+    orbit.move('orbit', np.pi / 2 / .005, 0.)       # dragged right a quarter turn: the camera swings to its left
+    np.testing.assert_allclose(orbit.view['position'], (-2., 0., 1.), atol=1e-9)
+    orbit.move('zoom', 0., 1.)                      # closer, same target
+    assert np.linalg.norm(np.subtract(orbit.view['position'], orbit.view['target'])) < 2.
+    target = np.array(orbit.view['target'])
+    orbit.move('pan', 10., 0.)                      # dragging right moves the scene right: the target left
+    assert np.linalg.norm(np.array(orbit.view['target']) - target) > 0.
+    assert view['position'] == (0., -2., 1.)        # the scene's view is left as it was

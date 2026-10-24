@@ -6,7 +6,9 @@ then open ``http://<server>:8765/`` (for example through ``ssh -L 8765:localhost
 The page lists the cases of ``--runs`` (``runs/expert/<scene>/*``, see
 ``table_1000/experts/teleop.py``), lowest success rate over the ``--repeats`` runs first. Loading
 one resets the simulation to its start (the checkpoint before the failed step); the operator then
-does the step by hand: drag a view to move the TCP target, keys for the rest (listed on the page).
+does the step by hand, watching an outside view (the scene's first, which they can turn, pan and
+zoom) and the robot's RGB cameras: drag a view to move the TCP target, buttons and keys for the
+rest (listed on the page).
 "Check" shows the step's check on the current state and goes on; "Done" and "Not done" end the
 step as the operator judges, the check's verdict then is kept alongside. Every attempt is a batch
 ``<output>/<scene>/<date>-<time>-<commit>-step<k>-seed<s>/`` (``<output>`` = ``runs/teleop``) like
@@ -17,6 +19,7 @@ checks asked for, the verdict, the check at the end), the step's checkpoint when
 """
 
 import argparse
+import dataclasses
 import json
 import os
 import queue
@@ -29,17 +32,20 @@ import time
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+DISPLAY_WIDTH = 640    # px, the widest robot camera rendered
+
 PAGE = '''<!doctype html><html><head><meta charset="utf-8"><title>Case teleop</title>
 <style>
 body{margin:0;background:#111;color:#ddd;font:13px sans-serif;display:flex;height:100vh}
-#cases{width:420px;overflow:auto;border-right:1px solid #333}
+#cases{width:380px;flex:none;overflow:auto;border-right:1px solid #333}
 #cases table{border-collapse:collapse;width:100%}#cases td,#cases th{padding:3px 6px;text-align:left;border-bottom:1px solid #222}
 #cases tr.case{cursor:pointer}#cases tr.case:hover{background:#223}#cases tr.on{background:#335}
-#main{flex:1;overflow:auto;padding:6px}#v{display:flex;flex-wrap:wrap;gap:6px}
-img{max-width:100%;height:auto;border:1px solid #333;cursor:crosshair;user-select:none}
-button{margin:4px 4px 4px 0;padding:6px 12px;background:#2a2a3a;color:#ddd;border:1px solid #555;cursor:pointer}
-#s{white-space:pre;font-family:monospace;padding:6px 0}#help{color:#888;white-space:pre;font-family:monospace}
-.pass{color:#6c6}.fail{color:#e66}
+#main{flex:1;overflow:auto;padding:6px}
+#v{display:flex;flex-wrap:wrap;gap:6px}#v img{border:1px solid #333;cursor:crosshair;user-select:none;height:auto}
+#v img.outside{width:100%;max-width:1200px}#v img.robot{width:calc(33% - 6px);max-width:400px}
+button{margin:3px 4px 3px 0;padding:6px 12px;background:#2a2a3a;color:#ddd;border:1px solid #555;cursor:pointer}
+button.on{background:#447;border-color:#88c}button.closing{background:#634;border-color:#c86}
+#s{white-space:pre;font-family:monospace;padding:4px 0}#help{color:#888;white-space:pre;font-family:monospace;padding-top:6px}
 </style></head><body>
 <div id="cases"><table><thead><tr><th>rate</th><th>step</th><th>seed</th><th>run</th><th>failure</th></tr></thead>
 <tbody id="rows"></tbody></table></div>
@@ -47,14 +53,16 @@ button{margin:4px 4px 4px 0;padding:6px 12px;background:#2a2a3a;color:#ddd;borde
 <div><button onclick="cmd('check')">Check</button><button onclick="cmd('done')">Done</button>
 <button onclick="cmd('not done')">Not done</button><button onclick="reload()">Restart case</button>
 <button onclick="loadCases()">Refresh cases</button></div>
+<div id="arms"></div>
 <div id="s">pick a case on the left</div>
 <div id="v">__IMAGES__</div>
-<div id="help">drag a view: TCP target in its image plane   wheel: toward / away from the camera
-Z/X C/V B/N: TCP roll / pitch / yaw   I/K J/L U/O: TCP along base x / y / z
-W/S A/D: base   R/F: lift   arrows: head   Tab: switch arm   Space: gripper   P: pause   Shift: faster</div>
+<div id="help">left drag: move the TCP target (red dot) in that image's plane    Shift+wheel: TCP target toward / away from that camera
+outside view: right drag turn, middle drag or Shift+right drag pan, wheel zoom
+keys (click the page first): Space gripper  Tab arm  Z/X C/V B/N TCP roll/pitch/yaw  I/K J/L U/O TCP along base x/y/z
+W/S A/D base  R/F lift  arrows head  P pause  hold Shift: faster</div>
 </div>
 <script>
-let current=null;
+let current=null,outside=[];
 const post=(p,b)=>fetch(p,{method:'POST',body:JSON.stringify(b)});
 function cmd(c,extra){post('/command',Object.assign({command:c},extra||{}))}
 function load(c){current=c;cmd('load',{case:c});render()}
@@ -72,20 +80,36 @@ function key(k,d){post('/key',{key:k,down:d})}
 addEventListener('keydown',e=>{if(e.repeat)return;e.preventDefault();held.add(e.code);key(e.code,true)});
 addEventListener('keyup',e=>{e.preventDefault();held.delete(e.code);key(e.code,false)});
 addEventListener('blur',()=>{for(const k of held)key(k,false);held.clear()});
-for(const img of document.querySelectorAll('img')){
- let last=null;img.draggable=false;
+// Mouse moves are summed and sent every 40 ms.
+const pending={};
+function add(path,body){const k=path+'|'+body.view+'|'+(body.kind||'');const p=pending[k]||(pending[k]={path,body:Object.assign({},body,{dx:0,dy:0})});
+ p.body.dx+=body.dx;p.body.dy+=body.dy}
+setInterval(()=>{for(const k in pending){const p=pending[k];delete pending[k];if(p.body.dx||p.body.dy)post(p.path,p.body)}},40);
+function setup(){for(const img of document.querySelectorAll('#v img')){
+ const view=img.dataset.view,isOutside=outside.includes(view);img.className=isOutside?'outside':'robot';
+ let last=null,mode=null;img.draggable=false;
  const scale=()=>img.naturalWidth/img.clientWidth;
- img.addEventListener('mousedown',e=>{last=[e.clientX,e.clientY];e.preventDefault()});
- addEventListener('mouseup',()=>last=null);
- addEventListener('mousemove',e=>{if(!last||!e.buttons)return;const s=scale();
-  post('/drag',{view:img.dataset.view,dx:(e.clientX-last[0])*s,dy:(e.clientY-last[1])*s});last=[e.clientX,e.clientY]});
- img.addEventListener('wheel',e=>{e.preventDefault();post('/drag',{view:img.dataset.view,dx:0,dy:0,wheel:Math.sign(-e.deltaY)})});
-}
+ img.addEventListener('contextmenu',e=>e.preventDefault());
+ img.addEventListener('mousedown',e=>{last=[e.clientX,e.clientY];e.preventDefault();
+  mode=!isOutside||e.button==0?'tcp':(e.button==1||e.shiftKey?'pan':'orbit')});
+ addEventListener('mouseup',()=>{last=null;mode=null});
+ addEventListener('mousemove',e=>{if(!last||!e.buttons)return;const s=scale(),dx=(e.clientX-last[0])*s,dy=(e.clientY-last[1])*s;
+  last=[e.clientX,e.clientY];if(mode=='tcp')add('/drag',{view,dx,dy});else add('/view',{view,kind:mode,dx,dy})});
+ img.addEventListener('wheel',e=>{e.preventDefault();const n=Math.sign(-e.deltaY);
+  if(e.shiftKey||!isOutside)post('/drag',{view,dx:0,dy:0,wheel:n});else post('/view',{view,kind:'zoom',dx:0,dy:n})},{passive:false});
+}}
+let armsHtml='';
+function arms(s){const el=document.getElementById('arms');
+ const html=!s.arms?'':s.arms.map(a=>{const g=s.grippers[a];
+  return `<button class="${a==s.arm?'on':''}" onclick="cmd('arm',{arm:'${a}'})">control ${a}</button>`+
+   `<button class="${g.closing?'closing':''}" onclick="cmd('gripper',{arm:'${a}'})">${a} gripper: ${g.closing?'closed':'open'} (${(g.gap*1000).toFixed(0)} mm) - toggle</button>`}).join(' ');
+ if(html!=armsHtml){armsHtml=html;el.innerHTML=html}}
 setInterval(async()=>{try{const s=await (await fetch('/state')).json();const el=document.getElementById('s');
- let t=s.message||'';if(s.arm)t+=`\\narm ${s.arm}${s.paused?'  PAUSED':''}  t ${s.time_s.toFixed(1)} s  tcp ${s.tcp}`;
+ let t=s.message||'';if(s.arm)t+=`\\ncontrolling ${s.arm}${s.paused?'  PAUSED':''}  t ${s.time_s.toFixed(1)} s  tcp ${s.tcp}`;
  if(s.unreachable&&s.unreachable.length)t+=`  IK fails: ${s.unreachable}`;
  if(s.check)t+=`\\ncheck at ${(s.check.at/25).toFixed(1)} s: ${s.check.passed?'PASSED':'FAILED: '+s.check.reason}`;
- el.textContent=t}catch(e){}},300);
+ el.textContent=t;arms(s)}catch(e){}},300);
+(async()=>{outside=await (await fetch('/views')).json();setup()})();
 loadCases();
 </script></body></html>'''
 
@@ -126,8 +150,14 @@ def run(args, argv):
     render.configure()
     scene = load(args.scene, 'scene', ROOT)
     spec = load_spec(Path(scene.ROBOT['asset']).name, ROOT)
-    names = args.views or [*scene.VIEWS, *(name for name, camera in spec.cameras.items() if camera.sensor.kind == 'rgb')]
+    names = args.views or [next(iter(scene.VIEWS)), *(name for name, camera in spec.cameras.items()
+                                                      if camera.sensor.kind == 'rgb')]
     cameras, views = camera_sets(scene, spec, names)
+    # Robot cameras at most DISPLAY_WIDTH wide: the page shows them small, and rendering sets the pace.
+    cameras = {name: camera if camera.sensor.resolution[0] <= DISPLAY_WIDTH else dataclasses.replace(
+        camera, sensor=camera.sensor.resized(DISPLAY_WIDTH, round(camera.sensor.resolution[1] * DISPLAY_WIDTH
+                                                                  / camera.sensor.resolution[0])))
+               for name, camera in cameras.items()}
     generator = Generator(args.scene, ROOT / 'outputs' / 'teleop' / args.scene, args.assets, ROOT, args.physics,
                           cameras=cameras, views=views)
     env, expert = generator.env, generator.expert
@@ -141,15 +171,21 @@ def run(args, argv):
         operator.drag(event['view'], event.get('dx', 0.), event.get('dy', 0.), event.get('wheel', 0.))
         return b'ok', 'text/plain'
 
+    def on_view(event):
+        operator.move_view(event['view'], event['kind'], event.get('dx', 0.), event.get('dy', 0.))
+        return b'ok', 'text/plain'
+
     def on_command(event):
         operator.command(event.pop('command'), **event)
         return b'ok', 'text/plain'
 
     server = Server(operator.keys, names, args.port, page=PAGE,
                     gets={'/cases': lambda: json_reply(teleop.cases(args.runs, args.scene)),
+                          '/views': lambda: json_reply(list(orbits)),
                           '/state': lambda: json_reply({**state, **operator.status})},
-                    posts={'/drag': on_drag, '/command': on_command})
-    drag_cameras = {name: teleop.view_camera(view) for name, view in views.items()}
+                    posts={'/drag': on_drag, '/view': on_view, '/command': on_command})
+    orbits = {name: teleop.Orbit(view) for name, view in views.items()}
+    drag_cameras = {name: (lambda ctx, orbit=orbit: orbit.camera()) for name, orbit in orbits.items()}
     for name in cameras:
         def robot_camera(ctx, name=name):
             param = ctx.env.obs['sensor_param'][name]
@@ -158,13 +194,31 @@ def run(args, argv):
         drag_cameras[name] = robot_camera
     counter = {'shown': 0}
 
+    def move_views():
+        """Apply the operator's moves of the outside views; whether any moved."""
+        import torch
+        moved = set()
+        for name, kind, dx, dy in teleop.Operator.drain(operator.views):
+            if name in orbits:
+                orbits[name].move(kind, dx, dy)
+                moved.add(name)
+        origin = env.env.scene.env_origins[:1]
+        for name in moved:
+            view = orbits[name].view
+            env.env.scene[name].set_world_poses_from_view(
+                torch.tensor([view['position']], dtype=torch.float32, device=env.device) + origin,
+                torch.tensor([view['target']], dtype=torch.float32, device=env.device) + origin)
+        return bool(moved)
+
+    def publish():
+        server.publish({name: outputs['rgb'][0] for name, outputs in env.render(names).items()})
+
     def show(ctx, status, targets, arm):
         operator.status = status
         counter['shown'] += 1
-        if counter['shown'] % args.render_every:
-            return
-        env.set_markers([(ctx.base_transform() @ targets[arm])[:3, 3]], .012)
-        server.publish({name: outputs['rgb'][0] for name, outputs in env.render(names).items()})
+        if move_views() or not counter['shown'] % args.render_every:
+            env.set_markers([(ctx.base_transform() @ targets[arm])[:3, 3]], .012)
+            publish()
 
     # Kit takes over SIGINT and SIGTERM (also while the environment is built): from here Ctrl+C or
     # kill ends the session at once (an attempt under way is lost).
@@ -173,14 +227,17 @@ def run(args, argv):
         os._exit(130)
     signal.signal(signal.SIGINT, stop)
     signal.signal(signal.SIGTERM, stop)
+    publish()
     print(f'teleop on http://<host>:{args.port}/', flush=True)
     checkout = commit(ROOT)
     command = None
     while True:
         if command is None:
             try:
-                command = operator.commands.get(timeout=.5)
+                command = operator.commands.get(timeout=.1)
             except queue.Empty:
+                if move_views():        # between cases the outside view still moves
+                    publish()
                 continue
         if command['command'] != 'load':
             command = None         # check / done outside a case
