@@ -258,6 +258,14 @@ class Hand:
         return max(float((_vertices(shape) @ frames[link][:3, :3].T + frames[link][:3, 3])[:, 0].max())
                    for link in self.side.finger_links for shape in self.shapes[link])
 
+    def radius(self):
+        """How far from the TCP any part of the hand reaches, at any gap."""
+        if not hasattr(self, '_radius'):
+            self._radius = max(float(np.linalg.norm(_vertices(shape) @ frames[link][:3, :3].T + frames[link][:3, 3], axis=1).max())
+                               for frames in (self.frames(0.), self.frames(self.max_gap))
+                               for link in self.shapes for shape in self.shapes[link])
+        return self._radius
+
     def inner(self, gap):
         """``[(opening sign, [N, 3] inner surface points in the TCP frame, pad mask)]`` per finger at ``gap``."""
         frames = self.frames(gap)
@@ -387,6 +395,12 @@ def grasp_candidates(shape, transform, hand, obstacles, preferred, center_of_mas
     rotation, origin = transform[:3, :3], transform[:3, 3]
     com = origin if center_of_mass is None else np.asarray(center_of_mass, dtype=float)
     target = fcl.FCLObject('target', pose(transform), [fcl.CollisionObject(geometry(*shape.fcl_shape()))], [pose(np.eye(4))])
+    # Every hand checked has its TCP at a contact centre inside the shape, backed off by at most
+    # MAX_BACKOFF and the approach: obstacles farther from the shape than that and the hand's
+    # radius cannot touch it, and are left out of the checks.
+    reach = hand.radius() + MAX_BACKOFF + approach_distance
+    obstacles = [(obstacle, clearance) for obstacle, clearance in obstacles
+                 if fcl.distance(target, obstacle).min_distance < reach + max(clearance, 0.)]
     preferred = normalized(preferred)
     # Every (closing, approach, slide, hand turn), by angle from the preferred approach: the angle is
     # a lower bound of the cost, so a placed grasp is yielded once no later one can be cheaper.
