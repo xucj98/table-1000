@@ -72,7 +72,7 @@ uv run python scripts/scenes/run_expert.py 000002 --physics isaac-cpu --dev --fr
     --seeds 4 44 --repeats 10 --jobs 2 --launcher '<调度命令>'
 ```
 
-快照批次 `runs/expert/<场景>/<日期>-<时间>-<提交>-snapshots[-<标签>]/` 里，每个失败 seed 的快照存为它失败那一步 k 的起点 `checkpoints/step<k-1>.hdf5`：失败前 `--before` 秒（不早于这一步开始）整个场景的状态。专家从这一步的第一个子任务重新开始，所以失败时手里拿着东西的情况要从更早的时刻开始。
+快照批次 `runs/expert/<场景>/<日期>-<时间>-<提交>-snapshots[-<标签>]/` 里，每个失败 seed 的快照存为它失败那一步 k 的起点 `checkpoints/step<k-1>.hdf5`：失败前 `--before` 秒（不早于这一步开始）整个场景的状态，加上那一控制步录下的动作，作为各动作项保持的指令（夹着笔的夹爪恢复后继续夹紧）。专家从这一步的第一个子任务重新开始，并不知道手里已经拿着东西。
 
 一个案例由“批次、步骤、seed”确定：所有历史运行都在 `runs/expert/<场景>/` 下，目录名带提交，`summary.json` 记录命令行和来源批次（`from`），可以据此整理各次运行的失败。
 

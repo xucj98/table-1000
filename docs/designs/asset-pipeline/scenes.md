@@ -150,7 +150,7 @@
 
 ### 逐步运行
 
-由步骤组成的专家，每一步通过 `check` 后保存一个检查点：完整场景状态（`InteractiveScene.get_state`，格式同 `initial_state`：物体位姿与关节，机器人的底盘、躯干、手臂和夹爪），以及该 seed 回合开始时机器人的关节和底盘位姿。一批的检查点按步骤存为 `checkpoints/step<k>.hdf5`，从初态开始的批次另存 `step0.hdf5`（初态，名字为 `initial state`），每个 seed 一组（属性 `seed`、`attempt`、`at` 即这一步结束时的控制步；`state`、`start`），文件属性记录场景、机器人、后端、提交、步骤序号和名字。
+由步骤组成的专家，每一步通过 `check` 后保存一个检查点：完整场景状态（`InteractiveScene.get_state`，格式同 `initial_state`：物体位姿与关节，机器人的底盘、躯干、手臂和夹爪）和各动作项保持的指令（`state/targets/<动作组>`：关节目标、夹爪的指令开口、底盘速度；夹着东西的夹爪指令开口小于实际开口，靠这个差保持夹紧，恢复时一起写回），以及该 seed 回合开始时机器人的关节和底盘位姿。一批的检查点按步骤存为 `checkpoints/step<k>.hdf5`，从初态开始的批次另存 `step0.hdf5`（初态，名字为 `initial state`），每个 seed 一组（属性 `seed`、`attempt`、`at` 即这一步结束时的控制步；`state`、`start`），文件属性记录场景、机器人、后端、提交、步骤序号和名字。
 
 不带参数的 `run_expert.py <场景>` 生成场景的数据：所有 seed 从初态跑完所有步骤，替换 `data/scenes/<场景>/<后端>/`。`--dev` 是开发运行：写到新目录 `runs/expert/<场景>/<日期>-<时间>-<提交>[-<--name>]/`，格式与数据相同，以后的运行不会替换它；`summary.json` 的 `run` 与 `command` 记录运行名与命令行。只跑部分步骤或 seed 的运行都是开发运行，须带 `--dev`。
 
