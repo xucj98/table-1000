@@ -85,9 +85,11 @@ data/scenes/000000/<后端>/        场景的数据：一批专家轨迹，run_e
 runs/expert/000000/<运行>/        一次开发运行（run_expert.py --dev）：结构同上，以后的运行不会替换它；
                                   <运行> = <日期>-<时间>-<提交>[-<标签>]
   cases/<seed>/                   可选，failure_cases.py 渲染的失败案例
+runs/teleop/000000/<运行>/        人工遥操一个案例的一步（scripts/experts/teleop.py）：结构同上，只有一个 seed；
+                                  <运行> = <日期>-<时间>-<提交>-step<k>-seed<s>
 ```
 
-`runs/` 放开发和实验的运行，按类型分子目录（专家轨迹为 `runs/expert/`），每次运行一个目录。
+`runs/` 放开发和实验的运行，按类型分子目录（专家轨迹为 `runs/expert/`，人工遥操为 `runs/teleop/`），每次运行一个目录。
 
 规范：[建模](modeling.md)、[几何预览](preview.md)、[物理属性](physics.md)、[行为插件](behaviors.md)、[物理测试](physics-tests.md)、[机器人](robots.md)、[场景与专家轨迹](scenes.md)。
 

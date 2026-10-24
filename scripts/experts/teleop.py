@@ -1,0 +1,218 @@
+"""Teleoperate the cases of a scene's development batches, one step at a time, in a browser.
+
+``uv run python scripts/experts/teleop.py 000002 --gpu 0 --port 8765``
+then open ``http://<server>:8765/`` (for example through ``ssh -L 8765:localhost:8765 <server>``).
+
+The page lists the cases of ``--runs`` (``runs/expert/<scene>/*``, see
+``table_1000/experts/teleop.py``), lowest success rate over the ``--repeats`` runs first. Loading
+one resets the simulation to its start (the checkpoint before the failed step); the operator then
+does the step by hand: drag a view to move the TCP target, keys for the rest (listed on the page).
+"Check" shows the step's check on the current state and goes on; "Done" and "Not done" end the
+step as the operator judges, the check's verdict then is kept alongside. Every attempt is a batch
+``<output>/<scene>/<date>-<time>-<commit>-step<k>-seed<s>/`` (``<output>`` = ``runs/teleop``) like
+``run_expert.py --dev --steps k --from <batch>`` writes: the trajectory (``trajectories.hdf5`` when
+done, else ``trajectories_failed.hdf5``), ``episodes/<seed>.json`` with ``teleop`` (the case, the
+checks asked for, the verdict, the check at the end), the step's checkpoint when done, and
+``summary.json``.
+"""
+
+import argparse
+import json
+from pathlib import Path
+import shlex
+import sys
+import time
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+
+PAGE = '''<!doctype html><html><head><meta charset="utf-8"><title>Case teleop</title>
+<style>
+body{margin:0;background:#111;color:#ddd;font:13px sans-serif;display:flex;height:100vh}
+#cases{width:420px;overflow:auto;border-right:1px solid #333}
+#cases table{border-collapse:collapse;width:100%}#cases td,#cases th{padding:3px 6px;text-align:left;border-bottom:1px solid #222}
+#cases tr.case{cursor:pointer}#cases tr.case:hover{background:#223}#cases tr.on{background:#335}
+#main{flex:1;overflow:auto;padding:6px}#v{display:flex;flex-wrap:wrap;gap:6px}
+img{max-width:100%;height:auto;border:1px solid #333;cursor:crosshair;user-select:none}
+button{margin:4px 4px 4px 0;padding:6px 12px;background:#2a2a3a;color:#ddd;border:1px solid #555;cursor:pointer}
+#s{white-space:pre;font-family:monospace;padding:6px 0}#help{color:#888;white-space:pre;font-family:monospace}
+.pass{color:#6c6}.fail{color:#e66}
+</style></head><body>
+<div id="cases"><table><thead><tr><th>rate</th><th>step</th><th>seed</th><th>run</th><th>failure</th></tr></thead>
+<tbody id="rows"></tbody></table></div>
+<div id="main">
+<div><button onclick="cmd('check')">Check</button><button onclick="cmd('done')">Done</button>
+<button onclick="cmd('not done')">Not done</button><button onclick="reload()">Restart case</button>
+<button onclick="loadCases()">Refresh cases</button></div>
+<div id="s">pick a case on the left</div>
+<div id="v">__IMAGES__</div>
+<div id="help">drag a view: TCP target in its image plane   wheel: toward / away from the camera
+Z/X C/V B/N: TCP roll / pitch / yaw   I/K J/L U/O: TCP along base x / y / z
+W/S A/D: base   R/F: lift   arrows: head   Tab: switch arm   Space: gripper   P: pause   Shift: faster</div>
+</div>
+<script>
+let current=null;
+const post=(p,b)=>fetch(p,{method:'POST',body:JSON.stringify(b)});
+function cmd(c,extra){post('/command',Object.assign({command:c},extra||{}))}
+function load(c){current=c;cmd('load',{case:c});render()}
+function reload(){if(current)load(current)}
+let cases=[];
+async function loadCases(){cases=await (await fetch('/cases')).json();render()}
+function render(){const rows=document.getElementById('rows');rows.innerHTML='';
+ for(const c of cases){const tr=document.createElement('tr');tr.className='case';
+  if(current&&c.batch==current.batch&&c.seed==current.seed&&c.step==current.step)tr.className+=' on';
+  const rate=c.rate==null?'-':`${c.successes}/${c.runs}`;
+  tr.innerHTML=`<td>${rate}</td><td>${c.step}</td><td>${c.seed}</td><td>${c.run}</td><td>${c.failure||''}</td>`;
+  tr.title=c.step_name;tr.onclick=()=>load(c);rows.appendChild(tr)}}
+const held=new Set();
+function key(k,d){post('/key',{key:k,down:d})}
+addEventListener('keydown',e=>{if(e.repeat)return;e.preventDefault();held.add(e.code);key(e.code,true)});
+addEventListener('keyup',e=>{e.preventDefault();held.delete(e.code);key(e.code,false)});
+addEventListener('blur',()=>{for(const k of held)key(k,false);held.clear()});
+for(const img of document.querySelectorAll('img')){
+ let last=null;img.draggable=false;
+ const scale=()=>img.naturalWidth/img.clientWidth;
+ img.addEventListener('mousedown',e=>{last=[e.clientX,e.clientY];e.preventDefault()});
+ addEventListener('mouseup',()=>last=null);
+ addEventListener('mousemove',e=>{if(!last||!e.buttons)return;const s=scale();
+  post('/drag',{view:img.dataset.view,dx:(e.clientX-last[0])*s,dy:(e.clientY-last[1])*s});last=[e.clientX,e.clientY]});
+ img.addEventListener('wheel',e=>{e.preventDefault();post('/drag',{view:img.dataset.view,dx:0,dy:0,wheel:Math.sign(-e.deltaY)})});
+}
+setInterval(async()=>{try{const s=await (await fetch('/state')).json();const el=document.getElementById('s');
+ let t=s.message||'';if(s.arm)t+=`\\narm ${s.arm}${s.paused?'  PAUSED':''}  t ${s.time_s.toFixed(1)} s  tcp ${s.tcp}`;
+ if(s.unreachable&&s.unreachable.length)t+=`  IK fails: ${s.unreachable}`;
+ if(s.check)t+=`\\ncheck at ${(s.check.at/25).toFixed(1)} s: ${s.check.passed?'PASSED':'FAILED: '+s.check.reason}`;
+ el.textContent=t}catch(e){}},300);
+loadCases();
+</script></body></html>'''
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('scene')
+    parser.add_argument('--physics', default='isaac-cpu')
+    parser.add_argument('--runs', type=Path, default=ROOT / 'runs' / 'expert', help='where the cases come from')
+    parser.add_argument('--output', type=Path, default=ROOT / 'runs' / 'teleop', help='where the attempts go')
+    parser.add_argument('--views', nargs='+', help="views and robot RGB cameras shown (default: the scene's views "
+                                                    "and the robot's RGB cameras)")
+    parser.add_argument('--assets', type=Path, default=ROOT / 'assets')
+    parser.add_argument('--gpu', type=int, default=0)
+    parser.add_argument('--port', type=int, default=8765)
+    parser.add_argument('--render-every', type=int, default=3, help='control steps per streamed frame')
+    args = parser.parse_args(argv)
+    from table_1000.sim.isaaclab.app import start_app
+    from table_1000.sim.isaaclab.render import RT2_ARGS
+    app = start_app(gpu=args.gpu, workers=4, extra_args=RT2_ARGS)
+    try:
+        run(args, argv)
+    finally:
+        app.close()
+
+
+def run(args, argv):
+    import numpy as np
+    from table_1000.common.batch import commit, load_record
+    from table_1000.experts import teleop
+    from table_1000.experts.generate import Generator, merge_checkpoints, read_checkpoints, summarize
+    from table_1000.robots import load_spec
+    from table_1000.robots.teleop import Server
+    from table_1000.scenes import load
+    from table_1000.sim.isaaclab import recording, render
+    from scripts.scenes.render import camera_sets
+    from scripts.scenes.run_expert import run_name
+    render.configure()
+    scene = load(args.scene, 'scene', ROOT)
+    spec = load_spec(Path(scene.ROBOT['asset']).name, ROOT)
+    names = args.views or [*scene.VIEWS, *(name for name, camera in spec.cameras.items() if camera.sensor.kind == 'rgb')]
+    cameras, views = camera_sets(scene, spec, names)
+    generator = Generator(args.scene, ROOT / 'outputs' / 'teleop' / args.scene, args.assets, ROOT, args.physics,
+                          cameras=cameras, views=views)
+    env, expert = generator.env, generator.expert
+    operator = teleop.Operator()
+    state = {'message': 'pick a case on the left'}
+
+    def json_reply(value):
+        return json.dumps(value, default=float).encode(), 'application/json'
+
+    def on_drag(event):
+        operator.drag(event['view'], event.get('dx', 0.), event.get('dy', 0.), event.get('wheel', 0.))
+        return b'ok', 'text/plain'
+
+    def on_command(event):
+        operator.command(event.pop('command'), **event)
+        return b'ok', 'text/plain'
+
+    server = Server(operator.keys, names, args.port, page=PAGE,
+                    gets={'/cases': lambda: json_reply(teleop.cases(args.runs, args.scene)),
+                          '/state': lambda: json_reply({**state, **operator.status})},
+                    posts={'/drag': on_drag, '/command': on_command})
+    drag_cameras = {name: teleop.view_camera(view) for name, view in views.items()}
+    for name in cameras:
+        def robot_camera(ctx, name=name):
+            param = ctx.env.obs['sensor_param'][name]
+            pose = param['cam2world'][0]
+            return pose[:3, :3], pose[:3, 3], float(param['intrinsic'][0][0, 0])
+        drag_cameras[name] = robot_camera
+    counter = {'shown': 0}
+
+    def show(ctx, status, targets, arm):
+        operator.status = status
+        counter['shown'] += 1
+        if counter['shown'] % args.render_every:
+            return
+        env.set_markers([(ctx.base_transform() @ targets[arm])[:3, 3]], .012)
+        server.publish({name: outputs['rgb'][0] for name, outputs in env.render(names).items()})
+
+    print(f'teleop on http://<host>:{args.port}/', flush=True)
+    checkout = commit(ROOT)
+    command = None
+    while True:
+        if command is None:
+            command = operator.commands.get()
+        if command['command'] != 'load':
+            command = None         # check / done outside a case
+            continue
+        case, command = command['case'], None
+        step, seed = int(case['step']), int(case['seed'])
+        _, found = read_checkpoints(case['start'])
+        if seed not in found:
+            state['message'] = f'seed {seed} has no checkpoint in {case["start"]}'
+            continue
+        attempt, initial, start = found[seed]
+        name = run_name(checkout, f'step{step}-seed{seed}')
+        output = args.output / args.scene / name
+        output.mkdir(parents=True)
+        for sub in ('episodes', 'checkpoints'):
+            (output / sub).mkdir()
+        generator.output, generator.steps, generator.source = output, (step, step), case['start']
+        recording.redirect(env, output)
+        log = {}
+        generator.expert = teleop.HumanExpert(
+            expert, step, lambda ctx, entry: teleop.operate(ctx, entry, operator, show, drag_cameras, log))
+        state['message'] = f'case: step {step} ({case["step_name"]}), seed {seed}, from {case["run"]}\nrecording to {output}'
+        operator.status = {}
+        report = generator.run(seed, attempt, initial, None if step == 1 else start)
+        command = log.pop('next', None)
+        report['teleop'] = {'case': case, **log}
+        (output / 'episodes' / f'{seed}.json').write_text(json.dumps(report, indent=1, default=float))
+        sources = list((output / 'checkpoints').glob('*.hdf5'))
+        merge_checkpoints(sources, output, {'scene': args.scene, 'robot': spec.name, 'physics': args.physics,
+                                            'commit': checkout})
+        for path in sources:
+            path.unlink()
+        summary = {'run': name, 'command': shlex.join(sys.argv if argv is None else ['teleop.py', *argv]),
+                   'scene': args.scene, 'robot': spec.name, 'physics': args.physics, 'commit': checkout,
+                   'steps_run': [step, step], 'from': str(Path(case['start']).parent.parent),
+                   **summarize([report], [seed]), 'teleop': {'case': case, 'verdict': log.get('verdict'),
+                                                             'final_check': log.get('final_check')},
+                   'load': load_record([report]), 'videos': {}, 'fails': {}}
+        (output / 'summary.json').write_text(json.dumps(summary, indent=1, ensure_ascii=False, default=float) + '\n')
+        final = log.get('final_check') or {}
+        state['message'] = (f'saved {output.name}: {report["status"]} (operator: {log.get("verdict")}; check '
+                            f'{"passed" if final.get("passed") else "failed: " + str(final.get("reason"))})'
+                            + ('' if report['status'] != 'error' else '\n' + report['failure']['traceback'][-600:]))
+        operator.status = {}
+
+
+if __name__ == '__main__':
+    main()
