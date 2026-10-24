@@ -109,9 +109,10 @@ class Generator:
 
     DEVICES = {'isaac-cpu': 'cpu'}
 
-    def __init__(self, scene_name, output, assets, root, physics='isaac-cpu', steps=None, source=None):
+    def __init__(self, scene_name, output, assets, root, physics='isaac-cpu', steps=None, source=None, draw=0):
         """``steps``: ``(first, last)`` of the expert's steps to run (all when None); ``source``: where
-        the states come from (a checkpoint file), for the reports."""
+        the states come from (a checkpoint file), for the reports; ``draw``: which of the random
+        streams each seed runs with (0 the seed's own; others to see how its outcome varies)."""
         from table_1000.robots import load_spec
         from table_1000.robots.kinematics import RobotModel
         from table_1000.sim.isaaclab import recording
@@ -119,7 +120,7 @@ class Generator:
         self.recording = recording
         started = time.perf_counter()
         self.name, self.output, self.assets = scene_name, Path(output), Path(assets)
-        self.steps, self.source = steps, source
+        self.steps, self.source, self.draw = steps, source, draw
         self.scene, self.expert = load(scene_name, 'scene', root), load(scene_name, 'expert', root)
         if steps and not 1 <= steps[0] <= steps[1] <= len(getattr(self.expert, 'STEPS', ())):
             raise ValueError(f'steps {steps[0]}-{steps[1]}: the expert of {scene_name} has '
@@ -149,15 +150,17 @@ class Generator:
     def episode(self, seed, attempt, state, start):
         started = time.perf_counter()
         first = self.steps[0] if self.steps else 1
-        report = {'scene': self.name, 'seed': seed, 'attempt': attempt, 'steps_run': self.steps, 'from': self.source}
+        report = {'scene': self.name, 'seed': seed, 'attempt': attempt, 'steps_run': self.steps, 'from': self.source,
+                  'draw': self.draw}
         self.env.reset_to_state(state)
         init_s = time.perf_counter() - started
         self.recording.begin(self.env)
-        # MPlib's IK restarts and RRTConnect draw from its own generator; a later step from its own.
+        # MPlib's IK restarts and RRTConnect draw from its own generator; a later step, or another
+        # draw, from its own.
         import mplib.pymp
-        mplib.pymp.set_global_seed(seed + 1 + 1_000_003 * (first - 1))   # OMPL rejects 0
-        ctx = Context(self.env, self.model, self.scene, self.assets,
-                      np.random.default_rng([seed, attempt, 1] + ([first] if first > 1 else [])), start=start,
+        mplib.pymp.set_global_seed(seed + 1 + 1_000_003 * (first - 1) + 2_000_029 * self.draw)   # OMPL rejects 0
+        streams = [seed, attempt, 1] + ([first] if first > 1 or self.draw else []) + ([self.draw] if self.draw else [])
+        ctx = Context(self.env, self.model, self.scene, self.assets, np.random.default_rng(streams), start=start,
                       only=self.steps)
         try:
             if start is not None:

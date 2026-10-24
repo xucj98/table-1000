@@ -135,7 +135,7 @@
 
 由步骤组成的专家，每一步通过 `check` 后保存一个检查点：完整场景状态（`InteractiveScene.get_state`，格式同 `initial_state`：物体位姿与关节，机器人的底盘、躯干、手臂和夹爪），以及该 seed 回合开始时机器人的关节和底盘位姿。一批的检查点按步骤存为 `checkpoints/step<k>.hdf5`，每个 seed 一组（属性 `seed`、`attempt`、`at` 即这一步结束时的控制步；`state`、`start`），文件属性记录场景、机器人、后端、提交、步骤序号和名字。
 
-`run_expert.py <场景> --steps k[-m]` 只运行第 k 到 m 步：k 为 1 时从初态开始；k 大于 1 时须给 `--from <批次目录>`，从那一批第 k − 1 步的检查点开始，先静置 0.2 s。有检查点的 seed 都会运行，输出格式与完整批次相同（目录为场景批次下的 `<后端>/steps<k>-<m>/`；完整批次替换 `<后端>/` 时保留这些子目录），并写出新的检查点。恢复后，空闲手臂回到的姿态和底盘的起始位姿仍取该 seed 回合开始时的，而不是检查点处的。从第 k 步开始时 `ctx.rng` 为 `default_rng([seed, attempt, 1, k])`，MPlib 的随机数也随 k 改变。
+`run_expert.py <场景> --steps k[-m]` 只运行第 k 到 m 步：k 为 1 时从初态开始；k 大于 1 时须给 `--from <批次目录>`，从那一批第 k − 1 步的检查点开始，先静置 0.2 s。有检查点的 seed 都会运行，输出格式与完整批次相同（目录为场景批次下的 `<后端>/steps<k>-<m>/`；完整批次替换 `<后端>/` 时保留这些子目录），并写出新的检查点。恢复后，空闲手臂回到的姿态和底盘的起始位姿仍取该 seed 回合开始时的，而不是检查点处的。从第 k 步开始时 `ctx.rng` 为 `default_rng([seed, attempt, 1, k])`，MPlib 的随机数也随 k 改变。`--draw r`（默认 0）换用第 r 组随机数（`ctx.rng` 与 MPlib 的都换），其余不变：同一批起始状态用 `--draw` 0 到 K − 1 各跑一批（各用自己的 `--output`），得到每个 seed 从该起点完成这几步的成功率；报告和 `summary.json` 记下 `draw`。
 
 `summary.json` 的 `steps` 给出每步的起始 seed 数、完成数、成功率（完成 / 起始）和逐步完成率（progressive completion rate，ManiSkill-HAB 的统计方式：这一步及之前各步都完成的 seed 占第 1 步起始 seed 的比例）；从检查点开始的批次沿用来源批次前几步的行，分母也取来源批次的。每条轨迹的 `episodes/<seed>.json` 记下每步结束时的控制步数、专家的墙钟秒数和进程的 CPU 秒数（`steps` 的 `at`、`wall_s`、`cpu_s`）与每个子任务的墙钟秒数（`subtask_wall_s`）；`scripts/experts/step_times.py` 按步骤和子任务汇总批次的仿真时长、墙钟时间和规划耗时。
 

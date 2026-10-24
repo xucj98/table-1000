@@ -27,6 +27,10 @@ batch ``--from <batch directory>``. Every seed with such a checkpoint runs; the 
 rates count from the seeds of that batch's first step. See
 ``table_1000/experts/generate.py`` and ``scripts/scenes/join_steps.py``.
 
+``--draw r`` runs each seed with other random streams (``ctx.rng``, MPlib's): ``r`` = 0, the
+default, its own. Batches of the same states with ``--draw`` 0 to K - 1 (each into its own
+``--output``) give each seed's chance of success at the step, from the start it had.
+
 Failed episodes are part of the result; the exit status is non-zero only when a
 seed has no episode. See ``table_1000/experts/generate.py``.
 """
@@ -79,7 +83,8 @@ def worker(args):
         else:
             states = {seed: (attempt, state, None) for seed, (attempt, state) in read_states(args.states)[1].items()}
         generator = Generator(args.scene, work, args.assets.resolve(), args.root.resolve(), physics=args.physics,
-                              steps=args.steps, source=str(args.states) if args.checkpoints else None)
+                              steps=args.steps, source=str(args.states) if args.checkpoints else None,
+                              draw=args.draw)
         for seed in parse_seeds(args.seeds):
             report = generator.run(seed, *states[seed])
             print(seed, report['status'], report.get('failure', {}).get('reason', ''), f'{report["wall_s"]:.0f} s',
@@ -107,6 +112,8 @@ def main(argv=None):
     parser.add_argument('--steps', type=step_range, help="k[-m]: run steps k to m of the expert (see run_steps)")
     parser.add_argument('--from', dest='source', type=Path,
                         help='a batch directory whose checkpoints of step k - 1 the steps start from')
+    parser.add_argument('--draw', type=int, default=0,
+                        help='random streams to run each seed with: 0 its own, others to see how its outcome varies')
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--seeds', nargs='+', help=argparse.SUPPRESS)
     parser.add_argument('--states', type=Path, help=argparse.SUPPRESS)
@@ -169,7 +176,7 @@ def main(argv=None):
         works.update(dict.fromkeys(part, staging / name))
         argv = [sys.executable, str(Path(__file__).resolve()), args.scene, '--worker', '--physics', args.physics,
                 '--seeds', *seed_range(part).split(), '--states', str(states), '--work', str(staging / name),
-                '--root', str(root), '--assets', str(args.assets.resolve()),
+                '--root', str(root), '--assets', str(args.assets.resolve()), '--draw', str(args.draw),
                 *(['--steps', '-'.join(map(str, args.steps))] if args.steps else []),
                 *(['--checkpoints'] if args.source else [])]
         return argv, staging / f'{name}.log', f'{args.scene} {args.physics} {name} seeds {seed_range(part)}'
@@ -197,7 +204,7 @@ def main(argv=None):
         reports.append(json.loads(path.read_text()))
         shutil.move(path, directory / 'episodes' / path.name)
     summary = {'scene': args.scene, 'robot': robot, 'physics': args.physics, 'commit': checkout,
-               'steps_run': args.steps, 'from': str(args.source.resolve()) if args.source else None,
+               'steps_run': args.steps, 'from': str(args.source.resolve()) if args.source else None, 'draw': args.draw,
                **summarize(reports, seeds), 'steps': step_rates(reports, seeds, parent),
                'load': load_record(reports), 'total_s': time.perf_counter() - started, 'videos': {}, 'fails': {}}
     (directory / 'summary.json').write_text(json.dumps(summary, indent=1, ensure_ascii=False, default=float) + '\n')
