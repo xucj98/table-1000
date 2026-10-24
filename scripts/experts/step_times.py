@@ -52,7 +52,9 @@ def main(argv=None):
     parser.add_argument('--sim-limit', type=float, default=60., help='s of simulated time a success should stay within')
     args = parser.parse_args(argv)
     for batch in args.batches:
-        reports = [json.loads(path.read_text()) for path in sorted((batch / 'episodes').glob('*.json'))]
+        # Each seed's first run (not the other runs of --repeats).
+        reports = [json.loads(path.read_text()) for path in sorted((batch / 'episodes').glob('*.json'))
+                   if '-' not in path.stem]
         succeeded = [report for report in reports if report['status'] == 'success']
         within = sum(report['duration_s'] < args.sim_limit for report in succeeded)
         print(f'== {batch}: {len(succeeded)}/{len(reports)} succeeded, mean wall {mean(r["wall_s"] for r in reports)} s, '
