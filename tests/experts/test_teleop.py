@@ -117,3 +117,24 @@ def test_a_recorded_failure_gives_the_state_at_the_failure(tmp_path):
     np.testing.assert_array_equal(state['rigid_object']['pen']['root_pose'], [np.arange(35., 42.)])
     assert trajectory_start(found[3]['trajectory'], 3)['qpos'].shape == (1, 2)
     assert found[3]['run'].endswith('/batch')
+
+
+def test_failure_snapshots_are_the_checkpoints_the_failed_steps_start_from(tmp_path):
+    from scripts.experts.failure_snapshots import main
+    from table_1000.experts.generate import read_checkpoints
+    batch = tmp_path / 'batch'
+    write(batch, {'scene': '000002', 'physics': 'isaac-cpu', 'commit': 'abc'},
+          {'3': {**report(3, [1]), 'steps': [{'step': 1, 'name': 'open', 'at': 4}]}, '5': report(5, [1, 2, 3], status='success')})
+    with h5py.File(batch / 'trajectories_failed.hdf5', 'w') as file:
+        group = file.create_group('data/demo_3')
+        group.attrs['num_samples'] = 30
+        group.create_dataset('states/rigid_object/pen/root_pose', data=np.arange(30 * 7.).reshape(30, 7))
+        group.create_dataset('obs/qpos', data=np.ones((30, 2)))
+        group.create_dataset('obs/base_pose', data=np.zeros((30, 3)))
+    main([str(batch), '--before', '1', '--output', str(tmp_path / 'runs')])
+    (snapshots,) = (tmp_path / 'runs' / '000002').iterdir()
+    attrs, found = read_checkpoints(snapshots / 'checkpoints' / 'step1.hdf5')   # seed 3 failed in step 2
+    assert attrs['physics'] == 'isaac-cpu' and list(found) == [3]
+    # 1 s (25 control steps) before the last sample, not before the step began (sample 4).
+    np.testing.assert_array_equal(found[3][1]['rigid_object']['pen']['root_pose'], [np.arange(4 * 7., 5 * 7.)])
+    assert json.loads((snapshots / 'summary.json').read_text())['snapshots'] == {'2': [3]}

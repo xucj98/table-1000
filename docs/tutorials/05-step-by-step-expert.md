@@ -64,6 +64,16 @@ uv run python scripts/scenes/run_expert.py 000002 --physics isaac-cpu --dev --na
     --from <批次> --seeds 4 44 --jobs 2 --launcher '<调度命令>'
 ```
 
+从前一步的检查点重跑，失败的那一步要从头做起，中间随机数和状态都和原来不同，失败不一定再出现。失败轨迹录下了每个控制步的完整场景状态，可以把失败的那一刻存成快照，从那里重跑：
+
+```bash
+uv run python scripts/experts/failure_snapshots.py <批次> [--seeds 4 44] [--before 0]
+uv run python scripts/scenes/run_expert.py 000002 --physics isaac-cpu --dev --from <快照批次> --steps 4 \
+    --seeds 4 44 --repeats 10 --jobs 2 --launcher '<调度命令>'
+```
+
+快照批次 `runs/expert/<场景>/<日期>-<时间>-<提交>-snapshots[-<标签>]/` 里，每个失败 seed 的快照存为它失败那一步 k 的起点 `checkpoints/step<k-1>.hdf5`：失败前 `--before` 秒（不早于这一步开始）整个场景的状态。专家从这一步的第一个子任务重新开始，所以失败时手里拿着东西的情况要从更早的时刻开始。
+
 一个案例由“批次、步骤、seed”确定：所有历史运行都在 `runs/expert/<场景>/` 下，目录名带提交，`summary.json` 记录命令行和来源批次（`from`），可以据此整理各次运行的失败。
 
 ## 同一检查点重复运行
