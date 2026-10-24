@@ -20,6 +20,7 @@
 | --- | --- | --- |
 | `assets/scenes/<编号>/` | 第 1 步 | 场景的初态：每个 seed 静置后的状态、检查报告、初态图片 |
 | `data/scenes/<编号>/<后端>/` | 第 2、3 步 | 一批专家轨迹及其报告、录像 |
+| `runs/expert/<编号>/<运行>/` | 第 2 步加 `--dev` | 开发运行：格式同上，每次一个新目录，不会被覆盖 |
 
 **本例场景**：抽屉柜放在桌子右侧，位置 ±5 cm、偏航 ±15°；笔在机器人右手前方，位置 ±5 cm、朝向任意。专家分四个子任务：`open the bottom drawer of the cabinet`、`pick up the pen`、`put the pen into the drawer`、`close the drawer`。笔朝向任意，所以抓笔和放笔各有几种物理上等价的做法，按顺序尝试，见 [expert.py](../../asset_sources/scenes/000000/expert.py)。
 
@@ -103,6 +104,7 @@ uv run python scripts/scenes/run_expert.py 000000 --physics isaac-cpu --gpus 0 1
 - 对 `initial_states.hdf5` 中的全部 seed 生成轨迹，seed 由第 1 步确定，这一步不再选择。初态记录的机器人与 `scene.py` 不一致时报错，先重跑第 1 步。
 - `--input DIR` 指定初态的根目录（默认 `assets/scenes`，读取 `DIR/<编号>/initial_states.hdf5`），`--output DIR` 指定轨迹的根目录（默认 `data/scenes`，写到 `DIR/<编号>/<后端>/`）。
 - 每次运行整体替换输出目录，包括上一批的录像。
+- 改专家时的试跑用 `--dev`：写到 `runs/expert/<编号>/<日期>-<时间>-<提交>[-<--name>]/`，不替换场景的数据；只跑部分 seed 或步骤（`--seeds`、`--steps`、`--from`）时必须带 `--dev`，见[操作手册 05](05-step-by-step-expert.md)。
 - 本例 100 个 seed，`--gpus` 4 张卡、`--jobs 8` 共 8 个进程，约 16 分钟，每条墙钟约 62 s。这和 8 张卡各跑 1 个进程差不多快：物理和规划都在 CPU 上，GPU 不是瓶颈。
 
 **产出** `data/scenes/<编号>/<后端>/`：

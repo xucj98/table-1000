@@ -75,16 +75,19 @@ assets/scenes/000000/            build_scene.py 的产出，与后端无关
   initial/<seed>.jpg  可选，每个有效初态的相机原图
   layouts/<n>/        --layouts：布局 n 的同一套文件（initial.json 另记布局的好坏与说明）
   layouts.jpg         可选，多个布局时每个布局最小有效 seed 的拼图
-data/scenes/000000/<后端>/        一批专家轨迹：run_expert.py 生成，render.py 补上录像
-  summary.json        验收入口：提交、seed、成功率、失败的 seed、耗时、有录像的 seed
+data/scenes/000000/<后端>/        场景的数据：一批专家轨迹，run_expert.py 生成（所有 seed、所有步骤），render.py 补上录像
+  summary.json        验收入口：提交、seed、成功率、失败的 seed、耗时、机器负载、有录像的 seed
   trajectories.hdf5、trajectories_failed.hdf5    成功与失败的轨迹，每条 data/demo_<seed>
   episodes/<seed>.json                           每条轨迹的报告
   videos/<seed>/<相机>.mp4                       成功轨迹的录像，每个相机一条；--merge 时为 videos/<seed>/merge.mp4
   fails/                                         失败轨迹的录像，结构同 videos/
-  checkpoints/step<k>.hdf5                       由步骤组成的专家：每个 seed 第 k 步结束时的场景状态
-  steps<k>-<m>/                                  run_expert.py --steps 只运行第 k 到 m 步的一批，结构同上；
-                                                 join_steps.py 把各步的批次接成完整轨迹，写回 <后端>/ 本身
+  checkpoints/step<k>.hdf5                       由步骤组成的专家：每个 seed 第 k 步结束时的场景状态，step0 为初态
+runs/expert/000000/<运行>/        一次开发运行（run_expert.py --dev）：结构同上，以后的运行不会替换它；
+                                  <运行> = <日期>-<时间>-<提交>[-<标签>]
+  cases/<seed>/                   可选，failure_cases.py 渲染的失败案例
 ```
+
+`runs/` 放开发和实验的运行，按类型分子目录（专家轨迹为 `runs/expert/`），每次运行一个目录。
 
 规范：[建模](modeling.md)、[几何预览](preview.md)、[物理属性](physics.md)、[行为插件](behaviors.md)、[物理测试](physics-tests.md)、[机器人](robots.md)、[场景与专家轨迹](scenes.md)。
 

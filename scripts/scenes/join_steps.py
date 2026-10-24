@@ -15,8 +15,7 @@ and ``parts``: each part's batch, commit, steps, first step in the joined episod
 length.
 
 The joined episodes are the scene's batch like one run of the whole expert: ``DIR``
-(default the step batches' parent, ``data/scenes/<scene>/<backend>/``) is replaced, but
-for its step batches, by ``trajectories.hdf5`` and ``trajectories_failed.hdf5`` (by the
+(default the scene's data, ``data/scenes/<scene>/<backend>/``) is replaced by ``trajectories.hdf5`` and ``trajectories_failed.hdf5`` (by the
 last part's status) and a ``summary.json``; ``render.py <scene> --physics <backend>``
 renders them.
 """
@@ -50,8 +49,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('batches', type=Path, nargs='+', help='batch directories, in step order')
     parser.add_argument('--output', type=Path,
-                        help="the joined batch directory, replaced but for its step batches (default: the step "
-                             "batches' parent, the scene's <backend>/)")
+                        help="the joined batch directory, replaced (default: the scene's data, "
+                             "data/scenes/<scene>/<backend>/)")
     args = parser.parse_args(argv)
     summaries = []
     for index, batch in enumerate(args.batches):
@@ -62,10 +61,11 @@ def main(argv=None):
             parser.error(f'{batch} did not start from {args.batches[index - 1]}')
         summaries.append(summary)
     first = summaries[0]
-    # By default the scene's batch, <backend>/, which holds the step batches.
-    args.output = args.output or args.batches[-1].parent
-    if (first.get('steps_run') or [1])[0] != 1 or first.get('from'):
+    args.output = args.output or ROOT / 'data' / 'scenes' / first['scene'] / first['physics']
+    if (first.get('steps_run') or [1])[0] != 1:
         parser.error(f'{args.batches[0]} does not start from the initial states (step 1)')
+    if any(Path(batch).resolve() == Path(args.output).resolve() for batch in args.batches):
+        parser.error(f'{args.output} is one of the batches joined; give another --output')
     found = [episodes(batch) for batch in args.batches]
     if not found[0]:
         parser.error(f'{args.batches[0]} has no episodes')

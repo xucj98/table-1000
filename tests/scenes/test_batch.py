@@ -211,6 +211,44 @@ def test_run_expert_merges_parts(tmp_path, monkeypatch):
         assert sorted(file['data']) == ['demo_0', 'demo_1', 'demo_3']
 
 
+def test_run_expert_dev_runs_are_kept_apart(tmp_path, monkeypatch):
+    initial = tmp_path / 'assets' / 'scenes' / '000000'
+    initial.mkdir(parents=True)
+    write_states(initial / 'initial_states.hdf5', {seed: (0, STATE) for seed in range(4)},
+                 {'scene': '000000', 'robot': 'x1pro'})
+
+    def jobs(commands, gpus):
+        for command, _, _ in commands:
+            work = tmp_path / command[command.index('--work') + 1]
+            seeds = parse_seeds(command[command.index('--seeds') + 1:command.index('--states')])
+            (work / 'episodes').mkdir(parents=True)
+            trajectory_file(work / 'trajectories.hdf5', seeds)
+            for seed in seeds:
+                (work / 'episodes' / f'{seed}.json').write_text(json.dumps(
+                    {'seed': seed, 'status': 'success', 'duration_s': 1., 'wall_s': 2.}))
+        return []
+
+    monkeypatch.setattr(scene_batch, 'run_jobs', jobs)
+    monkeypatch.setattr(run_expert, 'scene_robot', lambda scene, root: 'x1pro')
+    common = ['000000', '--physics', 'isaac-cpu', '--input', str(tmp_path / 'assets/scenes'),
+              '--root', str(tmp_path / 'checkout')]
+    with pytest.raises(SystemExit):     # some seeds are a development run
+        run_expert.main([*common, '--output', str(tmp_path / 'data'), '--seeds', '1'])
+    assert not (tmp_path / 'data').exists()
+    run_expert.main([*common, '--dev', '--name', 'try', '--seeds', '1', '3', '--output', str(tmp_path / 'runs')])
+    [directory] = (tmp_path / 'runs' / '000000').iterdir()
+    assert directory.name.endswith('-nocommit-try')
+    summary = json.loads((directory / 'summary.json').read_text())
+    assert summary['run'] == directory.name and '--dev' in summary['command'] and summary['succeeded'] == 2
+    with h5py.File(directory / 'trajectories.hdf5', 'r') as file:
+        assert sorted(file['data']) == ['demo_1', 'demo_3']
+
+
+def test_run_names_carry_the_commit():
+    assert run_expert.run_name('ab12cd3+dirty', 'step2').endswith('-ab12cd3-dirty-step2')
+    assert run_expert.run_name(None).endswith('-nocommit')
+
+
 def test_run_expert_rejects_another_robot(tmp_path, monkeypatch):
     monkeypatch.setattr(run_expert, 'scene_robot', lambda scene, root: 'x1pro')
     initial = tmp_path / '000000'

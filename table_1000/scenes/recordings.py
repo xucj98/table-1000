@@ -45,17 +45,12 @@ def merge(sources, target, keep=lambda source, seed: True):
     return len(episodes)
 
 
-STEPS_PREFIX = 'steps'      # <backend>/steps<k>-<m>/: batches of some steps of the expert
-
-
 def clear_batch(directory):
-    """Empty a batch directory for a new batch, keeping the step batches in it (:data:`STEPS_PREFIX`)."""
+    """Empty a batch directory for a new batch."""
     import shutil
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     for path in directory.iterdir():
-        if path.is_dir() and path.name.startswith(STEPS_PREFIX):
-            continue
         shutil.rmtree(path) if path.is_dir() else path.unlink()
 
 

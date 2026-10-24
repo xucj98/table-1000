@@ -3,7 +3,7 @@
 An expert made of steps (:func:`~table_1000.experts.context.run_steps`) leaves a
 checkpoint after each step that passed its check: the scene state, in
 ``checkpoints/<seed>.hdf5`` (merged by step into ``checkpoints/step<k>.hdf5``,
-:func:`merge_checkpoints`). With ``steps`` ``(first, last)`` only those steps run,
+:func:`merge_checkpoints`); an episode from the initial state keeps that too, as step 0. With ``steps`` ``(first, last)`` only those steps run,
 from the initial states (``first`` 1) or from the checkpoints of step ``first - 1``;
 the robot's home stays where the seed's episode began.
 
@@ -31,6 +31,7 @@ from table_1000.sim import CONTROL_HZ, PHYSICS_DT
 # A seed without a report: its process stopped before finishing it.
 PROCESS_EXITED = '-: process exited'
 RESUME_S = .2       # s of holding still after resuming from a checkpoint
+INITIAL_STATE = 'initial state'     # the name of step 0's checkpoints
 
 
 def checkpoint_path(directory, step):
@@ -186,8 +187,11 @@ class Generator:
                               for name, joints in self.env.privileged()['joints'].items()}},
             timings={'init_s': init_s, **{key: sum(s.timings[key] for s in ctx.solvers.values())
                                           for key in ('planning_s', 'executing_s')}})
-        if ctx.checkpoints:
-            write_checkpoints(self.output / 'checkpoints' / f'{seed}.hdf5', seed, attempt, ctx.start, ctx.checkpoints)
+        checkpoints = ctx.checkpoints
+        if first == 1 and start is None and hasattr(self.expert, 'STEPS'):
+            checkpoints = [{'step': 0, 'name': INITIAL_STATE, 'at': 0, 'state': state}, *checkpoints]
+        if checkpoints:
+            write_checkpoints(self.output / 'checkpoints' / f'{seed}.hdf5', seed, attempt, ctx.start, checkpoints)
         attrs = {'scene': self.name, 'seed': seed, 'attempt': attempt,
                  'instruction': INSTRUCTION, 'subtasks': ctx.subtasks, 'status': report['status'],
                  'steps': [{key: entry[key] for key in ('step', 'name', 'at')} for entry in report['steps']]}

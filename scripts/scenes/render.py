@@ -3,7 +3,7 @@
 ``uv run python scripts/scenes/render.py 000000 --physics isaac-cpu --gpus 0 1 2 3 [--jobs N] --cameras NAME ... [--merge] [--captions] [--count N] [--seeds ...] [--failed] [--input DIR]``
 
 Reads the batch ``<input>/<scene>/<backend>/`` (``<input>`` = ``data/scenes``,
-written by ``run_expert.py``) and writes, per episode, one video per camera
+written by ``run_expert.py``; ``--batch DIR``: that batch, e.g. a development run) and writes, per episode, one video per camera
 ``videos/<seed>/<camera>.mp4`` (``fails/`` for failed episodes), or with
 ``--merge`` the cameras in one grid ``videos/<seed>/merge.mp4``. ``--cameras``
 names robot cameras (RGB) and fixed views of the scene. A video of an episode
@@ -20,7 +20,7 @@ restores the recorded state of that step; nothing is simulated. The episodes are
 packed by length into ``--jobs`` processes, spread over ``--gpus`` or submitted
 through ``--launcher`` (see ``table_1000/common/batch.py``); episodes whose process
 stopped before their videos run again (``--retries``). Logs are in
-``outputs/scenes/<scene>/<backend>/render/``; ``summary.json`` lists the seeds
+``outputs/scenes/<scene>/<batch>/render/``; ``summary.json`` lists the seeds
 with videos.
 """
 
@@ -160,7 +160,7 @@ def main(argv=None):
     parser.add_argument('--root', type=Path, default=ROOT)
     parser.add_argument('--assets', type=Path, default=ROOT / 'assets')
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
-    parser.add_argument('--batch', type=Path, help=argparse.SUPPRESS)
+    parser.add_argument('--batch', type=Path, help='this batch directory instead of <input>/<scene>/<backend>/')
     parser.add_argument('--work', type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.worker:
@@ -173,7 +173,7 @@ def main(argv=None):
         parser.error('--count must be positive')
     if len(set(args.cameras)) != len(args.cameras):
         parser.error('--cameras lists a camera twice')
-    directory = (args.input / args.scene / args.physics).resolve()
+    directory = (args.batch or args.input / args.scene / args.physics).resolve()
     trajectories = directory / 'trajectories.hdf5'
     if not trajectories.is_file():
         parser.error(f'no trajectories {trajectories}; run run_expert.py first')
@@ -202,7 +202,7 @@ def main(argv=None):
                      f'{summary["seeds"]["range"]}, failed: {seed_range(failed) or "none"}')
     if not seeds:
         parser.error('no episodes to render')
-    staging = root / 'outputs' / 'scenes' / args.scene / args.physics / 'render'
+    staging = root / 'outputs' / 'scenes' / args.scene / directory.name / 'render'
     shutil.rmtree(staging, ignore_errors=True)
     targets = {seed: [video_path(directory, seed, None if output == MERGED else output, failed=seed in failed)
                       for output in ([MERGED] if args.merge else args.cameras)] for seed in seeds}

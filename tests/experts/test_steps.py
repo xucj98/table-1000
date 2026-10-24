@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from table_1000.experts.context import ExpertFailed, Step, run_steps
-from table_1000.experts.generate import merge_checkpoints, read_checkpoints, step_rates, write_checkpoints
+from table_1000.experts.generate import INITIAL_STATE, merge_checkpoints, read_checkpoints, step_rates, write_checkpoints
 
 
 class FakeContext:
@@ -73,6 +73,17 @@ def test_checkpoints_are_merged_by_step(tmp_path):
     assert sorted(read_checkpoints(tmp_path / 'batch' / 'checkpoints' / 'step1.hdf5')[1]) == [0, 1]
 
 
+
+def test_the_initial_state_is_step_0(tmp_path):
+    start = {'qpos': np.zeros(3), 'base_pose': np.zeros(3)}
+    write_checkpoints(tmp_path / '0.hdf5', 0, 0, start, [{'step': 0, 'name': INITIAL_STATE, 'at': 0, 'state': state(5)},
+                                                        {'step': 1, 'name': 'step 1', 'at': 10, 'state': state(6)}])
+    assert merge_checkpoints([tmp_path / '0.hdf5'], tmp_path / 'batch', {'scene': 's'}) == [0, 1]
+    attrs, states = read_checkpoints(tmp_path / 'batch' / 'checkpoints' / 'step0.hdf5')
+    assert attrs['step'] == 0 and attrs['name'] == INITIAL_STATE
+    assert states[0][1]['articulation']['robot']['joint_position'][0, 0] == 5.
+
+
 def report(seed, done, names='abc', run=None):
     return {'seed': seed, 'step_names': list(names), 'steps_run': run,
             'steps': [{'step': k, 'name': names[k - 1], 'at': k} for k in done]}
@@ -131,9 +142,9 @@ def test_join_cuts_each_part_at_the_checkpoint_the_next_started_from(tmp_path):
                                    'subtasks': [{'instruction': 'b', 'start': 0, 'end': 3}]}),
         2: ('success', [5, 6], {'steps': [{'step': 2, 'at': 1}, {'step': 3, 'at': 2}], 'subtasks': []})},
         {'steps_run': [2, 3], 'from': str(first), 'commit': 'c2'})
-    (tmp_path / 'scene' / 'isaac-cpu' / 'episodes').mkdir()     # an earlier batch's, replaced
-    main([str(first), str(second)])     # into the scene's batch, isaac-cpu/, keeping the step batches
-    joined = tmp_path / 'scene' / 'isaac-cpu'
+    joined = tmp_path / 'data' / 'scene' / 'isaac-cpu'
+    (joined / 'episodes').mkdir(parents=True)     # an earlier batch's, replaced
+    main([str(first), str(second), '--output', str(joined)])
     assert not (joined / 'episodes').exists() and (first / 'summary.json').is_file()
     with h5py.File(joined / 'trajectories.hdf5', 'r') as file:
         group = file['data/demo_0']
@@ -152,6 +163,8 @@ def test_join_cuts_each_part_at_the_checkpoint_the_next_started_from(tmp_path):
     assert summary['seeds']['count'] == 4
     with pytest.raises(SystemExit):     # the first batch must start from the initial states
         main([str(second), '--output', str(tmp_path / 'scene' / 'other')])
+    with pytest.raises(SystemExit):     # nor replace a batch it joins
+        main([str(first), str(second), '--output', str(second)])
 
 
 def test_the_steps_of_a_resumed_run_keep_the_seed_s_start():

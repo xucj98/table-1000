@@ -1,10 +1,10 @@
 """Failed expert episodes as cases to look at: views of the scene where the failing subtask began
 and where the episode stopped, with the numbers of its report.
 
-``uv run python scripts/experts/failure_cases.py data/scenes/000002/isaac-cpu outputs/cases/000002 [--seeds 4 44]``
+``uv run python scripts/experts/failure_cases.py runs/expert/000002/<run> [--seeds 4 44] [--out DIR]``
 
-Runs on a GPU (e.g. under ``gq submit``). For every failed seed of the batch (``--seeds``: only
-those), into ``<out>/<seed>/``:
+Runs on a GPU. For every failed seed of the batch (``--seeds``: only those), into
+``<out>/<seed>/`` (``<out>`` = ``<batch>/cases``):
 
 - ``start_<view>.jpg``, ``end_<view>.jpg``: the first state of the failing subtask and the last
   state, from the robot's head camera (``face_view``), the scene's own views (``wide``, ``close``)
@@ -61,12 +61,13 @@ def case(report):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('batch', type=Path, help='a batch directory of run_expert.py')
-    parser.add_argument('out', type=Path)
+    parser.add_argument('--out', type=Path, help='default <batch>/cases')
     parser.add_argument('--seeds', nargs='+', help='only these failed seeds: 12 27, 0:20')
     parser.add_argument('--root', type=Path, default=ROOT, help='repository root holding the scene and robot sources')
     parser.add_argument('--assets', type=Path, default=ROOT / 'assets')
     parser.add_argument('--gpu', type=int)
     args = parser.parse_args(argv)
+    args.out = args.out or args.batch / 'cases'
     from table_1000.common.batch import parse_seeds, worker_gpu
     summary = json.loads((args.batch / 'summary.json').read_text())
     failures = sorted(seed for seeds in summary['failures'].values() for seed in seeds)
