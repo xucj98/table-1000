@@ -161,7 +161,10 @@ class Placing:
                 # Held so (its parts carried with the hand), as it will be when it is put down.
                 solver, poses = self.solvers[arm], ctx.poses()
                 body = np.linalg.inv(poses[target.body])
-                parts = [name for name, obj in solver.world.objects.items() if name.startswith(obj_prefix)]
+                attached = solver.planner.planning_world.is_object_attached
+                # Those already carried (asked once picked) stay as they are held.
+                parts = [name for name, obj in solver.world.objects.items()
+                         if name.startswith(obj_prefix) and not attached(name)]
                 for name in parts:
                     solver.attach_at(name, tcp_object @ body @ poses[solver.world.objects[name].body])
                 try:
