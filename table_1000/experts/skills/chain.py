@@ -13,6 +13,8 @@ needed; what is still unmet is left to the next action, which may move the base 
 from contextlib import nullcontext
 from dataclasses import dataclass
 
+import numpy as np
+
 from table_1000.experts.context import Unreachable
 from table_1000.experts.skills.common import Unmet
 
@@ -101,9 +103,10 @@ def subtask(ctx, instruction):
 def chain(ctx, actions, adapt=ADAPT):
     """Run ``actions`` in order, each asked for what the next needs (see the module docstring);
     their results, an adapted action's a list of its own and the adaptation's."""
-    needs = [action.requirements(ctx) for action in actions[1:]] + [None]
     results = []
-    for action, need in zip(actions, needs):
+    for index, action in enumerate(actions):
+        # Asked of the state the actions before leave, as the next one sees it now.
+        need = actions[index + 1].requirements(ctx) if index + 1 < len(actions) else None
         try:
             with subtask(ctx, action.instruction):
                 results.append(action.run(ctx) if need is None else action.run(ctx, need, base=False))
@@ -121,6 +124,8 @@ def adapted(ctx, action, need, adapt, failure):
         if way == 'handover' and isinstance(action, Pick):
             with subtask(ctx, action.instruction):
                 result = action.run(ctx)
+            if result['arm'] in need.arms and need.accepts(result['arm'], np.asarray(result['tcp_object'])):
+                return [result]     # held as needed after all (from where the pick moved the base)
             to = next((arm for arm in need.arms if arm != result['arm']), None)
             if to is None:
                 return [result]

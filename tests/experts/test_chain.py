@@ -96,3 +96,30 @@ def test_chain_moves_the_base_where_the_pick_meets_the_place(monkeypatch):
     results = chain(Context(), [Pick('pen'), Placing(log)])
     assert log == ['pick unmet', 'pick left, the base moved', 'place']
     assert results == [[{'arm': 'left'}], 'placed']
+
+
+def test_chain_hands_nothing_over_when_the_pick_meets_the_need_after_all(monkeypatch):
+    log = []
+
+    def pick(ctx, obj, need=None, base=True, **options):
+        if need is not None:
+            log.append('pick unmet')
+            raise Unmet('pick', 'no reachable grasp')
+        log.append('pick left')
+        return {'arm': 'left', 'tcp_object': [[1., 0., 0., 0.], [0., 1., 0., 0.], [0., 0., 1., 0.], [0., 0., 0., 1.]]}
+
+    def handover(ctx, obj, need=None):
+        log.append('handover')
+    monkeypatch.setattr(skills, 'pick', pick)
+    monkeypatch.setattr(skills, 'handover', handover, raising=False)
+    chain(Context(), [Pick('pen'), Placing(log)])
+    assert log == ['pick unmet', 'pick unmet', 'pick left', 'place']
+
+
+def test_chain_asks_each_need_of_the_state_the_actions_before_leave(picking):
+    class Asked(Placing):
+        def requirements(self, ctx):
+            self.log.append('asked')
+            return None
+    chain(Context(), [Pick('pen'), Pick('cup'), Asked(picking)])
+    assert picking == ['pick right', 'asked', 'pick right', 'place']

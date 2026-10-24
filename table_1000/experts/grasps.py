@@ -170,8 +170,12 @@ class Cylinder:
 
 
 # A part is taken for a cylinder when its collision vertices, seen along its longest extent, lie all
-# round it: no gap between their directions wider than ROUND_GAP (a polygonal barrel, not a square).
+# round it: no gap between their directions wider than ROUND_GAP (a polygonal barrel, not a square),
+# and it is as wide as the cylinder across every direction, to within ROUND_ERROR (not a rounded
+# square, a flat handle or a curved shell, which a cylinder grasp would take for wider than they are).
 ROUND_GAP = np.radians(50.)
+ROUND_ERROR = .002      # m
+ROUND_DIRECTIONS = 36
 
 
 def fitted(points):
@@ -189,7 +193,9 @@ def fitted(points):
     if size[axis] > max(size[across]) and np.all(radius > 1e-6):
         angles = np.sort(np.arctan2(local[:, 1], local[:, 0]))
         gaps = np.diff(np.r_[angles, angles[0] + 2 * np.pi])
-        if gaps.max() <= ROUND_GAP:
+        turns = np.linspace(0., np.pi, ROUND_DIRECTIONS, endpoint=False)
+        widths = np.ptp(local @ np.c_[np.cos(turns), np.sin(turns)].T, axis=0)
+        if gaps.max() <= ROUND_GAP and 2 * radius.max() - widths.min() <= ROUND_ERROR:
             # The cylinder's Z along the longest extent.
             offset[:3, :3] = _along(axis)
             return Cylinder(float(radius.max()), float(size[axis])), offset

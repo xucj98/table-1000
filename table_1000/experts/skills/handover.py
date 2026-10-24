@@ -185,7 +185,10 @@ class Handing:
         self.held[to] = {'target': target, 'supports': [], 'grasp': chosen}
         # Now in the giving arm's world the object touches the receiving fingers (as it backs out).
         giving.world.allow(target.names, ctx.spec.arms[to].finger_links)
-        self.release(giver)
+        try:
+            self.release(giver)
+        finally:
+            giving.world.allow(target.names, ctx.spec.arms[to].finger_links, False)
         tcp_object = np.linalg.inv(receiving.tcp()) @ ctx.poses()[target.body]
         ctx.note('handed over', giver=giver, arm=to, target=target.names[0], finger_gap=receiving.finger_gap(),
                  **grasp.info)
