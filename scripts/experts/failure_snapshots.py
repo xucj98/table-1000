@@ -97,7 +97,7 @@ def main(argv=None):
     out = {'run': run, 'command': ' '.join(['failure_snapshots.py', *(argv if argv is not None else sys.argv[1:])]),
            'scene': summary['scene'], 'robot': summary.get('robot'), 'physics': summary['physics'], 'commit': checkout,
            'snapshots_of': str(batch), 'before_s': args.before,
-           'steps': None, 'snapshots': {str(step): sorted(seeds) for step, seeds in sorted(snapshots.items())}}
+           'snapshots': {str(step): sorted(seeds) for step, seeds in sorted(snapshots.items())}}
     (directory / 'summary.json').write_text(json.dumps(out, indent=1, ensure_ascii=False) + '\n')
     print('SNAPSHOTS', directory, json.dumps(out['snapshots']))
 
