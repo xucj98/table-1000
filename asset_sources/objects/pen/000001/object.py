@@ -1,7 +1,6 @@
-"""White/black retractable pen: shell and one moving button/refill body.
+"""Three-body retractable pen with independent 3 mm native sliders.
 
-Local +X points to the button; tip is -X; barrel center is Z=0.005 m.
-The black rear housing is fixed; only its small end button translates.
+Geometry only; finite-force drives and state changes are authored separately.
 """
 
 import bpy
@@ -9,7 +8,7 @@ import bpy
 from table_1000.modeling.asset_builders import asset, body, cylinder, generate, joint, material, tube, group_part
 
 
-def build():
+def build_base():
     white = material("White pen plastic", (0.78, 0.80, 0.78), 0.29)
     black = material("Black pen plastic", (0.009, 0.012, 0.014), 0.30)
     metal = material("Ballpoint steel", (0.5, 0.54, 0.57), 0.24, metallic=0.92)
@@ -61,6 +60,13 @@ def organize_parts():
                                     or obj.name.startswith("Collision_" + name + "_")
                                     for name in names)], key=lambda obj: obj.name)
         group_part(owner.name + "." + component, owner, visuals, collisions)
+
+
+from table_1000.modeling.pen_detents import split_click
+
+def build():
+    build_base()
+    split_click(axis_height=0.005, anchor_x=0.068, shaft_rear_x=0.0648)
 
 
 def main(argv=None):

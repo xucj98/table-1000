@@ -1,9 +1,212 @@
 {
-  "front.jpg": {"camera": [0, -1, 0, 0, 0, 1]},
-  "back.jpg": {"camera": [0, 1, 0, 0, 0, 1]},
-  "left.jpg": {"camera": [-1, 0, 0, 0, 0, 1]},
-  "right.jpg": {"camera": [1, 0, 0, 0, 0, 1]},
-  "top.jpg": {"camera": [0, 0, 1, 0, 1, 0]},
-  "bottom.jpg": {"camera": [0, 0, -1, 0, -1, 0]},
-  "three_quarter.jpg": {"camera": [0.82, -0.82, 0.72, 0, 0, 1]}
+  "front.jpg": {
+    "camera": [
+      0,
+      -1,
+      0,
+      0,
+      0,
+      1
+    ]
+  },
+  "back.jpg": {
+    "camera": [
+      0,
+      1,
+      0,
+      0,
+      0,
+      1
+    ]
+  },
+  "left.jpg": {
+    "camera": [
+      -1,
+      0,
+      0,
+      0,
+      0,
+      1
+    ]
+  },
+  "right.jpg": {
+    "camera": [
+      1,
+      0,
+      0,
+      0,
+      0,
+      1
+    ]
+  },
+  "top.jpg": {
+    "camera": [
+      0,
+      0,
+      1,
+      0,
+      1,
+      0
+    ]
+  },
+  "bottom.jpg": {
+    "camera": [
+      0,
+      0,
+      -1,
+      0,
+      -1,
+      0
+    ]
+  },
+  "three_quarter.jpg": {
+    "camera": [
+      0.82,
+      -0.82,
+      0.72,
+      0,
+      0,
+      1
+    ]
+  },
+  "locked_0.jpg": {
+    "camera": [
+      0.82,
+      -0.82,
+      0.72,
+      0,
+      0,
+      1
+    ],
+    "joints": {
+      "utility_knife.slide": 0,
+      "utility_knife.press": 0
+    }
+  },
+  "locked_1.jpg": {
+    "camera": [
+      0.82,
+      -0.82,
+      0.72,
+      0,
+      0,
+      1
+    ],
+    "joints": {
+      "utility_knife.slide": 0.005,
+      "utility_knife.press": 0
+    }
+  },
+  "locked_2.jpg": {
+    "camera": [
+      0.82,
+      -0.82,
+      0.72,
+      0,
+      0,
+      1
+    ],
+    "joints": {
+      "utility_knife.slide": 0.01,
+      "utility_knife.press": 0
+    }
+  },
+  "locked_3.jpg": {
+    "camera": [
+      0.82,
+      -0.82,
+      0.72,
+      0,
+      0,
+      1
+    ],
+    "joints": {
+      "utility_knife.slide": 0.015,
+      "utility_knife.press": 0
+    }
+  },
+  "locked_4.jpg": {
+    "camera": [
+      0.82,
+      -0.82,
+      0.72,
+      0,
+      0,
+      1
+    ],
+    "joints": {
+      "utility_knife.slide": 0.02,
+      "utility_knife.press": 0
+    }
+  },
+  "pressed.jpg": {
+    "camera": [
+      0.82,
+      -0.82,
+      0.72,
+      0,
+      0,
+      1
+    ],
+    "joints": {
+      "utility_knife.slide": 0.01,
+      "utility_knife.press": 0.0015
+    }
+  },
+  "press_slide_release.mp4": {
+    "fps": 24,
+    "frames": [
+      {
+        "frame": 0,
+        "camera": [
+          0.82,
+          -0.82,
+          0.72,
+          0,
+          0,
+          1
+        ],
+        "joints": {
+          "utility_knife.slide": 0,
+          "utility_knife.press": 0
+        }
+      },
+      {
+        "frame": 6,
+        "joints": {
+          "utility_knife.press": 0.0015
+        }
+      },
+      {
+        "frame": 18,
+        "joints": {
+          "utility_knife.slide": 0.02
+        }
+      },
+      {
+        "frame": 24,
+        "joints": {
+          "utility_knife.press": 0
+        }
+      },
+      {
+        "frame": 30,
+        "joints": {
+          "utility_knife.press": 0.0015
+        }
+      },
+      {
+        "frame": 42,
+        "joints": {
+          "utility_knife.slide": 0
+        }
+      },
+      {
+        "frame": 48,
+        "joints": {
+          "utility_knife.press": 0
+        }
+      }
+    ]
+  }
 }

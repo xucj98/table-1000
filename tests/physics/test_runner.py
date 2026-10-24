@@ -5,10 +5,21 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from table_1000.physics.test import main, run_case, summary
+from table_1000.physics.test import main, run_case, run_selected_cases, summary
 
 
 class CaseResultsTests(unittest.TestCase):
+    def test_failed_case_does_not_prevent_later_case(self):
+        calls=[]
+        def run(name,test):
+            calls.append(name)
+            if name=='pull':
+                raise AssertionError('pull failed')
+        with patch('table_1000.physics.test.traceback.print_exc'):
+            failed=run_selected_cases({'pull':None,'close':None},run)
+        self.assertTrue(failed)
+        self.assertEqual(calls,['pull','close'])
+
     def test_definition_import_failure_closes_kit_with_nonzero_status(self):
         # Kit's close() normally terminates the process before Python can
         # propagate an exception. It must receive the failure explicitly.
@@ -48,6 +59,22 @@ class CaseResultsTests(unittest.TestCase):
             self.assertIn('benchmark failed', result['error'])
             self.assertEqual(other.read_bytes(), b'other result')
             self.assertEqual(source.read_text(), 'TESTS = {}\n')
+
+    def test_video_failure_keeps_completed_independent_benchmark(self):
+        measured = {'median_RTF': 2.5, 'rounds': [{'RTF': 2.5}]}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output = root / 'physics_test'
+            with patch('table_1000.physics.test.benchmark', return_value=measured), \
+                 patch('table_1000.physics.test.run_video', side_effect=RuntimeError('empty RGB')):
+                with self.assertRaisesRegex(RuntimeError, 'empty RGB'):
+                    run_case(root / 'object.usda', 'pull', None, output, None, 0, 0, standard=True)
+            result = json.loads((output / 'pull' / 'result.json').read_text())
+        self.assertEqual(result['execution_status'], 'failed')
+        self.assertEqual(result['failed_phase'], 'video')
+        self.assertEqual(result['benchmark_status'], 'completed')
+        self.assertEqual(result['performance'], {'no_render': measured})
+        self.assertNotIn('video_end_to_end', result['performance'])
 
     def test_default_run_skips_the_standard_benchmark(self):
         with tempfile.TemporaryDirectory() as temporary:

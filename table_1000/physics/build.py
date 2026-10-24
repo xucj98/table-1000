@@ -128,7 +128,7 @@ def author_geometry(model, destination):
 
 
 def build(asset, source, output):
-    from pxr import Sdf, Usd, UsdPhysics, UsdShade, UsdUtils
+    from pxr import Sdf, Usd, UsdGeom, UsdPhysics, UsdShade, UsdUtils
     from omni.kit.material.library import get_mdl_lib_paths
     started = time.perf_counter()
     output.mkdir(parents=True, exist_ok=True)
@@ -141,6 +141,8 @@ def build(asset, source, output):
         paths = author_geometry(model, output / 'geometry.usdc')
         author_physics(source, output)
         composed = Usd.Stage.CreateInMemory()
+        UsdGeom.SetStageMetersPerUnit(composed, 1)
+        UsdGeom.SetStageUpAxis(composed, UsdGeom.Tokens.z)
         composed.GetRootLayer().subLayerPaths = [str(output / 'physics.usda'), str(output / 'geometry.usdc')]
         composed.SetDefaultPrim(composed.GetPrimAtPath('/Asset'))
         scripts = [Sdf.AssetPath('behavior.py')] if (source / 'behavior.py').exists() else []
@@ -161,7 +163,8 @@ def build(asset, source, output):
             raise RuntimeError('USDZ packaging failed')
         if scripts:
             carrier = Usd.Stage.CreateNew(str(output / 'object.usda'))
-            from pxr import UsdGeom
+            UsdGeom.SetStageMetersPerUnit(carrier, 1)
+            UsdGeom.SetStageUpAxis(carrier, UsdGeom.Tokens.z)
             root = UsdGeom.Xform.Define(carrier, '/Asset').GetPrim()
             root.GetReferences().AddReference('object.usdz')
             carrier.SetDefaultPrim(root)

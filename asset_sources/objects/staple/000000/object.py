@@ -7,7 +7,6 @@ belong to one Compound body. Separation, adhesive and deformation are absent.
 import math
 
 import bpy
-import bmesh
 
 from table_1000.modeling.asset_builders import asset, body, generate, material, mesh, part
 
@@ -47,24 +46,6 @@ def wire_rings(x, overall_height_m):
             for y, z, ty, tz in path]
 
 
-def hull(points):
-    """Closed convex segment; never take a convex hull of an entire U."""
-    bm = bmesh.new()
-    for point in sorted({tuple(round(c, 12) for c in p) for p in points}):
-        bm.verts.new(point)
-    result = bmesh.ops.convex_hull(bm, input=list(bm.verts), use_existing_faces=False)
-    unused = list({v for v in result["geom_unused"] + result["geom_interior"]
-                   if isinstance(v, bmesh.types.BMVert)})
-    if unused:
-        bmesh.ops.delete(bm, geom=unused, context="VERTS")
-    bm.verts.ensure_lookup_table()
-    bm.verts.index_update()
-    vertices = [tuple(v.co) for v in bm.verts]
-    faces = [tuple(v.index for v in face.verts) for face in bm.faces]
-    bm.free()
-    return vertices, faces
-
-
 def build(overall_height_m=LEG_LENGTH_M):
     steel = material("Galvanized steel candidate", (0.58, 0.62, 0.66), 0.32, metallic=0.82)
     root = asset("staple", "foot-tip plane centre", "+X strip length; +Y crown; +Z up",
@@ -82,7 +63,7 @@ def build(overall_height_m=LEG_LENGTH_M):
     strip["staple_count"] = STAPLES_PER_STRIP
     strip["pitch_m"] = PITCH_M
     strip["separation_supported"] = False
-    strip["collision_approximation"] = "seven wire-section profiles extruded along strip; inter-wire grooves filled"
+    strip["collision_approximation"] = "seven native box bounds of wire-section profiles; shoulder corners and inter-wire grooves filled"
     # Crown includes both rounded shoulders; each row of legs remains separate.
     nodes = {name: part(strip.name + "." + name, strip)
              for name in ("crown", "leg_left", "leg_right")}
@@ -109,9 +90,9 @@ def build(overall_height_m=LEG_LENGTH_M):
         visual = mesh(nodes[name].name + ".visual", [vertices[i] for i in indices],
                       [tuple(remap[i] for i in face) for face in subset], nodes[name], steel)
         visual.hide_select = True
-    # Preserve the seven original Y/Z convex section profiles, but aggregate
-    # their 50 repeated copies along X. This retains the U void and foot plane;
-    # it intentionally omits sub-pitch grooves for whole-strip handling.
+    # Bound each of the seven section profiles by a box and aggregate all 50
+    # copies along X. This retains the U void and foot plane, filling shoulder
+    # corners by at most 0.207 mm and omitting the sub-pitch grooves.
     rings = wire_rings(0, overall_height_m)
     half_length = ((STAPLES_PER_STRIP - 1) * PITCH_M + WIRE_DIAMETER_M) / 2
     crown_index = 0
@@ -121,10 +102,16 @@ def build(overall_height_m=LEG_LENGTH_M):
         if name == "crown":
             crown_index += 1
             suffix = str(crown_index)
-        hv, hf = hull([(x, y, z) for x in (-half_length, half_length)
-                       for _, y, z in a + b])
+        hv = [(x, y, z) for x in (-half_length, half_length)
+              for _, y, z in a + b]
+        low = [min(v[i] for v in hv) for i in range(3)]
+        high = [max(v[i] for v in hv) for i in range(3)]
+        hv = [(x, y, z) for x in (low[0], high[0])
+              for y in (low[1], high[1]) for z in (low[2], high[2])]
+        hf = [(0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1),
+              (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)]
         proxy = mesh(nodes[name].name + ".collision" + suffix, hv, hf, nodes[name],
-                     shape="CONVEX_HULL")
+                     shape="BOX")
         proxy.hide_select = True
     for node in nodes.values():
         node.hide_select = True

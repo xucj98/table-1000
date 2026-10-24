@@ -61,7 +61,9 @@ class TestContext:
             settings.set_bool('/physics/updateVelocitiesToUsd', True)
         self.world = SimulationContext(SimulationCfg(
             device='cpu' if physics == 'cpu' else 'cuda:0', dt=.004, render_interval=10,
-            use_fabric=physics == 'gpu',
+            # CPU PhysX does not mirror tensor-written kinematic poses to USD.
+            # Render through native Fabric; keep no-render CPU runs unchanged.
+            use_fabric=render or physics == 'gpu',
             physx=PhysxCfg(solver_type=1, enable_ccd=physics == 'cpu',
                            enable_external_forces_every_iteration=physics == 'gpu',
                            min_position_iteration_count=64 if physics == 'gpu' else 1,
@@ -142,6 +144,12 @@ class TestContext:
         if self.initialized:
             return
         started = time.perf_counter()
+        # Attach the render product before reset initializes PhysX/Fabric.
+        # Attaching it to an already initialized scene after prior disposable
+        # contexts can leave tensor-driven GPU kinematics without contacts.
+        if self.render and self.camera_config:
+            from table_1000.physics.video import Camera
+            self.camera_instance = Camera(self.session.stage, self.camera_config)
         if self.app:
             for _ in range(5): self.app.update()
         from pxr import Gf, UsdGeom
@@ -225,16 +233,19 @@ class TestContext:
         finally:
             lock.release()
 
-    def grip(self, body, *, name=None):
+    def grip(self, body, *, name=None, gain_reference_dt=None):
         """Ideal six-axis grip of ``body`` at its declared pose; declare before the first step.
 
         See :class:`table_1000.sim.isaaclab.fixtures.Grip` for its motions.
         Records ``<name>.target.position``, ``.force``, ``.torque`` (world, about
         the held point) and ``.error.position`` / ``.error.angle``.
+        ``gain_reference_dt`` optionally fixes the gain derivation timestep in
+        seconds; the default uses the physics step at initialization. It does
+        not change the integration, motion or sampling timestep.
         """
         from table_1000.sim.isaaclab.fixtures import Grip
         name = name or 'grip_'+str(len(self.grips))
-        return Grip(self, body, name=name)
+        return Grip(self, body, name=name, gain_reference_dt=gain_reference_dt)
 
     def wait(self, *motions):
         """Step until every given grip motion has ended."""
@@ -245,7 +256,13 @@ class TestContext:
             self.run(remaining*self.dt)
 
     def grip_details(self):
-        return {grip.name: {'body': f'{grip.body.instance.name}.{grip.body.name}', **(grip.gains or {})}
+        readback = ({'source':'incoming joint force in child joint frame, transformed to world',
+                     'quantitative_accuracy':'requires experiment-specific validation'} if self.physics == 'cpu' else
+                    {'source':'nominal drive law plus commanded feedforward; not direct reaction measurement',
+                     'quantitative_accuracy':'not guaranteed near joint-state resolution; torque may read zero under nonzero load',
+                     'zero_does_not_prove_no_support_wrench':True})
+        return {grip.name: {'body': f'{grip.body.instance.name}.{grip.body.name}',
+                            **(grip.gains or {}), 'wrench_readback':readback}
                 for grip in self.grips}
 
     def force(self, name, body, *, keyframes, frame='world', point_frame='world'):
@@ -344,8 +361,6 @@ class TestContext:
             self.action_values.clear()
             self.sample()
             if self.render and self.camera_config:
-                from table_1000.physics.video import Camera
-                self.camera_instance = Camera(self.session.stage,self.camera_config)
                 start = time.perf_counter();self.camera_instance.capture(self);self.preparation_seconds += time.perf_counter()-start
                 self.video_started = time.perf_counter()
                 self.images.append(self.camera_instance.capture(self))

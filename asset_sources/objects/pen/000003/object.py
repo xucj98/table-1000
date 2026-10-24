@@ -29,7 +29,7 @@ PROFILE = {'geometry': {'segments': 16,
  'label_color': [0.82, 0.82, 0.73]}
 
 
-def build():
+def build_base():
     capped_pen(PROFILE)
 
     organize_parts()
@@ -64,6 +64,14 @@ def organize_parts():
                                     or obj.name.startswith("Collision_" + name + "_")
                                     for name in names)], key=lambda obj: obj.name)
         group_part(owner.name + "." + component, owner, visuals, collisions)
+
+
+from table_1000.modeling.pen_detents import add_detents
+DETENT = {'seat': -0.032, 'neck': 0.0078, 'segments': 16, 'balls': 3, 'radius': 0.0006, 'height': 0.00033749999999999996, 'travel': 0.0006, 'mass': 0.00042187499999999983, 'stiffness': 600.0, 'damping': 0.22499999999999995, 'preload': 0.0001, 'flat': False, 'dt': 0.001}
+
+def build():
+    build_base()
+    add_detents(DETENT)
 
 
 def main(argv=None):

@@ -17,7 +17,7 @@ Observation (ManiSkill's layout; only what the real robot measures):
   with the sensor's calibrated intrinsics and the optical frame's pose (OpenCV axes)
 - ``time``: simulated seconds since the reset
 
-Camera images are rendered on request (:meth:`RobotEnv.images`), not every step.
+Camera images are returned on request; the simulator renders at the control period.
 Simulator-only state -- object poses and velocities, contacts, rendering aids --
 is reached through :meth:`RobotEnv.privileged` and the other methods, for experts,
 checks and evaluation, never for a policy. ``recorders`` (Isaac Lab's
@@ -41,7 +41,7 @@ from table_1000.sim.isaaclab import scene as lab_scene
 from table_1000.sim.isaaclab.actions import actions_cfg
 from table_1000.sim.isaaclab.contacts import Contacts
 
-from table_1000.sim import PHYSICS_DT as DT, SUBSTEPS as DECIMATION, control
+from table_1000.sim import PHYSICS_DT as DT, CONTROL_HZ, control
 MARKERS_PATH = '/World/Markers'
 
 
@@ -227,17 +227,17 @@ def env_cfg(scene, spec, assets, *, modes=None, cameras=None, depth=False, views
 
     @configclass
     class Cfg(ManagerBasedEnvCfg):
-        decimation = DECIMATION
+        decimation = round(1 / (CONTROL_HZ * getattr(scene, "PHYSICS_DT", DT)))
 
     cfg = Cfg(scene=lab_scene.scene_cfg(scene, spec, assets, robot_q, num_envs=num_envs, cameras=cameras,
                                         depth=depth, views=views, root=root),
               observations=observations, actions=actions_cfg(spec, modes), events=EventsCfg())
     if recorders is not None:
         cfg.recorders = recorders
-    cfg.sim = sim_utils.SimulationCfg(device=device, dt=DT,
+    cfg.sim = sim_utils.SimulationCfg(device=device, dt=getattr(scene, "PHYSICS_DT", DT),
                                       physx=sim_utils.PhysxCfg(solver_type=1, enable_ccd=device == 'cpu'),
-                                      # Cameras render on request (RobotEnv.images), not inside steps.
-                                      render_interval=10 ** 9, use_fabric=device != 'cpu')
+                                      # Keep a finite render period: huge dt values stall Isaac initialization.
+                                      render_interval=cfg.decimation, use_fabric=device != 'cpu')
     cfg.ui_window_class_type = None
     return cfg
 
@@ -293,7 +293,7 @@ class RobotEnv:
         # Object parts are labelled <object>:<body>.<part prim>, e.g. cabinet:cabinet.drawer3.handle.
         labels.update({f'{prefix}/{lab_scene.OBJECT_PREFIX}{name}{path}': f'{name}:{body}'
                        for name, structure in self.objects.items() for body, path in structure.paths.items()})
-        self.contacts = Contacts(labels, contact_watch, DT, device=self.env.device)
+        self.contacts = Contacts(labels, contact_watch, self.env.physics_dt, device=self.env.device)
         self.markers = None
         self.steps = 0
         self.timings = {'step_s': 0., 'render_s': 0.}
@@ -305,7 +305,7 @@ class RobotEnv:
     @property
     def time(self):
         """Simulated seconds since the reset."""
-        return self.steps * DECIMATION * DT
+        return self.steps * self.env.step_dt
 
     def initial_robot_q(self):
         """Scene joints (others at zero) and, for a mobile base, its pose as virtual joint values."""

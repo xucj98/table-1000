@@ -51,6 +51,30 @@ class Asset:
         self.articulation_root = str(roots[0].GetPath()) if roots else None
         self.articulation = None
         self.root_index = self.indices[roots[0].GetCustomDataByKey('table1000:name')] if roots else None
+        # A single asset may contain a reduced-coordinate tree and separate
+        # rigid accessories. Only enabled, non-excluded joints join that tree.
+        self.articulation_bodies = set()
+        if self.articulation_root:
+            connected = {self.body_names[self.root_index]}
+            names_by_path = {self.paths[n]: n for n in self.body_names}
+            edges = []
+            for joint_name in self.joint_names:
+                joint = UsdPhysics.Joint(self.joint(joint_name))
+                if not joint.GetJointEnabledAttr().Get() or joint.GetExcludeFromArticulationAttr().Get():
+                    continue
+                targets = [relation.GetTargets() for relation in (joint.GetBody0Rel(), joint.GetBody1Rel())]
+                if all(targets):
+                    endpoints = [names_by_path.get(str(t[0])) for t in targets]
+                    if all(endpoints):
+                        edges.append(endpoints)
+            while True:
+                previous = len(connected)
+                for a, b in edges:
+                    if a in connected or b in connected:
+                        connected.update((a, b))
+                if len(connected) == previous:
+                    break
+            self.articulation_bodies = connected
 
     def environment_states(self):
         """Body positions, rotation matrices and centers of mass in every environment.
@@ -95,29 +119,25 @@ class Asset:
         self.local_inertia = np.asarray(self.view.get_inertias()).reshape(-1, 3, 3)
         self.mass = np.asarray(self.view.get_masses()).reshape(-1)
 
+    def independent_body_indices(self):
+        """Bodies writable outside the native tree and any declared fixtures."""
+        excluded = self.articulation_bodies | getattr(self, "fixture_bodies", set())
+        return np.array([i for i, name in enumerate(self.body_names) if name not in excluded], dtype=np.int32)
+
     def restore_body_poses(self, positions, quaternions):
-        if self.articulation:
-            # Reduced coordinates forbid writes to non-root link transforms.
-            if getattr(self, "fixture_root", None):
-                return
+        if self.articulation and not getattr(self, "fixture_root", None):
+            # Only the root of a reduced-coordinate tree accepts a pose write.
             i = self.root_index
             transforms = np.c_[positions[i:i+1], quaternions[i:i+1, [1, 2, 3, 0]]].astype(np.float32)
             self.articulation.set_root_transforms(transforms, np.array([0], dtype=np.int32))
-        else:
-            indices = np.array([i for i, name in enumerate(self.body_names)
-                                if name not in getattr(self, "fixture_bodies", ())], dtype=np.int32)
-            self.view.set_world_poses(positions[indices], quaternions[indices], indices=indices)
+        indices = self.independent_body_indices()
+        self.view.set_world_poses(positions[indices], quaternions[indices], indices=indices)
 
     def restore_body_velocities(self, velocities):
-        if self.articulation:
-            if getattr(self, "fixture_root", None):
-                return
+        if self.articulation and not getattr(self, "fixture_root", None):
             i = self.root_index
             self.articulation.set_root_velocities(velocities[i:i+1], np.array([0], dtype=np.int32))
-        else:
-            indices = np.array([i for i, name in enumerate(self.body_names)
-                                if name not in getattr(self, "fixture_bodies", ())], dtype=np.int32)
-            self.view.set_velocities(velocities, indices=indices)
+        self.view.set_velocities(velocities, indices=self.independent_body_indices())
 
     def snapshot(self):
         state = (*self.view.get_world_poses(), self.view.get_velocities())
