@@ -3,10 +3,13 @@
 import json
 import types
 
+import h5py
+
 import numpy as np
 
 from table_1000.experts.context import ExpertFailed, Step
-from table_1000.experts.teleop import HumanExpert, Orbit, cases, check, drag, failed_step, view_camera
+from table_1000.experts.teleop import (HumanExpert, Orbit, cases, check, drag, failed_step, trajectory_start,
+                                      trajectory_state, view_camera)
 
 NAMES = ['open', 'move', 'close']
 
@@ -94,3 +97,23 @@ def test_an_outside_view_turns_about_its_target_pans_and_zooms():
     orbit.move('pan', 10., 0.)                      # dragging right moves the scene right: the target left
     assert np.linalg.norm(np.array(orbit.view['target']) - target) > 0.
     assert view['position'] == (0., -2., 1.)        # the scene's view is left as it was
+
+
+def test_a_recorded_failure_gives_the_state_at_the_failure(tmp_path):
+    batch = tmp_path / 'batch'
+    write(batch, {'scene': '000002'}, {'3': report(3, [1]), '4': report(4, [1])})
+    (batch / 'episodes' / '3.json').write_text(json.dumps({**report(3, [1]), 'steps': [
+        {'step': 1, 'name': 'open', 'at': 4}]}))
+    with h5py.File(batch / 'trajectories_failed.hdf5', 'w') as file:
+        group = file.create_group('data/demo_3')
+        group.attrs['num_samples'] = 6
+        group.create_dataset('states/rigid_object/pen/root_pose', data=np.arange(6 * 7.).reshape(6, 7))
+        group.create_dataset('obs/qpos', data=np.ones((6, 2)))
+        group.create_dataset('obs/base_pose', data=np.zeros((6, 3)))
+    found = {case['seed']: case for case in cases(tmp_path / 'none', '000002', [batch])}
+    assert found[3]['failure_at'] == 6 and found[3]['step_at'] == 4
+    assert 'trajectory' not in found[4]          # not recorded
+    state = trajectory_state(found[3]['trajectory'], 3, found[3]['failure_at'] - 1)
+    np.testing.assert_array_equal(state['rigid_object']['pen']['root_pose'], [np.arange(35., 42.)])
+    assert trajectory_start(found[3]['trajectory'], 3)['qpos'].shape == (1, 2)
+    assert found[3]['run'].endswith('/batch')

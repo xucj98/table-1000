@@ -1,8 +1,9 @@
 """Teleoperating one step of an expert from a case: a seed's state before a step its expert failed.
 
 A **case** is ``(batch, step, seed)`` of a development batch (``runs/expert/<scene>/<run>/``):
-the step the seed's episode failed in, started from the checkpoint of the step before
-(:func:`cases`). Batches run with ``--repeats K`` give each seed's success rate over its K
+the step the seed's episode failed in (:func:`cases`). It starts from the checkpoint of the step
+before, or, where the failed run was recorded, from the state at the moment it failed (the last of
+its trajectory's states) or any moment of the failed step before that (:func:`trajectory_state`). Batches run with ``--repeats K`` give each seed's success rate over its K
 runs; the cases come sorted by it, lowest first.
 
 The operator does the step by hand (:class:`HumanExpert`): the expert's other steps stay as
@@ -74,12 +75,45 @@ def start_checkpoint(batch, summary, step):
     return own
 
 
+def failed_trajectories(batch):
+    """``{seed: samples}`` of the failed episodes recorded in a batch (``trajectories_failed.hdf5``)."""
+    import h5py
+    path = Path(batch) / 'trajectories_failed.hdf5'
+    if not path.is_file():
+        return {}
+    with h5py.File(path, 'r') as file:
+        return {int(name.split('_')[1]): int(group.attrs['num_samples']) for name, group in file['data'].items()}
+
+
+def trajectory_state(path, seed, index):
+    """The scene state after control step ``index + 1`` of episode ``seed`` in a trajectory file (its
+    ``states``, environment axis kept), as a checkpoint holds it."""
+    import h5py
+
+    def take(group):
+        return {key: take(value) if isinstance(value, h5py.Group) else value[index:index + 1]
+                for key, value in group.items()}
+    with h5py.File(path, 'r') as file:
+        return take(file['data'][f'demo_{seed}']['states'])
+
+
+def trajectory_start(path, seed):
+    """``{'qpos', 'base_pose'}`` of the robot where a recorded episode began."""
+    import h5py
+    with h5py.File(path, 'r') as file:
+        obs = file['data'][f'demo_{seed}']['obs']
+        return {'qpos': obs['qpos'][0:1], 'base_pose': obs['base_pose'][0:1]}
+
+
 def batch_cases(batch):
     """The cases of one batch: ``{'batch', 'run', 'scene', 'step', 'step_name', 'seed', 'successes',
     'runs', 'rate', 'failure', 'start'}`` per seed that failed in any of its runs (``rate`` None
-    without ``--repeats``)."""
+    without ``--repeats``). A case whose failed run was recorded (the first run of a seed) also has
+    ``trajectory`` (its file), ``failure_at`` (its length in control steps: the state at the
+    failure is the last) and ``step_at`` (where the failed step began in it)."""
     batch = Path(batch)
     summary = json.loads((batch / 'summary.json').read_text())
+    recorded = failed_trajectories(batch)
     repeats = summary.get('repeats') or {}
     reports = {}
     for path in sorted((batch / 'episodes').glob('*.json')):
@@ -87,28 +121,34 @@ def batch_cases(batch):
         reports.setdefault(int(seed), []).append((int(repeat or 0), json.loads(path.read_text())))
     cases = []
     for seed, runs in sorted(reports.items()):
-        failed = [report for _, report in sorted(runs, key=lambda run: run[0]) if failed_step(report)]
+        failed = [(repeat, report) for repeat, report in sorted(runs, key=lambda run: run[0]) if failed_step(report)]
         if not failed:
             continue
-        report = failed[0]
+        repeat, report = failed[0]
         step = failed_step(report)
         successes = repeats.get('succeeded', {}).get(str(seed)) if repeats else None
         count = repeats.get('count') if repeats else None
-        cases.append({'batch': str(batch.resolve()), 'run': summary.get('run') or batch.name,
+        cases.append({'batch': str(batch.resolve()), 'run': summary.get('run') or '/'.join(batch.resolve().parts[-3:]),
                       'scene': summary.get('scene'), 'step': step, 'step_name': report['step_names'][step - 1],
-                      'seed': seed, 'successes': successes, 'runs': count,
+                      'seed': seed, 'attempt': report.get('attempt', 0), 'successes': successes, 'runs': count,
                       'rate': successes / count if count else None,
                       'failure': (report.get('failure') or {}).get('reason'),
                       'start': str(start_checkpoint(batch, summary, step))})
+        if repeat == 0 and seed in recorded:
+            cases[-1].update(trajectory=str((batch / 'trajectories_failed.hdf5').resolve()), failure_at=recorded[seed],
+                             step_at=next((entry['at'] for entry in report.get('steps') or []
+                                           if entry['step'] == step - 1), 0))
     return cases
 
 
-def cases(runs, scene=None):
-    """The cases of every batch under ``runs`` (``runs/expert``), of ``scene`` only when given:
-    lowest success rate first, cases without a rate last."""
+def cases(runs, scene=None, batches=()):
+    """The cases of every batch under ``runs`` (``runs/expert``), of ``scene`` only when given, and of
+    ``batches``: lowest success rate first, cases without a rate last."""
     found = []
     for summary in sorted(Path(runs).glob(f'{scene or "*"}/*/summary.json')):
         found += batch_cases(summary.parent)
+    for batch in batches:
+        found += batch_cases(batch)
     return sorted(found, key=lambda case: (case['rate'] is None, case['rate'] or 0., case['run'], case['seed']))
 
 
