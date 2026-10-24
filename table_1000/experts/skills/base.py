@@ -6,6 +6,7 @@ import time
 import numpy as np
 from scipy.spatial.transform import Rotation
 
+from table_1000.common.timing import timed
 from table_1000.experts.context import steps
 from table_1000.experts.skills.common import IK_ATTEMPTS, collisions
 from table_1000.experts.solver import PlanningFailed
@@ -100,6 +101,7 @@ class Base:
             solver.sync()
         ctx.note('base moved', forward=forward, turn=turn, pose=self.base_pose().tolist())
 
+    @timed('base_search')
     def base_for(self, poses, arms=None, need=None, path=False, touch=None):
         """World pose ``(x, y, yaw)`` of the base from where one of ``arms`` (default the free ones)
         reaches ``need`` (default all) of ``poses`` with each joint ``BASE_MARGIN`` inside its limits:
@@ -187,8 +189,7 @@ class Base:
         transform[:2, 3] = pose[:2]
         self.model.base = transform
         for solver in self.solvers.values():
-            solver.world.set_frame(np.linalg.inv(transform))
-            solver.world.update(world_poses)
+            solver.world.set_frame(np.linalg.inv(transform), world_poses)
 
     def touching(self, q):
         """``[(link, object, object link)]`` the robot at full configuration ``q`` touches in the

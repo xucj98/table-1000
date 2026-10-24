@@ -122,6 +122,19 @@ class PlanningWorldTest(unittest.TestCase):
             scene.allow(['a:box.lid.knob'], ['l2', 'l3'])
             scene.update({'a:box.lid': near})
             self.assertFalse(planner.planning_world.check_collision())
+            # Simultaneous base/body motion must place each object from the new body pose,
+            # while also moving static objects and retaining permissions.
+            frame = np.eye(4)
+            frame[0, 3] = -1.
+            moved = near.copy()
+            moved[0, 3] += 1.
+            scene.set_frame(frame, {'a:box.lid': moved})
+            np.testing.assert_allclose(scene.poses['a:box.lid.knob'], moved)
+            self.assertFalse(planner.planning_world.check_collision())
+            scene.allow(['a:box.lid.knob'], ['l2', 'l3'], False)
+            self.assertTrue(planner.planning_world.check_collision())
+            scene.set_frame(np.eye(4), {'a:box.lid': far})
+            self.assertFalse(planner.planning_world.check_collision())
 
 
 if __name__ == '__main__':

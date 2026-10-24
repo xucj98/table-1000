@@ -46,6 +46,48 @@ def mean(values):
     return f'{np.mean(values):8.1f}' if values else f'{"-":>8}'
 
 
+def profile_times(reports):
+    """Mean measured categories over profiled episodes, including absent categories as zero."""
+    reports = [report for report in reports if 'wall_profile' in report]
+    names = sorted({name for report in reports for name in report['wall_profile']})
+    return {name: {key: sum(report['wall_profile'].get(name, {}).get(key, 0.) for report in reports) / len(reports)
+                   for key in ('calls', 'wall_s', 'self_s')} for name in names}
+
+
+def step_profiles(report):
+    """Completed steps' measured deltas, from their cumulative snapshots."""
+    before = {}
+    for step in report['steps'] if isinstance(report['steps'], list) else []:
+        if 'wall_profile' not in step:
+            continue
+        after = step['wall_profile']
+        yield (step['step'], step['name']), {
+            name: {key: value - before.get(name, {}).get(key, 0.) for key, value in row.items()}
+            for name, row in after.items()}
+        before = after
+
+
+def profile_detail(profiles):
+    rows = profile_times([{'wall_profile': profile} for profile in profiles])
+    return ', '.join(f'{name}={row["self_s"]:.2f}' for name, row in
+                     sorted(rows.items(), key=lambda item: -item[1]['self_s']) if row['self_s'] >= .01)
+
+
+def print_profile(reports):
+    rows = profile_times(reports)
+    if not rows:
+        return
+    print('  wall profile: seconds per profiled episode; self excludes measured children')
+    print(f'  {"category":<30}{"calls":>12}{"self s":>12}{"nested s":>12}')
+    for name, row in sorted(rows.items(), key=lambda item: -item[1]['self_s']):
+        print(f'  {name:<30}{row["calls"]:12.1f}{row["self_s"]:12.2f}{row["wall_s"]:12.2f}')
+    profiled = [report for report in reports if 'wall_profile' in report]
+    other = np.mean([report['expert_wall_s'] for report in profiled]) - sum(row['self_s'] for row in rows.values())
+    print(f'  {"other expert work":<30}{"":12}{other:12.2f}')
+    physics = [report['timings']['physics_step_s'] for report in profiled]
+    print(f'  physics/action/recording (inside control_step): {np.mean(physics):.2f} s')
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('batches', nargs='+', type=Path, help='directories holding episodes/*.json')
@@ -60,20 +102,33 @@ def main(argv=None):
         print(f'== {batch}: {len(succeeded)}/{len(reports)} succeeded, mean wall {mean(r["wall_s"] for r in reports)} s, '
               f'successes within {args.sim_limit:g} s sim {within}/{len(succeeded)}, '
               f'mean sim of successes {mean(r["duration_s"] for r in succeeded)} s')
+        print_profile(reports)
         steps = defaultdict(list)
         for report in reports:
             for step, name, sim, wall in step_times(report):
                 steps[step, name].append((sim, wall))
+        profiles = defaultdict(list)
+        for report in reports:
+            for key, profile in step_profiles(report):
+                profiles[key].append(profile)
         print(f'  {"step":<60}{"done":>6}{"sim s":>8}{"wall s":>8}')
         for (step, name), times in sorted(steps.items()):
             print(f'  {f"{step} {name}"[:58]:<60}{len(times):>6}{mean(t[0] for t in times)}{mean(t[1] for t in times)}')
+            if profiles[step, name]:
+                print('    self s: ' + profile_detail(profiles[step, name]))
         subtasks = defaultdict(list)
         for report in reports:
             for instruction, *times in subtask_times(report):
                 subtasks[instruction].append(times)
         print(f'  {"subtask":<60}{"ran":>6}{"sim s":>8}{"wall s":>8}{"plan s":>8}')
+        subprofiles = defaultdict(list)
+        for report in reports:
+            for entry, profile in zip(report['subtasks'], report.get('subtask_profiles', [])):
+                subprofiles[entry['instruction']].append(profile)
         for instruction, times in subtasks.items():
             print(f'  {instruction[:58]:<60}{len(times):>6}' + ''.join(mean(t[k] for t in times) for k in range(3)))
+            if subprofiles[instruction]:
+                print('    self s: ' + profile_detail(subprofiles[instruction]))
 
 
 if __name__ == '__main__':

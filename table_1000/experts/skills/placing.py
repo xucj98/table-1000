@@ -6,6 +6,7 @@ import numpy as np
 from scipy.spatial import ConvexHull
 from scipy.spatial.transform import Rotation
 
+from table_1000.common.timing import timed
 from table_1000.experts.context import ExpertFailed, Unreachable
 from table_1000.experts.grasps import translated
 from table_1000.experts.skills.common import CANDIDATE_PLANS, IK_ATTEMPTS, ROOM_PLACES, collisions
@@ -44,6 +45,7 @@ def overlaps(outline, low, high):
 class Placing:
     """The place skill of :class:`~table_1000.experts.skills.Skills`."""
 
+    @timed('placements')
     def placements(self, target, current, region, near, keep_out, step, margin):
         """``[(object pose at rest on the surface, spot)]`` in ``region`` (see :meth:`place`), the
         footprint at least ``margin`` inside it and out of ``keep_out``, nearest ``near`` first, then
@@ -152,6 +154,7 @@ class Placing:
         options = [options[i] for i in np.unique(np.linspace(0, len(options) - 1, NEED_PLACES).astype(int))] if options else []
         verdicts, obj_prefix = {}, f'{obj}:'
 
+        @timed('placement_need')
         def accepts(arm, tcp_object):
             rotation = Rotation.from_matrix(tcp_object[:3, :3]).as_rotvec()
             # Per hold and per robot state (the base and joints, as a base move or a stow leaves them).

@@ -16,6 +16,9 @@ from scipy.spatial.transform import Rotation
 import trimesh
 
 
+from table_1000.common.timing import timed
+
+
 def pose(transform):
     """``mplib.Pose`` of a 4x4 transform."""
     from mplib import Pose
@@ -185,6 +188,7 @@ class PlanningScene:
         self.objects[obj.name] = obj
         self.set_pose(obj.name, world_pose)
 
+    @timed('world_update')
     def set_padding(self, padding):
         if padding != self.padding:
             self.padding = padding
@@ -192,6 +196,7 @@ class PlanningScene:
                 if not self.planner.planning_world.is_object_attached(name):
                     self.set_pose(name, world_pose)
 
+    @timed('world_update')
     def set_pose(self, name, world_pose):
         world = self.planner.planning_world
         if world.has_object(name):
@@ -212,13 +217,16 @@ class PlanningScene:
                 world.remove_object(name)
         self.objects, self.poses, self.permissions = {}, {}, set()
 
-    def set_frame(self, frame):
-        """The planner's frame from the world (the robot's base moved): objects re-placed in it."""
+    @timed('world_update')
+    def set_frame(self, frame, body_poses=None):
+        """Re-place objects in a new planner frame, optionally updating live body poses in one pass."""
         self.frame = np.asarray(frame, dtype=float)
+        body_poses = {} if body_poses is None else body_poses
         for name, world_pose in self.poses.items():
             if not self.planner.planning_world.is_object_attached(name):
-                self.set_pose(name, world_pose)
+                self.set_pose(name, body_poses.get(self.objects[name].body, world_pose))
 
+    @timed('world_update')
     def update(self, body_poses):
         """``body_poses`` maps a body key (``prefix + body``) to its world 4x4."""
         for name, obj in self.objects.items():
