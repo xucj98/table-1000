@@ -1,5 +1,7 @@
 """Place: the held object put down in a region of a surface."""
 
+import itertools
+
 import numpy as np
 from scipy.spatial import ConvexHull
 from scipy.spatial.transform import Rotation
@@ -17,6 +19,11 @@ PLACE_STEP = .02        # m between the positions place samples in its region
 PLACE_TURN_STEP = 15.   # deg between the turns place samples
 PLACE_TURNS = 8         # turns place tries per position, the least first
 PLACE_MARGIN = .01      # m the footprint keeps inside the region and off its keep-out areas
+# What a place needs of the hold (see Placing.need): NEED_REACHED of NEED_PLACES of its placements,
+# spread over the MAX_PLACE_IK nearest (those place checks), in reach by IK (NEED_IK_ATTEMPTS restarts)
+# at the release and above it (more than one: the object may turn a little in the hand as it closes),
+# per hold (arm, and the object in the hand rounded to NEED_ROUND m / rad).
+NEED_PLACES, NEED_REACHED, NEED_IK_ATTEMPTS, NEED_ROUND = 24, 3, 5, (.02, .1)
 
 
 def overlaps(outline, low, high):
@@ -83,32 +90,104 @@ class Placing:
         """Move the held object down at the first of ``options`` (``(object pose, spot)``) in reach
         (IK above and at the release) whose motion plans; ``{'done', 'spot', 'ik_checked',
         'planned', 'last', ...collisions}``."""
-        ctx, solver = self.ctx, self.solvers[arm]
         result = {'done': False, 'spot': None, 'ik_checked': 0, 'planned': 0, 'last': 'no placement in reach'}
-        for placed, spot in options:
-            if result['ik_checked'] >= MAX_PLACE_IK or result['planned'] >= MAX_PLACES:
-                break
-            result['ik_checked'] += 1
-            release = translated(placed, [0., 0., clearance]) @ np.linalg.inv(tcp_object)
-            # Where it is let go (the hand and arm low by a wall), then above it at that torso height:
-            # the way down moves the arm alone.
-            status, q_release = self.ik(arm, release, self.model.q)
-            if status != 'Success':
-                continue
-            status, q_above = self.model.ik(arm, translated(release, [0., 0., above]), q_release, world=True,
-                                            attempts=IK_ATTEMPTS)
-            if status != 'Success':
-                continue
-            result['planned'] += 1
-            try:
-                solver.move_to_pose_with_RRTConnect(None, lift=True, goals=[q_above], attempts=CANDIDATE_PLANS)
-                solver.move_to_pose_with_screw(release)
-                result.update(done=True, spot=spot)
-                return result
-            except PlanningFailed as error:
-                result.update(last=error.reason, **collisions(error))
-                ctx.note('next placement', arm=arm, spot=spot.tolist(), reason=error.reason, **collisions(error))
+        # The torso lift where it is first, then moving too.
+        planned = set()
+        for lift in (False, True):
+            checked = 0
+            for index, (placed, spot) in enumerate(options):
+                if checked >= MAX_PLACE_IK or result['planned'] >= MAX_PLACES:
+                    break
+                if index in planned:
+                    continue
+                checked += 1
+                count = result['planned']
+                if self.lower(arm, placed, spot, tcp_object, clearance, above, lift, result):
+                    return result
+                if result['planned'] > count:
+                    planned.add(index)
         return result
+
+    def lower(self, arm, placed, spot, tcp_object, clearance, above, lift, result):
+        """Down at one of :meth:`put_down`'s options if it is in reach (``lift``: the torso lift
+        moving too) and its motion plans; whether it is, counted in ``result``."""
+        ctx, solver = self.ctx, self.solvers[arm]
+        result['ik_checked'] += 1
+        release = translated(placed, [0., 0., clearance]) @ np.linalg.inv(tcp_object)
+        # Where it is let go (the hand and arm low by a wall), then above it at that torso height:
+        # the way down moves the arm alone.
+        status, q_release = self.model.ik(arm, release, self.model.q, world=True, lift=lift, attempts=IK_ATTEMPTS)
+        if status != 'Success':
+            return False
+        status, q_above = self.model.ik(arm, translated(release, [0., 0., above]), q_release, world=True,
+                                        attempts=IK_ATTEMPTS)
+        if status != 'Success':
+            return False
+        result['planned'] += 1
+        try:
+            solver.move_to_pose_with_RRTConnect(None, lift=True, goals=[q_above], attempts=CANDIDATE_PLANS)
+            solver.move_to_pose_with_screw(release)
+            result.update(done=True, spot=spot)
+            return True
+        except PlanningFailed as error:
+            result.update(last=error.reason, **collisions(error))
+            ctx.note('next placement', arm=arm, spot=spot.tolist(), reason=error.reason, **collisions(error))
+            return False
+
+    def need(self, obj, region, near=None, keep_out=(), clearance=PLACE_CLEARANCE, above=PLACE_ABOVE,
+             step=PLACE_STEP, margin=PLACE_MARGIN):
+        """What :meth:`place` with these arguments needs of the hand that will hold ``obj`` (not held
+        yet, at its pose now): an :class:`~table_1000.experts.skills.chain.InHand` accepting the holds
+        from which ``NEED_REACHED`` of its placements are in reach (IK at the release and above it),
+        and the hands at the first of them (the TCP at the release and above it, per hold)."""
+        from table_1000.experts.skills.chain import InHand
+        ctx = self.ctx
+        target = self.target(obj)
+        current = ctx.poses()[target.body]
+        frame, low, high = (np.asarray(item, dtype=float) for item in region)
+        if near is None:
+            near = frame @ np.r_[(low[:2] + high[:2]) / 2, 0., 1.]
+        options = self.placements(target, current, region, np.asarray(near, dtype=float)[:3], keep_out, step, margin)
+        options = options[:MAX_PLACE_IK]       # those place checks
+        options = [options[i] for i in np.unique(np.linspace(0, len(options) - 1, NEED_PLACES).astype(int))] if options else []
+        verdicts, obj_prefix = {}, f'{obj}:'
+
+        def accepts(arm, tcp_object):
+            rotation = Rotation.from_matrix(tcp_object[:3, :3]).as_rotvec()
+            # Per hold and per robot state (the base and joints, as a base move or a stow leaves them).
+            key = (arm, *np.round(tcp_object[:3, 3] / NEED_ROUND[0]).astype(int), *np.round(rotation / NEED_ROUND[1]).astype(int),
+                   self.model.base.round(3).tobytes(), self.model.q.round(2).tobytes())
+            if key not in verdicts:
+                # Held so (its parts carried with the hand), as it will be when it is put down.
+                solver, poses = self.solvers[arm], ctx.poses()
+                body = np.linalg.inv(poses[target.body])
+                parts = [name for name, obj in solver.world.objects.items() if name.startswith(obj_prefix)]
+                for name in parts:
+                    solver.attach_at(name, tcp_object @ body @ poses[solver.world.objects[name].body])
+                try:
+                    reached = (self.in_reach_down(arm, placed, tcp_object, clearance, above) for placed, _ in options)
+                    verdicts[key] = sum(itertools.islice((1 for ok in reached if ok), NEED_REACHED)) >= NEED_REACHED
+                finally:
+                    for name in parts:
+                        solver.detach(name)
+                    solver.world.update(poses)
+            return verdicts[key]
+        def hands(arm, tcp_object):
+            # Down to each of the first NEED_REACHED of those placements, one path each: release, then above.
+            releases = [translated(placed, [0., 0., clearance]) @ np.linalg.inv(tcp_object) for placed, _ in options]
+            return [[release, translated(release, [0., 0., above])] for release in releases[:NEED_REACHED]]
+        return InHand(obj, accepts, [arm for arm in self.arms if arm not in self.held], hands)
+
+    def in_reach_down(self, arm, placed, tcp_object, clearance, above):
+        """Whether ``arm`` holding the object as ``tcp_object`` has IK at its release at ``placed``
+        (the torso lift moving too) and above it."""
+        release = translated(placed, [0., 0., clearance]) @ np.linalg.inv(tcp_object)
+        status, q_release = self.model.ik(arm, release, self.model.q, world=True, lift=True, attempts=NEED_IK_ATTEMPTS)
+        if status != 'Success':
+            return False
+        status, _ = self.model.ik(arm, translated(release, [0., 0., above]), q_release, world=True,
+                                  attempts=NEED_IK_ATTEMPTS)
+        return status == 'Success'
 
     def place(self, obj, region, arm=None, near=None, keep_out=(), clearance=PLACE_CLEARANCE, above=PLACE_ABOVE,
               step=PLACE_STEP, margin=PLACE_MARGIN):
@@ -133,10 +212,13 @@ class Placing:
         # IK first (cheap) over many, then motion for those that have it. Where none is in reach,
         # the base moves to reach the first ones, and they are screened again.
         result = self.put_down(arm, options, tcp_object, clearance, above)
+        if not result['done'] and self.stow():     # none in reach or planned with the other arm out
+            result = self.put_down(arm, options, tcp_object, clearance, above)
         if result['planned'] == 0 and ctx.spec.base:
             releases = [translated(placed, [0., 0., clearance]) @ np.linalg.inv(tcp_object)
                         for placed, _ in options[:ROOM_PLACES]]
-            self.make_room([[release, translated(release, [0., 0., above])] for release in releases], [arm], need=1)
+            self.make_room([[release, translated(release, [0., 0., above])] for release in releases], [arm], need=1,
+                           touch=[])    # place lets the fingers touch nothing (the held object goes with them)
             current = ctx.poses()[target.body]
             options = self.placements(target, current, region, np.asarray(near, dtype=float)[:3], keep_out, step, margin)
             result = self.put_down(arm, options, tcp_object, clearance, above)

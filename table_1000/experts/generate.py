@@ -166,9 +166,10 @@ class Generator:
             for solver in ctx.solvers.values():
                 solver.world.clear()
         report.update(
-            step_names=ctx.step_names, steps=[{key: entry[key] for key in ('step', 'name', 'at')}
+            step_names=ctx.step_names, steps=[{key: entry[key] for key in ('step', 'name', 'at', 'wall_s')}
                                               for entry in ctx.checkpoints],
             control_steps=ctx.steps, duration_s=ctx.steps / CONTROL_HZ, subtasks=ctx.subtasks, events=ctx.events,
+            expert_wall_s=time.perf_counter() - ctx.started, subtask_wall_s=ctx.subtask_wall_s,
             plans=[entry for solver in ctx.solvers.values() for entry in solver.log],
             finger_contacts=finger_contacts(self.env.contacts.intervals(), self.spec),
             final={'objects': {name: self.env.object_pose(name)[0][:3, 3].tolist() for name in self.scene.OBJECTS},
@@ -180,7 +181,7 @@ class Generator:
             write_checkpoints(self.output / 'checkpoints' / f'{seed}.hdf5', seed, attempt, ctx.start, ctx.checkpoints)
         attrs = {'scene': self.name, 'seed': seed, 'attempt': attempt,
                  'instruction': INSTRUCTION, 'subtasks': ctx.subtasks, 'status': report['status'],
-                 'steps': report['steps']}
+                 'steps': [{key: entry[key] for key in ('step', 'name', 'at')} for entry in report['steps']]}
         if self.source:
             attrs['from'] = self.source
         if 'failure' in report:

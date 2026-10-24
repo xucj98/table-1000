@@ -52,7 +52,8 @@
 | 运动原语（与物体无关） | `ctx.solver(arm)` 的 `move_to_pose_with_RRTConnect`、`move_to_pose_with_screw`、`open_gripper`、`close_gripper`、`first_reachable`（依次尝试候选目标）；规划世界 `add_table`、`add_object`（由碰撞几何生成，可按部件分组）、`allow`（允许手指接触某部件）、`attach`/`detach`（手中物体）、`carry`/`release`（随手移动的关节部件，如被拉的抽屉）；`ctx.hold`、`ctx.step` |
 | 状态与几何查询 | `ctx.pose(物体, 刚体)`、`ctx.joint(物体, 关节)`、`ctx.center_of_mass`、`ctx.part_box`（部件在刚体坐标系中的包围盒）、`ctx.geometry[物体]`（部件包围盒、关节轴）、`ctx.tcp()` |
 | 抓取几何 | `table_1000.experts.grasps`：`build_grasp_pose`、`compute_grasp_info_by_obb`（ManiSkill 的同名函数）、`standoff`、`translated` |
-| 原子技能 | `table_1000.experts.skills`（见下文）：`grasp`、`pick`、`move_by_displacement`、`push`、`release`、`place`、`make_room`、`ready`、`retry` |
+| 原子技能 | `table_1000.experts.skills`（见下文）：`grasp`、`pick`、`move_by_displacement`、`push`、`release`、`place`、`make_room`、`ready`、`retry`；动作链 `chain`（`Pick`、`Place`） |
+| 语义技能 | `table_1000.experts.skills.semantic`（见下文）：`open`、`close`、`place_on`、`place_inside`，谓词 `on`、`inside`、`is_open`、`is_closed` |
 | 子任务 | `with ctx.subtask('put the pen into the drawer'):` 标记这段步数属于哪条英文指令 |
 | 随机 | `ctx.rng`：需要变化的选择（抓取位置、顺序）用它，不用其他随机源 |
 
@@ -65,21 +66,66 @@
 
 规划用 MPlib（ManiSkill 也用它）：自由空间用 RRTConnect 到 IK 解，规划路径按 1 cm 关节步长复查碰撞，不过就重新规划；接触动作用直线 screw 路径。规划好的路径每个控制步（25 Hz）发送一个关节位置。RRTConnect 规划时碰撞几何膨胀 1 cm，起点和终点处已有的接触只在本次规划中允许，路径再按未膨胀的几何复查。底盘移动后，规划世界随之更新坐标系。
 
+### 分层
+
+专家程序写在四层之上，每层只回答自己的问题：
+
+| 层 | 回答 | 不管 |
+| --- | --- | --- |
+| 专家 `expert.py` | 物体要到哪、按什么顺序；有语义的中间状态（如先拉开抽屉再取笔）；每步的成功判据（谓词）；风格提示（如笔从桌上斜着拿起、放在桌上哪一侧） | 用哪只手、底盘站在哪、手臂何时收回 |
+| 语义技能 `skills.semantic` | 把目标翻译成约束：放置区域与禁放区、把手与拉动方向、关节开度；判断目标是否达成的谓词 | 怎样满足这些约束 |
+| 原子技能与动作链 `skills` | 在约束下选手、握法、交接、躯干和底盘：另一只手只在挡路时收回，底盘只在够不到时移动；前后相连的动作用 `chain` 连起来，下一步的需要（如握法要能把笔放进抽屉）在上一步就作为约束 | 物体该放到哪 |
+| 运动原语（MPlib） | IK、RRTConnect、直线 screw 运动、执行 | 任务语义 |
+
+专家不调用 `ready`、`make_room`，也不指定手臂。场景里先挪开哪个物体、挪到哪，仍由专家决定。
+
 ### 原子技能
 
-`table_1000.experts.skills` 在运动原语之上提供以物体为单位的技能，接口仿照 RoboTwin 2.0 的任务 API，但和 `solve` 一样阻塞：每个调用在仿真中执行完、检查结果后才返回，做不到时以 `ctx.fail`（原因如 `no reachable grasp`、`object not held`、`no placement`）或规划异常结束；什么都够不着（没有可行的抓取、推或放置）时异常类型为 `Unreachable`。技能按物体的实时位姿和资产几何自己选择手臂、抓取候选和路径，每次换用候选都用 `ctx.note` 记下。场景 [000002](../../../asset_sources/scenes/000002/expert.py) 只用这些技能写成。
+`table_1000.experts.skills` 在运动原语之上提供以物体为单位的技能，接口仿照 RoboTwin 2.0 的任务 API，但和 `solve` 一样阻塞：每个调用在仿真中执行完、检查结果后才返回，做不到时以 `ctx.fail`（原因如 `no reachable grasp`、`object not held`、`no placement`）或规划异常结束；什么都够不着（没有可行的抓取、推或放置）时异常类型为 `Unreachable`。技能按物体的实时位姿和资产几何自己选择手臂、抓取候选和路径，每次换用候选都用 `ctx.note` 记下。选择时尽量少动身体，依次尝试：一只手臂（躯干不动）、另一只手臂（躯干不动）、躯干参与、伸着的空闲手臂收回、移动底盘；可移动躯干的 RRTConnect 在终点躯干高度不变时先锁住躯干规划，不通再放开。躯干和底盘的每次移动用 `ctx.note` 记下（`torso moved`、`base relocated`），`scripts/experts/resource_stats.py` 从批次的 `episodes/*.json` 汇总每条轨迹的次数与行程。
 
 | 技能 | 作用 |
 | --- | --- |
 | `grasp(ctx, 物体, 部件)` | 抓住物体或其一个部件（如把手）。可给接近方向 `approach`、与它的最大夹角 `max_angle`（给一组时依次放宽，够不着才用下一个）、抓住后的位移 `then`（候选须让这段位移也有 IK 解）。先试肩部离物体近的手臂；闭合后没夹住（手指间隙小于物体宽度）就退出重选，至多 `MAX_REGRASPS` 次；可达范围内没有候选时先移动底盘 |
 | `pick(ctx, 物体)` | `grasp` 后抬起 `height`；物体没跟着抬起时松手并失败（`object not lifted`） |
 | `move_by_displacement(ctx, 手臂, x, y, z)` | TCP 沿直线移动。`drag` 指定随手移动的关节部件（拉抽屉）；`least` 允许整段规划不通时只走一部分，返回走过的比例 |
-| `push(ctx, 物体, 部件, direction, distance)` | 闭合指尖抵住部件的面推动（推抽屉关上） |
+| `push(ctx, 物体, 部件, direction, distance)` | 闭合指尖抵住部件的面推动（推抽屉关上）；都够不着时先移动底盘 |
 | `release(ctx, 手臂)` | 张开手指并沿接近方向退出 |
 | `place(ctx, 物体, region, near, keep_out)` | 把手中物体放在表面上的矩形区域内：`region = (表面坐标系, 低角, 高角)`，表面为坐标系的 z = 0 平面；朝向不限，按离 `near` 的距离、再按转角排序采样；物体轮廓避开 `keep_out` 矩形。可达范围内没有可行位置时先移动底盘 |
-| `make_room(ctx, 位姿)` | 移动底盘（相对起始位姿后退、转向）到能以关节余量够到给定 TCP 位姿的最小移动处；`path=True` 表示这些位姿是一条直线运动上的连续位姿。机器人没有底盘时不动 |
+| `make_room(ctx, 位姿)` | 移动底盘到能以关节余量够到给定 TCP 位姿处：当前位置够得到就不动；否则在位姿周围按距离和朝向采样底盘位姿，取机器人在该处及途中不碰桌子（含桌腿）和物体、最快到达的一个。空闲手臂途中会扫到东西时先收回，再原地转向、直行、原地转向。`path=True` 表示这些位姿是一条直线运动上的连续位姿；不给位姿时回到起始位姿。机器人没有底盘时不动 |
+| `chain(ctx, 动作)` | 依次执行动作（`Pick(物体, ...)`、`Place(物体, 区域, ...)`，参数同 `pick`、`place`，`instruction` 给出时在该子任务下执行）。每个动作先满足下一个动作的需要：放置需要物体在某只手里、以能放到区域内某处的握法拿着（`InHand`），拿起时只选这样的抓取；够不着这样的抓取（`Unmet`）时，按 `adapt`（默认先交接再底盘）补救：近手拿起后交给另一只手，或允许移动底盘再拿。`Place` 的区域可以是函数 `region(ctx) -> (区域, keep_out)`，在执行时按当时状态求 |
 | `ready(ctx)` | 空着的手臂回到起始姿态 |
 | `retry(ctx, 步骤)` | 步骤失败时先 `ready` 再重试，共至多 `ATTEMPTS`（3）次，不限时间；`Unreachable` 不重试：规划已经尝试过所有候选，这类失败比例高说明规划参数、碰撞或上一步留下的状态有问题，应优化规划而不是重试 |
+
+### 语义技能
+
+`table_1000.experts.skills.semantic` 在原子技能之上，按场景里的说法给目标：哪个物体、哪个关节、放到哪个表面。参数都从资产的碰撞几何和关节推出，不依赖具体场景。关节用资产 `model.json` 里的名字（如 `cabinet.drawer1.slide`）。场景 [000002](../../../asset_sources/scenes/000002/expert.py) 用这些技能写成。
+
+| 技能 | 作用 |
+| --- | --- |
+| `open(ctx, 物体, 关节, 开度)` | 拉动方向取关节轴（随子刚体的实时位姿），把手取关节子刚体上名为 `handle` 的部件。正对把手抓取，与正对方向的夹角按 `OPEN_ANGLES` 逐级放宽；沿关节轴拉到开度后松手。拉不到位就分段重抓，至多 `PULLS` 次；拉动失败先松手。已经打开（差距不超过 `OPEN_TOLERANCE`）时什么也不做 |
+| `close(ctx, 物体, 关节)` | 用闭合的指尖沿关节轴反向推把手，推过闭合位 `PUSH_PAST` |
+| `place_on(ctx, 物体, 表面, 部件, near, keep_out)` | 把手中物体放在桌面（`'table'`）、某个物体或它的刚体、部件的顶面上，避开 `keep_out` 矩形，离表面边缘至少 `EDGE`（0.04 m，给之后拿起它的手指留空间）；给了 `near` 时只在它周围 `NEAR` 以内找位置 |
+| `place_inside(ctx, 物体, 容器, 部件)` | 把手中物体放进容器（如一个抽屉刚体）的内底上没有被遮住的部分 |
+| `on_region(物体, 表面, 部件, near, keep_out)`、`inside_region(物体, 容器, 部件, near)` | 返回函数 `where(ctx) -> (区域, keep_out)`：按调用时的状态求上面两个技能用的放置区域和禁放区，可直接作为 `Place` 的区域（如 `chain` 里拿起后放进抽屉，拿起时就按它选握法） |
+
+**放置区域**：在支撑物上方按 `SUPPORT_STEP` 的网格竖直向下打射线，射线对场景中所有碰撞形状（桌面、各物体，不含要放的物体）求交。网格取支撑物所在刚体的坐标系。首先击中支撑物朝上面的格子，按高度归层：`place_on` 取最高的一层，`place_inside` 取最低的一层（内底，而不是边沿）。这一层格子的外接矩形（边界取在格子之间）就是放置区域。矩形内首先击中别的东西的格子，用击中刚体在自身坐标系下的碰撞包围盒作为禁放区：支撑物自己的其他部件按部件算，别的物体按刚体算。`place` 让物体从上方竖直放下，比物体下落时扫过的高度（物体高度 + `PLACE_CLEARANCE` + `PLACE_ABOVE`）还高的东西既不遮挡支撑面，也不列为禁放区，手臂是否碰到它由放置时的 IK 和规划检查。效果是：桌上立着的柜子和拉出的抽屉自动避开；抽屉只取露在柜体外的那段内底（柜内的隔板比下落高度低，仍然遮挡），悬在边上的上层把手不占区域。区域和禁放区随后交给 `place`。
+
+**谓词**：
+
+| 谓词 | 判断 |
+| --- | --- |
+| `opening(ctx, 物体, 关节)` | 关节离闭合端（下限）多远 |
+| `is_open(ctx, 物体, 关节, 开度)`、`is_closed(ctx, 物体, 关节)` | 开度达到要求（容差 `OPEN_TOLERANCE`），或在闭合端 `CLOSED` 以内 |
+| `on(ctx, 物体, 表面, 部件, keep_out)` | 从物体中心向下，首先击中的是该表面；物体最低点高出击中点不超过 `ON_TOLERANCE`；中心不在 `keep_out` 内 |
+| `inside(ctx, 物体, 容器, 部件)` | 从物体中心沿容器刚体的 ±x、±y 和向下打射线，都击中该容器部件 |
+
+语义技能结束时用谓词检查结果，不满足就 `ctx.fail`；专家的 `Step.check` 也用它们（`require(ctx, 谓词, 原因)`）。每个语义技能都在 `retry` 下执行。辅助函数：`travel(ctx, 物体, 关节, margin)` 返回关节子刚体从当前位置拉到全开所扫过的矩形，`body_box(ctx, 物体, 刚体, margin)` 返回一个刚体的包围盒矩形，都可作为 `keep_out`（如笔不放在抽屉拉出的路径上）。
+
+限制：
+- 只支持滑动关节。转动关节（柜门）需要以下几项：沿圆弧拖动把手（现在的 `move_by_displacement` 只走直线）；开门过程中，抓取的接近方向随门转动；关门的推动方向随门面法向变化。
+- 把手按部件名 `handle` 查找。
+- 射线只从上往下打：被低于下落高度的部件盖住的支撑面（柜子内部的隔板）找不到；高于下落高度的遮挡只交给 IK 排除，候选位置可能因此偏向手够不着的地方。
+- 网格对齐支撑刚体的坐标系，假定它的 z 轴朝上。
 
 ### 步骤
 
@@ -91,7 +137,7 @@
 
 `run_expert.py <场景> --steps k[-m]` 只运行第 k 到 m 步：k 为 1 时从初态开始；k 大于 1 时须给 `--from <批次目录>`，从那一批第 k − 1 步的检查点开始，先静置 0.2 s。有检查点的 seed 都会运行，输出格式与完整批次相同（目录为场景批次下的 `<后端>/steps<k>-<m>/`；完整批次替换 `<后端>/` 时保留这些子目录），并写出新的检查点。恢复后，空闲手臂回到的姿态和底盘的起始位姿仍取该 seed 回合开始时的，而不是检查点处的。从第 k 步开始时 `ctx.rng` 为 `default_rng([seed, attempt, 1, k])`，MPlib 的随机数也随 k 改变。
 
-`summary.json` 的 `steps` 给出每步的起始 seed 数、完成数、成功率（完成 / 起始）和逐步完成率（progressive completion rate，ManiSkill-HAB 的统计方式：这一步及之前各步都完成的 seed 占第 1 步起始 seed 的比例）；从检查点开始的批次沿用来源批次前几步的行，分母也取来源批次的。
+`summary.json` 的 `steps` 给出每步的起始 seed 数、完成数、成功率（完成 / 起始）和逐步完成率（progressive completion rate，ManiSkill-HAB 的统计方式：这一步及之前各步都完成的 seed 占第 1 步起始 seed 的比例）；从检查点开始的批次沿用来源批次前几步的行，分母也取来源批次的。每条轨迹的 `episodes/<seed>.json` 记下每步结束时的控制步数和专家的墙钟秒数（`steps` 的 `at`、`wall_s`）与每个子任务的墙钟秒数（`subtask_wall_s`）；`scripts/experts/step_times.py` 按步骤和子任务汇总批次的仿真时长、墙钟时间和规划耗时。
 
 `join_steps.py <批次> ...` 把逐步运行的各批按顺序接成完整轨迹，默认写成场景的批次 `<后端>/` 本身（保留其中的 `steps*/`）：拼接的轨迹与一次跑完的完整轨迹只是生产方式不同：每段在下一批开始用的检查点处截断，接上下一批同一 seed 的轨迹，`subtasks` 和 `steps` 平移到接好后的位置，`parts` 记录每段的批次、提交、步骤、起点和长度。输出目录的格式与一批轨迹相同，可直接渲染。逐步迭代的方法见[操作手册 05](../../tutorials/05-step-by-step-expert.md)。
 
@@ -146,5 +192,4 @@
 - 初始化的几何检查按资产静止构型（关节为 0）；用 `set_joint` 打开的部件不参与采样时的穿透检查，由复位后的静置检查兜底。
 - 支撑面只有桌面和物体碰撞包围盒的顶面；碗内底、抽屉内底等支撑面以后按需加入几何查询。
 - 笔的帽与钢珠一直有微米级抖动，不休眠（不影响任务）。
-- `make_room` 和技能内部的底盘选位只考虑相对起始位姿后退（0–0.2 m）和转向（±20°），不侧移或前进。场景 000002 因此把柜子的横向范围限制在 ±0.22 m。
 - 摆放由 seed 完全确定，静置后的状态以 `initial_states.hdf5` 为准。专家轨迹：MPlib 的随机数按 seed 设置，但 RRTConnect 有规划时限，负载不同时路径仍可能不同。复现轨迹以录制文件为准。

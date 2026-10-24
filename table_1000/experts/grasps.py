@@ -169,6 +169,38 @@ class Cylinder:
             yield axis, self.length, (np.array([np.cos(phi), np.sin(phi), 0.]),), [np.zeros(3)]
 
 
+# A part is taken for a cylinder when its collision vertices, seen along its longest extent, lie all
+# round it: no gap between their directions wider than ROUND_GAP (a polygonal barrel, not a square).
+ROUND_GAP = np.radians(50.)
+
+
+def fitted(points):
+    """``(shape, offset)`` for collision vertices ``points`` (``[N, 3]``, in a body frame): a
+    :class:`Cylinder` along their longest extent where they lie all round it (see ``ROUND_GAP``),
+    else their axis-aligned :class:`Box`; ``offset`` places the shape in the body frame."""
+    low, high = points.min(0), points.max(0)
+    offset = np.eye(4)
+    offset[:3, 3] = (low + high) / 2
+    size = high - low
+    axis = int(np.argmax(size))
+    across = [i for i in range(3) if i != axis]
+    local = points[:, across] - offset[across, 3]
+    radius = np.linalg.norm(local, axis=1)
+    if size[axis] > max(size[across]) and np.all(radius > 1e-6):
+        angles = np.sort(np.arctan2(local[:, 1], local[:, 0]))
+        gaps = np.diff(np.r_[angles, angles[0] + 2 * np.pi])
+        if gaps.max() <= ROUND_GAP:
+            # The cylinder's Z along the longest extent.
+            offset[:3, :3] = _along(axis)
+            return Cylinder(float(radius.max()), float(size[axis])), offset
+    return Box(tuple(size)), offset
+
+
+def _along(axis):
+    """A rotation taking Z to coordinate axis ``axis`` (a right-handed frame)."""
+    return np.eye(3)[:, [(axis + 1) % 3, (axis + 2) % 3, axis]]
+
+
 def _slides(extent, edge=.025):
     """Contact centres along an object side of ``extent``: the middle, and on a long side
     (more than 6 cm) also halfway to positions ``edge`` from its ends."""
@@ -226,6 +258,14 @@ class Hand:
         return max(float((_vertices(shape) @ frames[link][:3, :3].T + frames[link][:3, 3])[:, 0].max())
                    for link in self.side.finger_links for shape in self.shapes[link])
 
+    def radius(self):
+        """How far from the TCP any part of the hand reaches, at any gap."""
+        if not hasattr(self, '_radius'):
+            self._radius = max(float(np.linalg.norm(_vertices(shape) @ frames[link][:3, :3].T + frames[link][:3, 3], axis=1).max())
+                               for frames in (self.frames(0.), self.frames(self.max_gap))
+                               for link in self.shapes for shape in self.shapes[link])
+        return self._radius
+
     def inner(self, gap):
         """``[(opening sign, [N, 3] inner surface points in the TCP frame, pad mask)]`` per finger at ``gap``."""
         frames = self.frames(gap)
@@ -234,7 +274,8 @@ class Hand:
 
     def fcl(self, tcp, gap, fingers=True):
         """FCL object of the hand at world TCP pose ``tcp`` with the fingers at ``gap`` (only the
-        palm, the TCP link, for ``fingers=False``)."""
+        palm, the TCP link, for ``fingers=False``). Its collision objects are made once per gap and
+        reused: it is valid until the next call with the same gap (check it before making another)."""
         from mplib.collision_detection import fcl
         from table_1000.planning.world import geometry, pose
         key = (int(round(float(np.clip(gap, 0., self.max_gap)) / 5e-4)), fingers)
@@ -244,11 +285,10 @@ class Hand:
                 if link in self.side.finger_links and not fingers:
                     continue
                 for transform, kind, data, _ in self.shapes[link]:
-                    parts.append((geometry(kind, data), pose(frame @ transform)))
-            self.geometry[key] = parts
-        parts = self.geometry[key]
-        return fcl.FCLObject('hand', pose(tcp), [fcl.CollisionObject(shape) for shape, _ in parts],
-                             [part_pose for _, part_pose in parts])
+                    parts.append((fcl.CollisionObject(geometry(kind, data)), pose(frame @ transform)))
+            self.geometry[key] = [part for part, _ in parts], [part_pose for _, part_pose in parts]
+        objects, poses = self.geometry[key]
+        return fcl.FCLObject('hand', pose(tcp), objects, poses)
 
 
 def _urdf_shape(collision, directory):
@@ -308,6 +348,7 @@ class Grasp:
 # point squeezes the object when it is within CONTACT_TOLERANCE of its surface as the fingers
 # close, and a grasp needs MIN_PAD_AREA of such pad surface on each finger.
 OPEN_MARGIN, PAD_SPACING, CONTACT_TOLERANCE, MIN_PAD_AREA = .03, .0015, .001, 15e-6
+ELONGATED = 3., .08     # longer than this times its next width and this (m): not grasped by its ends
 # The TCP backs off from the contact centre in BACKOFF_STEP steps until the hand is clear.
 BACKOFF_STEP, MAX_BACKOFF = .002, .06
 # The object's widest section across the closing (where the pads squeeze it: a face of a box, a line
@@ -321,13 +362,23 @@ HOLD_MARGIN, MIN_HOLD_AREA, HOLD_AREA, HOLD_SPACING, HOLD_TOLERANCE = .002, 5e-6
 SUPPORT_CLEARANCE = -.0005
 
 
+def lengthwise(closings):
+    """The width of ``closings`` (as :meth:`Box.closings` gives them) along the length of a long,
+    thin shape: more than ``ELONGATED[1]`` (m) and ``ELONGATED[0]`` times its next width (a pen, not a
+    handle pinched by its ends); None for a shape that is not."""
+    widths = sorted({round(float(width), 6) for _, width, _, _ in closings})
+    long = len(widths) > 1 and widths[-1] > ELONGATED[0] * widths[-2] and widths[-1] > ELONGATED[1]
+    return widths[-1] if long else None
+
+
 def grasp_candidates(shape, transform, hand, obstacles, preferred, center_of_mass=None, approach_distance=.05,
                      step=np.radians(15), max_up=.05, cost_offset=40., cost_backoff=10., cost_hold=.5 / 30e-6):
     """Grasps of ``shape`` (:class:`Box` or :class:`Cylinder`) at world ``transform`` by ``hand``
     (:class:`Hand`), cheapest first, generated as they are taken.
 
     Approach directions are ``step`` apart around each closing direction, none rising more than
-    ``max_up`` (z of the unit approach); both hand turns about the approach are listed. The TCP
+    ``max_up`` (z of the unit approach), none closing along the length of a long, thin shape (see
+    :func:`lengthwise`: a pen squeezed by its ends); both hand turns about the approach are listed. The TCP
     starts at the contact centre and backs off along the approach until the open hand is clear
     of the object and of ``obstacles`` (``[(FCL object, clearance to keep)]``), also
     ``approach_distance`` further back (the pre-grasp), and the hand closed on the object
@@ -344,13 +395,21 @@ def grasp_candidates(shape, transform, hand, obstacles, preferred, center_of_mas
     rotation, origin = transform[:3, :3], transform[:3, 3]
     com = origin if center_of_mass is None else np.asarray(center_of_mass, dtype=float)
     target = fcl.FCLObject('target', pose(transform), [fcl.CollisionObject(geometry(*shape.fcl_shape()))], [pose(np.eye(4))])
+    # Every hand checked has its TCP at a contact centre inside the shape, backed off by at most
+    # MAX_BACKOFF and the approach: obstacles farther from the shape than that and the hand's
+    # radius cannot touch it, and are left out of the checks.
+    reach = hand.radius() + MAX_BACKOFF + approach_distance
+    obstacles = [(obstacle, clearance) for obstacle, clearance in obstacles
+                 if fcl.distance(target, obstacle).min_distance < reach + max(clearance, 0.)]
     preferred = normalized(preferred)
     # Every (closing, approach, slide, hand turn), by angle from the preferred approach: the angle is
     # a lower bound of the cost, so a placed grasp is yielded once no later one can be cheaper.
     choices = []
-    for closing, width, basis, slides in shape.closings(step):
+    closings = list(shape.closings(step))
+    length = lengthwise(closings)
+    for closing, width, basis, slides in closings:
         open_gap = min(width + OPEN_MARGIN, hand.max_gap)
-        if width > open_gap - .01:
+        if width > open_gap - .01 or length is not None and width >= length:
             continue
         closing = rotation @ closing
         approaches = [rotation @ (np.cos(t) * basis[0] + np.sin(t) * basis[1]) for t in np.arange(0., 2 * np.pi, step)] \
@@ -363,7 +422,7 @@ def grasp_candidates(shape, transform, hand, obstacles, preferred, center_of_mas
                 for flip in (1., -1.):
                     choices.append((angle, len(choices), approach, flip * closing, slide, width, open_gap))
     choices.sort(key=lambda choice: choice[:2])
-    placed_grasps = []
+    placed_grasps, closest = [], None
     for angle, order, approach, closing, slide, width, open_gap in choices:
         while placed_grasps and placed_grasps[0][0] <= angle:
             yield heapq.heappop(placed_grasps)[2]
@@ -375,9 +434,11 @@ def grasp_candidates(shape, transform, hand, obstacles, preferred, center_of_mas
         tcp, backoff, gap, contact, held = placed
         cost = angle + cost_offset * float(np.linalg.norm(contact - com)) + cost_backoff * backoff \
             + cost_hold * max(0., HOLD_AREA - held)
+        # Choices are placed by angle: the first that places comes closest of all to the preferred approach.
+        closest = angle if closest is None else closest
         heapq.heappush(placed_grasps, (cost, order, Grasp(tcp, open_gap, float(width), backoff, cost, {
             'approach_deg': float(np.degrees(angle)), 'slide': float(np.linalg.norm(slide)), 'contact_gap': gap,
-            'held_mm2': held * 1e6})))
+            'held_mm2': held * 1e6, 'closest_deg': float(np.degrees(closest))})))
     while placed_grasps:
         yield heapq.heappop(placed_grasps)[2]
 
@@ -392,16 +453,17 @@ def _placed(shape, transform, target, pose, hand, open_gap, obstacles, approach_
     nearest = float(((shape.points() @ transform[:3, :3].T + transform[:3, 3] - pose[:3, 3]) @ pose[:3, 0]).min())
     for backoff in np.arange(0., min(MAX_BACKOFF, reach - nearest) + 1e-9, BACKOFF_STEP):
         tcp = standoff(pose, backoff)
-        hand_open, pre = hand.fcl(tcp, open_gap), hand.fcl(standoff(tcp, approach_distance), open_gap)
-        if any(_collides(body, target, 0.) for body in (hand_open, pre)) or any(
-                _collides(body, obstacle, clearance) for body in (hand_open, pre) for obstacle, clearance in obstacles):
+        # The open hand there and at the pre-grasp, one after the other (see Hand.fcl).
+        if any(_collides(body, target, 0.) or any(_collides(body, obstacle, clearance) for obstacle, clearance in obstacles)
+               for body in (hand.fcl(at, open_gap) for at in (tcp, standoff(tcp, approach_distance)))):
             continue
         closed = _close(shape, transform, tcp, hand, open_gap)
         if closed is None:
             return None     # backing off further only squeezes less of the object
         gap, contact = closed
+        closed_hand = hand.fcl(tcp, gap)
         if _collides(hand.fcl(tcp, gap, fingers=False), target, 0.) or any(
-                _collides(hand.fcl(tcp, gap), obstacle, clearance) for obstacle, clearance in obstacles):
+                _collides(closed_hand, obstacle, clearance) for obstacle, clearance in obstacles):
             continue
         held = _held_area(shape, transform, tcp, hand, gap)
         if held < MIN_HOLD_AREA:

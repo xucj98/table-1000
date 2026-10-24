@@ -30,10 +30,25 @@ ARRIVAL_TOLERANCE = .01   # rad, final joint error before a move counts as done
 SETTLE_LIMIT = .5         # s of extra holding allowed to reach it
 GRIPPER_TIME = .6         # s for the fingers to close or open
 OPEN_GAP = .08            # m
+GRIPPER_THERE = .002     # m from a commanded opening the fingers count as there
+TORSO_STILL = .001        # m of torso lift travel below which a path leaves it where it was
+# A free-space plan allows the contacts it starts in all the way along; fingers starting within the
+# padding of an object they are not meant to touch (a hand that just let go of a handle) back off
+# straight first, along the approach or up, by the first of DEPARTS that leaves the padding.
+DEPARTS = (.03, .06)      # m
 
 
 class PlanningFailed(ExpertFailed):
     pass
+
+
+def note_torso(ctx, path):
+    """Note a move of the torso lift along ``path`` (rows of its joints) where it moved at all: its
+    travel (m, summed over the path) and where it ended."""
+    path = np.asarray(path, dtype=float)
+    travel = float(np.abs(np.diff(path, axis=0)).sum())
+    if travel > TORSO_STILL:
+        ctx.note('torso moved', travel=travel, lift=path[-1].tolist())
 
 
 class MotionSolver:
@@ -53,10 +68,17 @@ class MotionSolver:
         self.world.add(*box_object(name, size, transform))
 
     def add_table(self):
+        """The table's top (``table``) and legs (``table.leg1`` ...), as the simulation builds them."""
         table = self.ctx.scene.TABLE
+        (width, depth), (cx, cy), leg = table['size'], table['center'], table['leg_size']
+        under = table['height'] - table['top_thickness']
         top = np.eye(4)
-        top[:3, 3] = [*table['center'], table['height'] - table['top_thickness'] / 2]
-        self.add_box('table', (*table['size'], table['top_thickness']), top)
+        top[:3, 3] = [cx, cy, table['height'] - table['top_thickness'] / 2]
+        self.add_box('table', (width, depth, table['top_thickness']), top)
+        for i, (sx, sy) in enumerate(((-1, -1), (1, -1), (-1, 1), (1, 1))):
+            post = np.eye(4)
+            post[:3, 3] = [cx + sx * (width - leg) / 2, cy + sy * (depth - leg) / 2, under / 2]
+            self.add_box(f'table.leg{i + 1}', (leg, leg, under), post)
 
     def add_object(self, name, group, padded=lambda part: True, merged=lambda part: False):
         """Planning objects of asset object ``name`` from its collision geometry: ``group(body, part)``
@@ -83,10 +105,14 @@ class MotionSolver:
         """Carry planning object ``name`` with the TCP at its measured pose relative to it;
         returns that relative pose."""
         relative = np.linalg.inv(self.tcp()) @ object_world
+        self.attach_at(name, relative)
+        return relative
+
+    def attach_at(self, name, relative):
+        """Carry planning object ``name`` with the TCP at pose ``relative`` to it."""
         self.planner.planning_world.attach_object(
             name, self.planner.robot.get_name(), self.planner.link_name_2_idx[self.arm.tcp_link], pose(relative),
             list(self.arm.finger_links))
-        return relative
 
     def detach(self, name):
         self.planner.planning_world.detach_object(name, False)
@@ -175,7 +201,51 @@ class MotionSolver:
         """Plan to an IK goal of world TCP pose ``target`` (or to ``goals``, full configurations of
         the planning model) with RRTConnect and follow it; an approximate or colliding path is
         re-planned up to ``attempts`` times, each with twice the time of the one before. ``lift``
-        moves the torso lift as well."""
+        lets the torso lift move as well: where the goal leaves it where it is (or ``target`` has
+        an IK solution that does), the plan holds it first, once, and frees it only if that fails."""
+        self.depart()
+        free = [lift]
+        if lift:
+            here = self.model.q[self.model.lift_indices()]
+            if goals is None or all(np.allclose(np.asarray(goal)[self.model.lift_indices()], here, atol=1e-4)
+                                    for goal in goals):
+                free = [False, True]
+        for moving in free[:-1]:
+            try:
+                return self._rrt(target, planning_time, 1, moving, goals)
+            except PlanningFailed as error:
+                if not error.reason.startswith(('RRTConnect', 'path collision', 'IK Failed')):
+                    raise
+        self._rrt(target, planning_time, attempts, free[-1], goals)
+
+    def touching(self):
+        """``[(finger or TCP link, object)]`` within the free-space padding of each other now, not allowed."""
+        self.world.set_padding(PADDING)
+        self.sync()
+        try:
+            robot, hand = self.planner.robot.get_name(), {self.arm.tcp_link, *self.arm.finger_links}
+            return [(link, name) for link, name, _ in self.model.collisions(self.arm.name, self.model.q)
+                    if name != robot and link in hand and frozenset((link, name)) not in self.world.permissions]
+        finally:
+            self.world.set_padding(0.)
+
+    def depart(self):
+        """Back the hand straight off what it touches unasked for (see DEPARTS), where it does."""
+        from table_1000.experts.grasps import standoff, translated
+        touched = self.touching()
+        if not touched:
+            return
+        tcp = self.tcp()
+        for target in [standoff(tcp, d) for d in DEPARTS] + [translated(tcp, [0., 0., d]) for d in DEPARTS]:
+            try:
+                self.move_to_pose_with_screw(target)
+            except PlanningFailed:
+                continue
+            if not self.touching():
+                self.ctx.note('departed', arm=self.arm.name, touched=touched)
+                return
+
+    def _rrt(self, target, planning_time, attempts, lift, goals):
         for attempt in range(attempts):
             try:
                 result = self._plan('rrt', lambda: self._validated(self.model.plan_rrt(
@@ -202,7 +272,8 @@ class MotionSolver:
                 return move(target)
             except PlanningFailed as error:
                 if index == len(targets) - 1 or not error.reason.startswith(
-                        ('IK Failed', 'joint_limit', 'collision', 'path collision', 'RRTConnect')):
+                        ('IK Failed', 'joint_limit', 'collision', 'path collision', 'RRTConnect', 'no_progress',
+                         'iteration_limit', 'time_parameterization')):
                     raise
 
     # -- execution -----------------------------------------------------------------------
@@ -230,8 +301,16 @@ class MotionSolver:
             held += 1
         self.log[-1].update(max_tracking_error_rad=worst, settle_steps=held)
         self.timings['executing_s'] += time.perf_counter() - started
+        if lift is not None:
+            note_torso(self.ctx, lift)
 
     def gripper(self, gap, seconds=GRIPPER_TIME):
+        """Command the pad gap ``gap`` for ``seconds``; opening to where the fingers are (within
+        GRIPPER_THERE) takes no time."""
+        gap = float(np.clip(gap, 0., self.arm.max_gap))
+        if gap > 0. and abs(self.finger_gap() - gap) < GRIPPER_THERE:
+            self.ctx.step({f'{self.arm.name}_gripper': [[gap]]})
+            return
         for _ in range(steps(seconds)):
             self.ctx.step({f'{self.arm.name}_gripper': [[gap]]})
 
