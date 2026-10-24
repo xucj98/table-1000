@@ -100,7 +100,7 @@ class Grasping:
             support = fcl.distance(shape, body).min_distance < SUPPORT_DISTANCE
             if support:
                 supports.append(name)
-            obstacles.append((body, SUPPORT_CLEARANCE if support else 0.))
+            obstacles.append((body, getattr(self, 'support_clearance', SUPPORT_CLEARANCE) if support else 0.))
         return obstacles, supports
 
     def options(self, target, arms, skip, point=None, approach=None, then=None, max_angle=None, tried=None,
@@ -246,7 +246,7 @@ class Grasping:
             solver = self.solvers[arm]
             solver.close_gripper()
             gap = solver.finger_gap()
-            if gap >= grasp.info['contact_gap'] - HELD_TOLERANCE:
+            if gap >= grasp.info['contact_gap'] - getattr(self, 'held_tolerance', HELD_TOLERANCE):
                 break
             # Missed: back out, re-observe the object and choose again.
             ctx.note('missed grasp', arm=arm, finger_gap=gap, width=grasp.width, pose=grasp.pose.tolist(), **grasp.info)
