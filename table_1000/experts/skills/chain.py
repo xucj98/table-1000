@@ -13,6 +13,7 @@ needed; what is still unmet is left to the next action, which may move the base 
 from contextlib import nullcontext
 from dataclasses import dataclass
 
+from table_1000.experts.context import Unreachable
 from table_1000.experts.skills.common import Unmet
 
 ADAPT = ('base', 'handover')
@@ -133,7 +134,7 @@ def adapted(ctx, action, need, adapt, failure):
             try:
                 with subtask(ctx, action.instruction):
                     return [action.run(ctx, need)]
-            except Unmet as unmet:
+            except Unreachable as unmet:     # also nothing in reach with the need from anywhere: on as it can
                 ctx.note('need unmet', action=type(action).__name__, reason=unmet.reason)
                 failure = unmet
     raise failure
