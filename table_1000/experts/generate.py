@@ -168,9 +168,9 @@ class Generator:
                       only=self.steps)
         physics_before = self.env.timings['step_s']
         try:
-            if start is not None:
-                ctx.hold(RESUME_S)
             with ctx.profile.record(self.profile_enabled):
+                if start is not None:
+                    ctx.hold(RESUME_S)
                 self.expert.solve(ctx)
             report['status'] = 'success'
         except ExpertFailed as error:
