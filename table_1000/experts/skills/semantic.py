@@ -369,17 +369,19 @@ def headroom(ctx, obj):
 
 
 def around(region, near):
-    """``region`` cut down to within NEAR of world point ``near`` (all of it without one)."""
+    """``region`` cut down to within NEAR of world point ``near`` (all of it without one), or of
+    the region's point nearest it when ``near`` is outside."""
     if near is None:
         return region
     frame, low, high = region
-    point = (np.linalg.inv(frame) @ np.r_[np.asarray(near, dtype=float)[:3], 1.])[:2]
+    point = np.clip((np.linalg.inv(frame) @ np.r_[np.asarray(near, dtype=float)[:3], 1.])[:2], low, high)
     return frame, np.maximum(low, point - NEAR), np.minimum(high, point + NEAR)
 
 
 def inset(region, margin):
-    """``region`` shrunk by ``margin`` on every side."""
+    """``region`` shrunk by ``margin`` on every side, down to its middle line where it is narrower."""
     frame, low, high = region
+    margin = np.minimum(margin, (np.asarray(high) - low) / 2)
     return frame, np.asarray(low) + margin, np.asarray(high) - margin
 
 

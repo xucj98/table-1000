@@ -130,6 +130,17 @@ def test_what_hangs_high_over_a_floor_is_no_obstacle():
 def test_put_on_keeps_room_at_the_edges():
     """On the table, an object stays EDGE inside its edges (fingers reach past it when picking it up)."""
     region, _ = semantic.support_region([semantic.table_shape(TABLE)], 'table')
-    frame, low, high = semantic.around(semantic.inset(region, semantic.EDGE), [0., -.39, TABLE['height']])
+    frame, low, high = semantic.around(semantic.inset(region, semantic.EDGE), [0., -.3, TABLE['height']])
     assert np.allclose(low, [-.3, -.4 + semantic.EDGE], atol=semantic.SUPPORT_STEP)
-    assert np.allclose(high, [.3, -.09], atol=semantic.SUPPORT_STEP)
+    assert np.allclose(high, [.3, 0.], atol=semantic.SUPPORT_STEP)
+
+
+def test_near_off_the_surface_takes_its_nearest_part():
+    """A near point off the table (the robot turned away) still leaves room: its nearest corner."""
+    region, _ = semantic.support_region([semantic.table_shape(TABLE)], 'table')
+    _, low, high = semantic.around(semantic.inset(region, semantic.EDGE), [-.9, -.7, TABLE['height']])
+    corner = np.array([-.5, -.4]) + semantic.EDGE
+    assert np.allclose(low, corner, atol=semantic.SUPPORT_STEP)
+    assert np.allclose(high, corner + semantic.NEAR, atol=semantic.SUPPORT_STEP)
+    _, low, high = semantic.inset((np.eye(4), np.zeros(2), np.array([.05, .3])), semantic.EDGE)
+    assert np.allclose(low, [.025, .04]) and np.allclose(high, [.025, .26])
