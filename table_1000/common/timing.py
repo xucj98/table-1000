@@ -15,6 +15,17 @@ from time import perf_counter
 _active = ContextVar('wall_profile', default=None)
 
 
+@contextmanager
+def measure(name):
+    """Measure a block only while a profile is recording."""
+    profile = _active.get()
+    if profile is None:
+        yield
+    else:
+        with profile.span(name):
+            yield
+
+
 class WallProfile:
     def __init__(self):
         self.totals = {}

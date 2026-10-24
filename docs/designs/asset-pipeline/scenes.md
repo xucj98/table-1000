@@ -160,7 +160,7 @@
 
 `join_steps.py <批次> ...` 把逐步运行的各批按顺序接成完整轨迹，默认写成场景的数据 `data/scenes/<场景>/<后端>/`：拼接的轨迹与一次跑完的完整轨迹只是生产方式不同：每段在下一批开始用的检查点处截断，接上下一批同一 seed 的轨迹，`subtasks` 和 `steps` 平移到接好后的位置，`parts` 记录每段的批次、提交、步骤、起点和长度。每个 seed 的 `episodes/<seed>.json` 取最后一段的报告并平移到接好后的位置，`summary.json` 按同样的方式统计成功率和失败，所以输出目录的格式与一批轨迹相同，可直接渲染、分析失败案例。只有所有 seed 跑完所有步骤的拼接才默认写成场景的数据，否则须给 `--output`。逐步迭代的方法见[操作手册 05](../../tutorials/05-step-by-step-expert.md)。
 
-`run_expert.py --profile`（默认关闭）在报告里增加嵌套 wall 计时：`wall_profile` 是整条专家运行的分类统计，步骤的同名字段是累计快照，`subtask_profiles` 与 `subtasks` 一一对应。每类有 `calls`、包含已计时子调用的 `wall_s`、扣除这些子调用的 `self_s`；只有 `self_s` 能跨类别相加。抓取候选、IK、RRT、轨迹时间参数化、显式碰撞、路径验证、世界更新、底盘和交接搜索、控制步进分别计时。MPlib 内部的碰撞检查仍包含在 IK/RRT 中；RRT 的自身时间还包含原生路径简化和 Python 包装。惰性候选生成器只计每次恢复执行，`calls` 包括最终耗尽的一次，不是候选数。`timings.physics_step_s` 是控制步进中动作转换、物理与录制的耗时，不含观察与模型同步，不能再与 `control_step` 相加。`step_times.py` 输出每条的平均自身/嵌套耗时及未覆盖的专家时间，仍兼容未开启计时的旧报告。`eval_pick.py --profile` 同样记录每个 trial 的 `wall_profile` 和 `physics_step_s`。
+`run_expert.py --profile`（默认关闭）在报告里增加嵌套 wall 计时：`wall_profile` 是整条专家运行的分类统计，步骤的同名字段是累计快照，`subtask_profiles` 与 `subtasks` 一一对应。每类有 `calls`、包含已计时子调用的 `wall_s`、扣除这些子调用的 `self_s`；只有 `self_s` 能跨类别相加。抓取候选、IK、RRT、轨迹时间参数化、显式碰撞、路径验证、世界更新、底盘和交接搜索、控制步进分别计时；控制步进中的动作转换、物理与录制另记为 `physics_step`，因此步骤和子任务也有此项分解。MPlib 内部的碰撞检查仍包含在 IK/RRT 中；RRT 的自身时间还包含原生路径简化和 Python 包装。惰性候选生成器只计每次恢复执行，`calls` 包括最终耗尽的一次，不是候选数。`timings.physics_step_s` 是控制步进中动作转换、物理与录制的耗时，不含观察与模型同步，不能再与分类的 `self_s` 之和或 `control_step.wall_s` 相加。`step_times.py` 输出每条的平均自身/嵌套耗时及未覆盖的专家时间，仍兼容未开启计时的旧报告。`eval_pick.py --profile` 同样记录每个 trial 的 `wall_profile` 和 `physics_step_s`。
 
 ## 轨迹数据
 

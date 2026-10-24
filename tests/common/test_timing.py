@@ -3,16 +3,16 @@
 import pytest
 
 from table_1000.common import timing
-from table_1000.common.timing import WallProfile, timed
+from table_1000.common.timing import WallProfile, measure, timed
 
 
 def test_nested_exception_and_disabled(monkeypatch):
     clock = iter([0., 1., 3., 5., 10., 12.])
     monkeypatch.setattr(timing, 'perf_counter', lambda: next(clock))
 
-    @timed('child')
     def child():
-        raise ValueError('unreachable')
+        with measure('child'):
+            raise ValueError('unreachable')
 
     @timed('parent')
     def parent():
