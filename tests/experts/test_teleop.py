@@ -27,6 +27,19 @@ def write(batch, summary, reports):
         (batch / 'episodes' / f'{name}.json').write_text(json.dumps(entry))
 
 
+def write_trajectory(path, seed, length):
+    """A failed trajectory file: the pen's pose and a two-group action (``arm``, ``gripper``) per step."""
+    with h5py.File(path, 'w') as file:
+        data = file.create_group('data')
+        data.attrs['env_args'] = json.dumps({'action_layout': {'arm': [0, 2], 'gripper': [2, 3]}})
+        group = data.create_group(f'demo_{seed}')
+        group.attrs['num_samples'] = length
+        group.create_dataset('states/rigid_object/pen/root_pose', data=np.arange(length * 7.).reshape(length, 7))
+        group.create_dataset('actions', data=np.arange(length * 3.).reshape(length, 3))
+        group.create_dataset('obs/qpos', data=np.ones((length, 2)))
+        group.create_dataset('obs/base_pose', data=np.zeros((length, 3)))
+
+
 def test_the_failed_step_is_the_first_not_completed():
     assert failed_step(report(0, [1])) == 2
     assert failed_step(report(0, [], steps_run=[2, 3])) == 2
@@ -104,17 +117,15 @@ def test_a_recorded_failure_gives_the_state_at_the_failure(tmp_path):
     write(batch, {'scene': '000002'}, {'3': report(3, [1]), '4': report(4, [1])})
     (batch / 'episodes' / '3.json').write_text(json.dumps({**report(3, [1]), 'steps': [
         {'step': 1, 'name': 'open', 'at': 4}]}))
-    with h5py.File(batch / 'trajectories_failed.hdf5', 'w') as file:
-        group = file.create_group('data/demo_3')
-        group.attrs['num_samples'] = 6
-        group.create_dataset('states/rigid_object/pen/root_pose', data=np.arange(6 * 7.).reshape(6, 7))
-        group.create_dataset('obs/qpos', data=np.ones((6, 2)))
-        group.create_dataset('obs/base_pose', data=np.zeros((6, 3)))
+    write_trajectory(batch / 'trajectories_failed.hdf5', 3, 6)
     found = {case['seed']: case for case in cases(tmp_path / 'none', '000002', [batch])}
     assert found[3]['failure_at'] == 6 and found[3]['step_at'] == 4
     assert 'trajectory' not in found[4]          # not recorded
     state = trajectory_state(found[3]['trajectory'], 3, found[3]['failure_at'] - 1)
     np.testing.assert_array_equal(state['rigid_object']['pen']['root_pose'], [np.arange(35., 42.)])
+    # What the action terms held there: that step's action, by group (a gripper squeezing: below its gap).
+    np.testing.assert_array_equal(state['targets']['arm'], [[15., 16.]])
+    np.testing.assert_array_equal(state['targets']['gripper'], [[17.]])
     assert trajectory_start(found[3]['trajectory'], 3)['qpos'].shape == (1, 2)
     assert found[3]['run'].endswith('/batch')
 
@@ -125,16 +136,12 @@ def test_failure_snapshots_are_the_checkpoints_the_failed_steps_start_from(tmp_p
     batch = tmp_path / 'batch'
     write(batch, {'scene': '000002', 'physics': 'isaac-cpu', 'commit': 'abc'},
           {'3': {**report(3, [1]), 'steps': [{'step': 1, 'name': 'open', 'at': 4}]}, '5': report(5, [1, 2, 3], status='success')})
-    with h5py.File(batch / 'trajectories_failed.hdf5', 'w') as file:
-        group = file.create_group('data/demo_3')
-        group.attrs['num_samples'] = 30
-        group.create_dataset('states/rigid_object/pen/root_pose', data=np.arange(30 * 7.).reshape(30, 7))
-        group.create_dataset('obs/qpos', data=np.ones((30, 2)))
-        group.create_dataset('obs/base_pose', data=np.zeros((30, 3)))
+    write_trajectory(batch / 'trajectories_failed.hdf5', 3, 30)
     main([str(batch), '--before', '1', '--output', str(tmp_path / 'runs')])
     (snapshots,) = (tmp_path / 'runs' / '000002').iterdir()
     attrs, found = read_checkpoints(snapshots / 'checkpoints' / 'step1.hdf5')   # seed 3 failed in step 2
     assert attrs['physics'] == 'isaac-cpu' and list(found) == [3]
     # 1 s (25 control steps) before the last sample, not before the step began (sample 4).
     np.testing.assert_array_equal(found[3][1]['rigid_object']['pen']['root_pose'], [np.arange(4 * 7., 5 * 7.)])
+    np.testing.assert_array_equal(found[3][1]['targets']['gripper'], [[14.]])
     assert json.loads((snapshots / 'summary.json').read_text())['snapshots'] == {'2': [3]}

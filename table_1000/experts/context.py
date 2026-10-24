@@ -164,10 +164,11 @@ class Context:
             self.env.contacts.phase = None
 
     def checkpoint(self, index, name):
-        """Keep the scene state after step ``index`` (``name``), at control step :attr:`steps`,
-        ``wall_s`` seconds since the context was made and ``cpu_s`` CPU seconds of the process since."""
+        """Keep the scene state after step ``index`` (``name``) with the action targets
+        (``state['targets']``), at control step :attr:`steps`, ``wall_s`` seconds since the context
+        was made and ``cpu_s`` CPU seconds of the process since."""
         from table_1000.sim.isaaclab.replay import numpy_state
-        state = numpy_state(self.env)
+        state = {**numpy_state(self.env), 'targets': self.env.targets()}
         self.checkpoints.append({'step': index, 'name': name, 'at': self.steps,
                                  'wall_s': time.perf_counter() - self.started,
                                  'cpu_s': time.process_time() - self.cpu_started, 'state': state})

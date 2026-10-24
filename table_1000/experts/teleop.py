@@ -87,14 +87,19 @@ def failed_trajectories(batch):
 
 def trajectory_state(path, seed, index):
     """The scene state after control step ``index + 1`` of episode ``seed`` in a trajectory file (its
-    ``states``, environment axis kept), as a checkpoint holds it."""
+    ``states``, environment axis kept), as a checkpoint holds it: with ``targets``, the action of
+    that step by group (``env_args['action_layout']``), which the action terms were holding."""
     import h5py
 
     def take(group):
         return {key: take(value) if isinstance(value, h5py.Group) else value[index:index + 1]
                 for key, value in group.items()}
     with h5py.File(path, 'r') as file:
-        return take(file['data'][f'demo_{seed}']['states'])
+        episode = file['data'][f'demo_{seed}']
+        state = take(episode['states'])
+        layout = json.loads(file['data'].attrs['env_args'])['action_layout']
+        action = episode['actions'][index:index + 1]
+        return {**state, 'targets': {name: action[:, start:stop] for name, (start, stop) in layout.items()}}
 
 
 def trajectory_start(path, seed):
@@ -259,7 +264,9 @@ def operate(ctx, step, operator, show, cameras, log):
     base = ctx.base_transform()
     targets = {name: np.linalg.inv(base) @ ctx.tcp(name) for name in arms}       # in the base frame
     commands = {name: ctx.env.qpos(spec.arms[name].joints)[0].copy() for name in arms}
-    gaps = {name: spec.arms[name].gap(ctx.env.qpos(spec.arms[name].fingers)[0]) for name in arms}
+    # The commanded gaps, not the measured: a gripper holding something keeps squeezing it.
+    held = ctx.env.targets()
+    gaps = {name: float(held[f'{name}_gripper'][0, 0]) for name in arms}
     wanted = dict(gaps)
     lift = ctx.env.qpos(spec.lift)[0].copy() if spec.lift else None
     head = ctx.env.qpos(spec.head)[0].copy() if spec.head else None

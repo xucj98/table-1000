@@ -12,8 +12,9 @@ failure. Run the failed steps from there:
 
 ``run_expert.py <scene> --physics <backend> --dev --from <snapshots> --steps k --seeds ... --repeats K``
 
-The snapshot is the whole scene (every body's pose and velocity, every joint); the expert's step runs
-again from its first subtask in that scene.
+The snapshot is the whole scene (every body's pose and velocity, every joint) and what the action
+terms were holding (``targets``: the recorded action of that control step, e.g. a gripper squeezing
+what it holds); the expert's step runs again from its first subtask in that scene.
 """
 
 import argparse
@@ -26,17 +27,11 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 
-def take(group, index):
-    import h5py
-    return {key: take(value, index) if isinstance(value, h5py.Group) else value[index:index + 1]
-            for key, value in group.items()}
-
-
 def main(argv=None):
     import h5py
     from table_1000.common.batch import commit, parse_seeds
     from table_1000.experts.generate import checkpoint_path, read_checkpoints
-    from table_1000.experts.teleop import failed_step
+    from table_1000.experts.teleop import failed_step, trajectory_state
     from table_1000.scenes.initial import write_tree
     from table_1000.sim import CONTROL_HZ
     from scripts.scenes.run_expert import run_name
@@ -76,7 +71,7 @@ def main(argv=None):
                 start = {'qpos': obs['qpos'][0:1], 'base_pose': obs['base_pose'][0:1]}
             record = {'batch': str(batch), 'sample': index, 'before_failure_s': (length - 1 - index) / CONTROL_HZ,
                       'failure': report.get('failure', {}).get('reason'), 'subtask': report.get('failure', {}).get('subtask')}
-            snapshots[step][seed] = (int(report.get('attempt', 0)), take(group['states'], index), start, record)
+            snapshots[step][seed] = (int(report.get('attempt', 0)), trajectory_state(path, seed, index), start, record)
     if not snapshots:
         parser.error('no failed seed with a recorded trajectory')
     checkout = commit(ROOT)
