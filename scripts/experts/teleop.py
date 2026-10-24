@@ -18,8 +18,11 @@ checks asked for, the verdict, the check at the end), the step's checkpoint when
 
 import argparse
 import json
+import os
+import queue
 from pathlib import Path
 import shlex
+import signal
 import sys
 import time
 
@@ -163,12 +166,22 @@ def run(args, argv):
         env.set_markers([(ctx.base_transform() @ targets[arm])[:3, 3]], .012)
         server.publish({name: outputs['rgb'][0] for name, outputs in env.render(names).items()})
 
+    # Kit takes over SIGINT and SIGTERM (also while the environment is built): from here Ctrl+C or
+    # kill ends the session at once (an attempt under way is lost).
+    def stop(signum, frame):
+        print(f'stopped by signal {signum}', flush=True)
+        os._exit(130)
+    signal.signal(signal.SIGINT, stop)
+    signal.signal(signal.SIGTERM, stop)
     print(f'teleop on http://<host>:{args.port}/', flush=True)
     checkout = commit(ROOT)
     command = None
     while True:
         if command is None:
-            command = operator.commands.get()
+            try:
+                command = operator.commands.get(timeout=.5)
+            except queue.Empty:
+                continue
         if command['command'] != 'load':
             command = None         # check / done outside a case
             continue
