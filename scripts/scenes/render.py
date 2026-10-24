@@ -20,11 +20,12 @@ restores the recorded state of that step; nothing is simulated. The episodes are
 packed by length into ``--jobs`` processes, spread over ``--gpus`` or submitted
 through ``--launcher`` (see ``table_1000/common/batch.py``); episodes whose process
 stopped before their videos run again (``--retries``). Logs are in
-``outputs/scenes/<scene>/<batch>/render/``; ``summary.json`` lists the seeds
+``outputs/scenes/<scene>/render/<batch hash>/``; ``summary.json`` lists the seeds
 with videos.
 """
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -179,7 +180,10 @@ def main(argv=None):
         parser.error(f'no trajectories {trajectories}; run run_expert.py first')
     root = args.root.resolve()
     with h5py.File(trajectories, 'r') as file:
-        robot = json.loads(file['data'].attrs['env_args'])['robot']
+        env_args = json.loads(file['data'].attrs['env_args'])
+    robot = env_args['robot']
+    if env_args['scene'] != args.scene:
+        parser.error(f'{directory} holds scene {env_args["scene"]}, not {args.scene}')
     try:
         check_cameras(args.scene, robot, root, args.cameras)
     except ValueError as error:
@@ -202,7 +206,8 @@ def main(argv=None):
                      f'{summary["seeds"]["range"]}, failed: {seed_range(failed) or "none"}')
     if not seeds:
         parser.error('no episodes to render')
-    staging = root / 'outputs' / 'scenes' / args.scene / directory.name / 'render'
+    # Per batch directory: renders of different batches run at once without sharing it.
+    staging = root / 'outputs' / 'scenes' / args.scene / 'render' / hashlib.sha1(str(directory).encode()).hexdigest()[:12]
     shutil.rmtree(staging, ignore_errors=True)
     targets = {seed: [video_path(directory, seed, None if output == MERGED else output, failed=seed in failed)
                       for output in ([MERGED] if args.merge else args.cameras)] for seed in seeds}

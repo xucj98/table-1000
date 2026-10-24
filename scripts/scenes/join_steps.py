@@ -70,8 +70,12 @@ def main(argv=None):
     for batch in map(Path.resolve, args.batches):
         if batch.is_relative_to(output) or output.is_relative_to(batch):
             parser.error(f'{args.output} would replace {batch}, one of the batches joined; give another --output')
-    if '--seeds' in shlex.split(first.get('command') or '') and default:
-        parser.error(f'{args.batches[0]} ran some seeds only, not the scene\'s data; give --output')
+    # The scene's data comes from every seed: batches of some seeds go elsewhere.
+    partial = [batch for batch, summary in zip(args.batches, summaries)
+               if any(token == '--seeds' or token.startswith('--seeds=') for token in shlex.split(summary.get('command') or ''))]
+    if default and (partial or first.get('from')):
+        parser.error(f'{(partial or args.batches)[0]} may not cover every seed of the scene, so the join is not its '
+                     f'data; give --output')
     if any((summary.get('steps_run') or [1])[0] == 1 for summary in summaries[1:]):
         parser.error('only the first batch starts at step 1')
     found = [episodes(batch) for batch in args.batches]

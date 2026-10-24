@@ -14,7 +14,7 @@ Runs on a GPU. For every failed seed of the batch (``--seeds``: only those), int
   planners rejected in that subtask, the events it noted, and the steps the frames are at.
 
 To see whether a case fails again with the same code, rerun its seed from the checkpoint of the
-step before (``run_expert.py --steps k --from <batch> --seeds <seed>``).
+step before (``run_expert.py --dev --steps k --from <batch> --seeds <seed>``).
 """
 
 import argparse
@@ -35,7 +35,7 @@ AROUND = {
     'front': ((0., 1.25, .25), 20),
 }
 CELL_HEIGHT = 360       # px of each view in the tiled images
-SETTLE_RENDERS = 4      # renders before the captured one, for the denoiser to settle
+HEAD_CAMERA = 'face_view'
 
 
 def views(scene):
@@ -47,16 +47,19 @@ def views(scene):
 
 
 def failing_start(report):
-    """The control step the failing subtask began at, its last run (a subtask may run again); the
-    episode's end when the failure is outside a subtask."""
+    """The control step the failing subtask began at, its last run (a subtask may run again); for a
+    failure outside a subtask (a step's check), where that step began."""
     runs = [entry for entry in report['subtasks'] if entry['instruction'] == report['failure']['subtask']]
-    return runs[-1]['start'] if runs else report['control_steps']
+    if runs:
+        return runs[-1]['start']
+    steps = report.get('steps') or []
+    return steps[-1]['at'] if steps else 0
 
 
 def case(report):
     """The numbers of a failed episode's report for its case: of the failing subtask's last run."""
     failure, start = report['failure'], failing_start(report)
-    events = [event for event in report['events'] if event['subtask'] == failure['subtask'] and event['step'] >= start]
+    events = [event for event in report['events'] if event['step'] >= start]
     tried = [event for event in events if event['note'].startswith('next ')]     # an option given up for the next
     collisions = Counter(f'{link} - {other}' for event in tried
                          for key in ('collisions', 'start_collisions', 'goal_collisions')
@@ -71,20 +74,20 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('batch', type=Path, help='a batch directory of run_expert.py')
     parser.add_argument('--out', type=Path, help='default <batch>/cases')
-    parser.add_argument('--seeds', nargs='+', help='only these failed seeds: 12 27, 0:20')
+    parser.add_argument('--seeds', nargs='+', help='only the failed seeds among these: 12 27, 0:20')
     parser.add_argument('--root', type=Path, default=ROOT, help='repository root holding the scene and robot sources')
     parser.add_argument('--assets', type=Path, default=ROOT / 'assets')
     parser.add_argument('--gpu', type=int)
     args = parser.parse_args(argv)
     args.out = args.out or args.batch / 'cases'
-    from table_1000.common.batch import parse_seeds, worker_gpu
+    from table_1000.common.batch import parse_seeds, seed_range, worker_gpu
     from table_1000.experts.generate import PROCESS_EXITED
     summary = json.loads((args.batch / 'summary.json').read_text())
     # Seeds whose process stopped have no episode to show.
     failures = sorted(seed for key, seeds in summary['failures'].items() if key != PROCESS_EXITED for seed in seeds)
-    seeds = parse_seeds(args.seeds) if args.seeds else failures
-    if absent := sorted(set(seeds) - set(failures)):
-        parser.error(f'seeds {absent} did not fail in {args.batch}')
+    seeds = sorted(set(parse_seeds(args.seeds)) & set(failures)) if args.seeds else failures
+    if not seeds:
+        parser.error(f'no failed episodes to show in {args.batch}; failed: {seed_range(failures) or "none"}')
     from table_1000.sim.isaaclab.app import start_app
     from table_1000.sim.isaaclab.render import RT2_ARGS
     app = start_app(gpu=worker_gpu(args.gpu), workers=4, extra_args=RT2_ARGS)
@@ -96,14 +99,15 @@ def main(argv=None):
         from table_1000.sim.isaaclab import render, replay
         from table_1000.sim.isaaclab.env import RobotEnv
         from table_1000.sim.isaaclab.video import tile
+        from scripts.scenes.render import FIRST_FRAME_RENDERS, camera_sets
         render.configure()
         file, episodes = replay.episodes(args.batch / 'trajectories_failed.hdf5')
         meta = replay.env_args(file)
         scene = load(meta['scene'], 'scene', args.root)
         spec = load_spec(meta['robot'], args.root)
-        env = RobotEnv(scene, spec, args.assets, cameras={'face_view': spec.cameras['face_view']}, views=views(scene),
-                       root=args.root)
-        names = ['face_view', *views(scene)]
+        cameras, _ = camera_sets(scene, spec, [HEAD_CAMERA])
+        env = RobotEnv(scene, spec, args.assets, cameras=cameras, views=views(scene), root=args.root)
+        names = [HEAD_CAMERA, *views(scene)]
         for seed in seeds:
             episode = episodes[f'demo_{seed}']
             report = json.loads((args.batch / 'episodes' / f'{seed}.json').read_text())
@@ -113,7 +117,7 @@ def main(argv=None):
             out.mkdir(parents=True, exist_ok=True)
             for moment, t in (('start', start), ('end', last)):
                 replay.set_state(env, episode.state(t))
-                for _ in range(SETTLE_RENDERS):
+                for _ in range(FIRST_FRAME_RENDERS):     # each frame follows another state
                     env.render([])
                 shots = env.render(names)
                 images = {name: Image.fromarray(shots[name]['rgb'][0]) for name in names}

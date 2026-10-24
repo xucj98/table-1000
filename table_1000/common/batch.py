@@ -243,14 +243,14 @@ def commit(root):
 
 
 class Load:
-    """The machine's load while a block runs: ``host``, ``cores`` (those this process may run on)
+    """The machine's load while a block runs: ``host``, ``cores`` (the machine's, as the load average is)
     and ``samples``, one at the start, every ``period`` seconds (from a daemon thread) and at the
     end: ``{'t', 'load_1m', 'cpu_s'}``, seconds since the start, the 1-minute load average and the
     CPU seconds this process used since the sample before. When the machine is busy the process
     waits for cores: its CPU seconds fall behind the wall seconds."""
 
     def __init__(self, period=LOAD_PERIOD):
-        self.period, self.host, self.cores = period, socket.gethostname(), len(os.sched_getaffinity(0))
+        self.period, self.host, self.cores = period, socket.gethostname(), os.cpu_count()
 
     def __enter__(self):
         self.samples, self.started, self.cpu = [], time.perf_counter(), time.process_time()

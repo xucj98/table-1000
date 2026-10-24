@@ -182,7 +182,9 @@ def test_a_failure_case_is_the_last_run_of_its_subtask():
     assert failing_start(report) == 20
     numbers = case(report)
     assert numbers['rejections'] == {'goal in collision': 1} and numbers['collisions'] == {'finger - drawer': 1}
-    assert failing_start({**report, 'failure': {'subtask': None, 'reason': 'r'}}) == 50
+    # A step's check failed: where that step began.
+    check = {**report, 'failure': {'subtask': 'step 2', 'reason': 'r'}, 'steps': [{'step': 1, 'at': 18}]}
+    assert failing_start(check) == 18 and failing_start({**check, 'steps': []}) == 0
 
 
 def test_the_steps_of_a_resumed_run_keep_the_seed_s_start():
