@@ -12,6 +12,7 @@ __pycache__/
 # Large or private research artifacts
 /assets/
 /data
+/runs
 artifacts/
 outputs/
 checkpoints/

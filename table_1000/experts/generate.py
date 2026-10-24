@@ -3,7 +3,7 @@
 An expert made of steps (:func:`~table_1000.experts.context.run_steps`) leaves a
 checkpoint after each step that passed its check: the scene state, in
 ``checkpoints/<seed>.hdf5`` (merged by step into ``checkpoints/step<k>.hdf5``,
-:func:`merge_checkpoints`). With ``steps`` ``(first, last)`` only those steps run,
+:func:`merge_checkpoints`); an episode from the initial state keeps that too, as step 0. With ``steps`` ``(first, last)`` only those steps run,
 from the initial states (``first`` 1) or from the checkpoints of step ``first - 1``;
 the robot's home stays where the seed's episode began.
 
@@ -31,6 +31,7 @@ from table_1000.sim import CONTROL_HZ, PHYSICS_DT
 # A seed without a report: its process stopped before finishing it.
 PROCESS_EXITED = '-: process exited'
 RESUME_S = .2       # s of holding still after resuming from a checkpoint
+INITIAL_STATE = 'initial state'     # the name of step 0's checkpoints
 
 
 def checkpoint_path(directory, step):
@@ -137,7 +138,16 @@ class Generator:
 
     def run(self, seed, attempt, state, start=None):
         """Episode ``seed`` from its initial ``state`` (made by sub-seed ``attempt``), or from a
-        checkpoint's with ``start`` the robot where the seed's episode began."""
+        checkpoint's with ``start`` the robot where the seed's episode began; its report has the
+        machine's load meanwhile (``load``, see :class:`~table_1000.common.batch.Load`) and the CPU
+        seconds the process used (``cpu_s``)."""
+        from table_1000.common.batch import Load
+        with Load() as load:
+            report, started = self.episode(seed, attempt, state, start)
+        report.update(load=load.record(), cpu_s=sum(sample['cpu_s'] for sample in load.samples))
+        return self.save(report, started)
+
+    def episode(self, seed, attempt, state, start):
         started = time.perf_counter()
         first = self.steps[0] if self.steps else 1
         report = {'scene': self.name, 'seed': seed, 'attempt': attempt, 'steps_run': self.steps, 'from': self.source}
@@ -166,7 +176,7 @@ class Generator:
             for solver in ctx.solvers.values():
                 solver.world.clear()
         report.update(
-            step_names=ctx.step_names, steps=[{key: entry[key] for key in ('step', 'name', 'at', 'wall_s')}
+            step_names=ctx.step_names, steps=[{key: entry[key] for key in ('step', 'name', 'at', 'wall_s', 'cpu_s')}
                                               for entry in ctx.checkpoints],
             control_steps=ctx.steps, duration_s=ctx.steps / CONTROL_HZ, subtasks=ctx.subtasks, events=ctx.events,
             expert_wall_s=time.perf_counter() - ctx.started, subtask_wall_s=ctx.subtask_wall_s,
@@ -177,8 +187,11 @@ class Generator:
                               for name, joints in self.env.privileged()['joints'].items()}},
             timings={'init_s': init_s, **{key: sum(s.timings[key] for s in ctx.solvers.values())
                                           for key in ('planning_s', 'executing_s')}})
-        if ctx.checkpoints:
-            write_checkpoints(self.output / 'checkpoints' / f'{seed}.hdf5', seed, attempt, ctx.start, ctx.checkpoints)
+        checkpoints = ctx.checkpoints
+        if first == 1 and start is None and hasattr(self.expert, 'STEPS'):
+            checkpoints = [{'step': 0, 'name': INITIAL_STATE, 'at': 0, 'state': state}, *checkpoints]
+        if checkpoints:
+            write_checkpoints(self.output / 'checkpoints' / f'{seed}.hdf5', seed, attempt, ctx.start, checkpoints)
         attrs = {'scene': self.name, 'seed': seed, 'attempt': attempt,
                  'instruction': INSTRUCTION, 'subtasks': ctx.subtasks, 'status': report['status'],
                  'steps': [{key: entry[key] for key in ('step', 'name', 'at')} for entry in report['steps']]}
@@ -187,7 +200,7 @@ class Generator:
         if 'failure' in report:
             attrs['failure'] = {key: report['failure'][key] for key in ('subtask', 'reason')}
         self.recording.finish(self.env, seed, report['status'] == 'success', attrs, self.env_args)
-        return self.save(report, started)
+        return report, started
 
     def save(self, report, started):
         report['wall_s'] = time.perf_counter() - started

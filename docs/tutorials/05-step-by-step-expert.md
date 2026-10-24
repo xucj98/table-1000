@@ -4,25 +4,28 @@
 
 前提：专家由步骤组成（`Step` 与 `run_steps`，见[场景与专家轨迹](../designs/asset-pipeline/scenes.md#步骤)）。步骤之间手里不拿东西，每步的 `check` 检查结束状态是否满足下一步的起始条件。
 
+迭代时的运行都是开发运行（`--dev`）：每次写到新目录 `runs/expert/<场景>/<日期>-<时间>-<提交>[-<标签>]/`，不会覆盖以前的结果，`--name` 给运行加一个标签。不带 `--dev` 的运行生成场景的数据 `data/scenes/<场景>/<后端>/`，只能跑所有 seed 和所有步骤。下文的 `<第 1 步的批次>` 等指这样的运行目录。
+
 ## 1. 迭代第 1 步
 
 ```bash
-uv run python scripts/scenes/run_expert.py 000002 --physics isaac-cpu --steps 1 --jobs 20 --launcher '<调度命令>'
+uv run python scripts/scenes/run_expert.py 000002 --physics isaac-cpu --dev --name step1 --steps 1 --jobs 20 --launcher '<调度命令>'
 ```
 
-- 先用约 20 个 seed 的初态（`--input` 指向只含这些 seed 的初态目录），改专家、重跑，直到成功率约 95%。要保留上一轮的结果作对比时，给 `--output` 另一个根目录。
-- 失败按 `summary.json` 的 `failures` 和 `episodes/<seed>.json` 分析；结果在 `data/scenes/000002/isaac-cpu/steps1-1/`（场景批次目录下的 `steps<k>-<m>/`，每次运行替换同名目录；跑完整流程替换 `isaac-cpu/` 时保留这些子目录），录像用 `render.py 000002 --physics isaac-cpu/steps1-1`。
+- 先用约 20 个 seed 的初态（`--seeds 0:20`），改专家、重跑，直到成功率约 95%。每轮都是新目录，可以直接和上一轮对比。
+- 失败按 `summary.json` 的 `failures` 和 `episodes/<seed>.json` 分析；录像用 `render.py 000002 --physics isaac-cpu --batch <第 1 步的批次>`。
 - 达到目标后用 100 个 seed 跑一遍。这一批的 `checkpoints/step1.hdf5` 就是第 2 步的起始状态，约 95 个。
 
 ## 2. 下一步从检查点开始
 
 ```bash
-uv run python scripts/scenes/run_expert.py 000002 --physics isaac-cpu --steps 2 \
-    --from data/scenes/000002/isaac-cpu/steps1-1 --jobs 20 --launcher '<调度命令>'
+uv run python scripts/scenes/run_expert.py 000002 --physics isaac-cpu --dev --name step2 --steps 2 \
+    --from <第 1 步的批次> --jobs 20 --launcher '<调度命令>'
 ```
 
 - 每个有第 1 步检查点的 seed 都从它开始：恢复状态、静置 0.2 s，只运行第 2 步。
 - 迭代第 2 步时只改第 2 步用到的代码，同一份检查点可以反复使用。
+- 每个批次都有各步的检查点，完整流程的批次也一样，所以也可以从任意一次完整运行的第 k − 1 步开始只跑第 k 步。从初态开始的批次另有 `step0.hdf5`（初态），`--steps 1 --from <批次>` 从它开始，与从初态开始相同。
 - `summary.json` 的 `steps` 给出每步的成功率和逐步完成率（前面各步都成功才计入，分母是第 1 步的 seed 数），可以直接看出整条流程走到哪一步损失最多。
 
 ## 3. 什么时候合并步骤
@@ -41,10 +44,27 @@ uv run python scripts/scenes/run_expert.py 000002 --physics isaac-cpu --steps 2 
 ## 5. 接成完整轨迹
 
 ```bash
-uv run python scripts/scenes/join_steps.py data/scenes/000002/isaac-cpu/steps1-1 data/scenes/000002/isaac-cpu/steps2-2
+uv run python scripts/scenes/join_steps.py <第 1 步的批次> <第 2 步的批次> ...
 ```
 
-同一 seed 在各批的轨迹按顺序接起来，每段截到下一批开始用的检查点；每条轨迹的 `parts` 属性记录各段的来源批次与提交。接好的轨迹默认就是这个场景的批次 `data/scenes/000002/isaac-cpu/`（替换其中原有的轨迹，保留 `steps*/`），和一次跑完整流程得到的批次格式相同、只是生产方式不同，下游不需要区分；用 `render.py 000002 --physics isaac-cpu` 渲染。
+同一 seed 在各批的轨迹按顺序接起来，每段截到下一批开始用的检查点；每条轨迹的 `parts` 属性记录各段的来源批次与提交。接好的轨迹默认写成场景的数据 `data/scenes/000002/isaac-cpu/`（整个替换），和一次跑完整流程得到的批次格式相同、只是生产方式不同，下游不需要区分；用 `render.py 000002 --physics isaac-cpu` 渲染。
+
+## 看失败的案例
+
+```bash
+uv run python scripts/experts/failure_cases.py <批次> [--seeds 4 44]
+```
+
+在 GPU 上运行。对批次里每个失败的 seed，渲染失败子任务开始时和轨迹结束时的场景，视角包括机器人头部相机、场景自带的视角，以及俯视、左、右、前四个视角，结果写到批次下的 `cases/<seed>/`。`case.json` 记录提交、失败原因、该子任务里规划放弃各个选项的原因，以及碰到的物体。
+
+想确认同样的代码重跑是否还会这样失败，可以从前一步的检查点只重跑这些 seed：
+
+```bash
+uv run python scripts/scenes/run_expert.py 000002 --physics isaac-cpu --dev --name rerun --steps 2 \
+    --from <批次> --seeds 4 44 --jobs 2 --launcher '<调度命令>'
+```
+
+一个案例由“批次、步骤、seed”确定：所有历史运行都在 `runs/expert/<场景>/` 下，目录名带提交，`summary.json` 记录命令行和来源批次（`from`），可以据此整理各次运行的失败。
 
 ## 同一检查点重复运行
 

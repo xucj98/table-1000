@@ -1,4 +1,4 @@
-"""Batch runs of the scripts: work units packed into processes, seeds and the commit they ran from.
+"""Batch runs of the scripts: work units packed into processes, seeds, the commit they ran from and the load.
 
 A batch script's work units (seeds, cases, asset backends) are packed into ``--jobs`` processes
 (:func:`plan`) that run at once: spread evenly over the local ``--gpus``, or each submitted through
@@ -11,11 +11,15 @@ seeds, e.g. ``0:100`` or ``20 64``.
 import argparse
 import os
 import shlex
+import socket
 import subprocess
 import sys
+import threading
+import time
 
 # Processes at once through a launcher, unless --jobs says otherwise.
 LAUNCHED_JOBS = 16
+LOAD_PERIOD = 30.   # s between samples of the load (see Load)
 
 
 def add_arguments(parser):
@@ -222,8 +226,13 @@ def worker_gpu(gpu):
 
 
 def commit(root):
-    """The checked-out commit of ``root``, ``+dirty`` with uncommitted changes (or None)."""
+    """The checked-out commit of ``root``, ``+dirty`` with uncommitted changes; None unless ``root``
+    is a checkout's top (a copy of the sources inside another checkout is not that checkout)."""
     try:
+        top = subprocess.run(['git', '-C', str(root), 'rev-parse', '--show-toplevel'],
+                             capture_output=True, text=True, check=True).stdout.strip()
+        if os.path.realpath(top) != os.path.realpath(root):
+            return None
         head = subprocess.run(['git', '-C', str(root), 'rev-parse', '--short', 'HEAD'],
                               capture_output=True, text=True, check=True).stdout.strip()
         dirty = subprocess.run(['git', '-C', str(root), 'status', '--porcelain', '--untracked-files=no'],
@@ -231,3 +240,55 @@ def commit(root):
     except (OSError, subprocess.CalledProcessError):
         return None
     return head + ('+dirty' if dirty else '')
+
+
+class Load:
+    """The machine's load while a block runs: ``host``, ``cores`` (the machine's, as the load average is)
+    and ``samples``, one at the start, every ``period`` seconds (from a daemon thread) and at the
+    end: ``{'t', 'load_1m', 'cpu_s'}``, seconds since the start, the 1-minute load average and the
+    CPU seconds this process used since the sample before. When the machine is busy the process
+    waits for cores: its CPU seconds fall behind the wall seconds."""
+
+    def __init__(self, period=LOAD_PERIOD):
+        self.period, self.host, self.cores = period, socket.gethostname(), os.cpu_count()
+
+    def __enter__(self):
+        self.samples, self.started, self.cpu = [], time.perf_counter(), time.process_time()
+        self.sample()
+        self.stop = threading.Event()
+        self.thread = threading.Thread(target=self.run, daemon=True)
+        self.thread.start()
+        return self
+
+    def run(self):
+        while not self.stop.wait(self.period):
+            self.sample()
+
+    def sample(self):
+        cpu = time.process_time()
+        self.samples.append({'t': time.perf_counter() - self.started, 'load_1m': os.getloadavg()[0],
+                             'cpu_s': cpu - self.cpu})
+        self.cpu = cpu
+
+    def __exit__(self, *exc):
+        self.stop.set()
+        self.thread.join()
+        self.sample()
+
+    def record(self):
+        """``{'host', 'cores', 'samples'}`` for a report."""
+        return {'host': self.host, 'cores': self.cores, 'samples': self.samples}
+
+
+def load_record(records, quantiles=(.1, .5, .9, 1.)):
+    """Over the ``load`` of reports (:meth:`Load.record`) and their ``wall_s``: quantiles of the load
+    per core over every sample and of each report's CPU seconds per wall second, and the hosts."""
+    import numpy as np
+    records = [(report['load'], report['wall_s']) for report in records if report.get('load')]
+    if not records:
+        return None
+    per_core = [sample['load_1m'] / load['cores'] for load, _ in records for sample in load['samples']]
+    cpu_per_wall = [sum(sample['cpu_s'] for sample in load['samples']) / wall for load, wall in records if wall > 0]
+    named = lambda values: {f'p{round(q * 100)}': float(np.quantile(values, q)) for q in quantiles} if values else None
+    return {'hosts': sorted({load['host'] for load, _ in records}), 'load_per_core': named(per_core),
+            'cpu_per_wall': named(cpu_per_wall)}

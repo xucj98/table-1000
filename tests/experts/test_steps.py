@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from table_1000.experts.context import ExpertFailed, Step, run_steps
-from table_1000.experts.generate import merge_checkpoints, read_checkpoints, step_rates, write_checkpoints
+from table_1000.experts.generate import INITIAL_STATE, merge_checkpoints, read_checkpoints, step_rates, write_checkpoints
 
 
 class FakeContext:
@@ -73,6 +73,17 @@ def test_checkpoints_are_merged_by_step(tmp_path):
     assert sorted(read_checkpoints(tmp_path / 'batch' / 'checkpoints' / 'step1.hdf5')[1]) == [0, 1]
 
 
+
+def test_the_initial_state_is_step_0(tmp_path):
+    start = {'qpos': np.zeros(3), 'base_pose': np.zeros(3)}
+    write_checkpoints(tmp_path / '0.hdf5', 0, 0, start, [{'step': 0, 'name': INITIAL_STATE, 'at': 0, 'state': state(5)},
+                                                        {'step': 1, 'name': 'step 1', 'at': 10, 'state': state(6)}])
+    assert merge_checkpoints([tmp_path / '0.hdf5'], tmp_path / 'batch', {'scene': 's'}) == [0, 1]
+    attrs, states = read_checkpoints(tmp_path / 'batch' / 'checkpoints' / 'step0.hdf5')
+    assert attrs['step'] == 0 and attrs['name'] == INITIAL_STATE
+    assert states[0][1]['articulation']['robot']['joint_position'][0, 0] == 5.
+
+
 def report(seed, done, names='abc', run=None):
     return {'seed': seed, 'step_names': list(names), 'steps_run': run,
             'steps': [{'step': k, 'name': names[k - 1], 'at': k} for k in done]}
@@ -109,11 +120,20 @@ def write_batch(directory, episodes, summary):
                 group.create_group('states').create_dataset('x', data=np.asarray(actions, dtype=float)[:, None])
                 group.attrs.update(num_samples=len(actions), status=status,
                                    **{key: json.dumps(value) for key, value in attrs.items()})
+    (directory / 'episodes').mkdir()
+    for seed, (status, actions, attrs) in episodes.items():
+        report = {'seed': seed, 'status': status, 'step_names': ['a', 'b', 'c'], 'steps': attrs['steps'],
+                  'subtasks': attrs['subtasks'], 'events': [{'step': 1, 'subtask': None, 'note': 'n'}], 'plans': [],
+                  'control_steps': len(actions), 'duration_s': len(actions) / 25, 'wall_s': 10.}
+        if 'failure' in attrs:
+            report['failure'] = attrs['failure']
+        (directory / 'episodes' / f'{seed}.json').write_text(json.dumps(report))
     (directory / 'summary.json').write_text(json.dumps(summary))
 
 
-def test_join_cuts_each_part_at_the_checkpoint_the_next_started_from(tmp_path):
-    from scripts.scenes.join_steps import main
+def test_join_cuts_each_part_at_the_checkpoint_the_next_started_from(tmp_path, monkeypatch):
+    from scripts.scenes import join_steps
+    main = join_steps.main
     first, second = tmp_path / 'scene' / 'isaac-cpu' / 'steps1-2', tmp_path / 'scene' / 'isaac-cpu' / 'steps2-3'
     # Steps 1-2 ran in the first batch; the second ran step 2-3 again from the step 1 checkpoint (at 2).
     write_batch(first, {
@@ -125,16 +145,17 @@ def test_join_cuts_each_part_at_the_checkpoint_the_next_started_from(tmp_path):
         2: ('failed', [1, 2, 3], {'steps': [{'step': 1, 'at': 2}], 'subtasks': [],
                                   'failure': {'subtask': 'b', 'reason': 'slipped'}}),
         3: ('error', [1, 2], {'steps': [], 'subtasks': [], 'failure': {'subtask': 'a', 'reason': 'error'}})},
-        {'steps_run': [1, 2], 'from': None, 'commit': 'c1'})
+        {'scene': 'scene', 'physics': 'isaac-cpu', 'steps_run': [1, 2], 'from': None, 'commit': 'c1'})
     write_batch(second, {
         0: ('success', [7, 8, 9], {'steps': [{'step': 2, 'at': 1}, {'step': 3, 'at': 3}],
                                    'subtasks': [{'instruction': 'b', 'start': 0, 'end': 3}]}),
         2: ('success', [5, 6], {'steps': [{'step': 2, 'at': 1}, {'step': 3, 'at': 2}], 'subtasks': []})},
-        {'steps_run': [2, 3], 'from': str(first), 'commit': 'c2'})
-    (tmp_path / 'scene' / 'isaac-cpu' / 'episodes').mkdir()     # an earlier batch's, replaced
-    main([str(first), str(second)])     # into the scene's batch, isaac-cpu/, keeping the step batches
-    joined = tmp_path / 'scene' / 'isaac-cpu'
-    assert not (joined / 'episodes').exists() and (first / 'summary.json').is_file()
+        {'scene': 'scene', 'physics': 'isaac-cpu', 'steps_run': [2, 3], 'from': str(first), 'commit': 'c2'})
+    joined = tmp_path / 'data' / 'scene' / 'isaac-cpu'
+    (joined / 'episodes').mkdir(parents=True)     # an earlier batch's, replaced
+    (joined / 'episodes' / '9.json').write_text('{}')
+    main([str(first), str(second), '--output', str(joined)])
+    assert not (joined / 'episodes' / '9.json').exists() and (first / 'summary.json').is_file()
     with h5py.File(joined / 'trajectories.hdf5', 'r') as file:
         group = file['data/demo_0']
         assert group['actions'][:, 0].tolist() == [1, 2, 7, 8, 9]
@@ -149,9 +170,42 @@ def test_join_cuts_each_part_at_the_checkpoint_the_next_started_from(tmp_path):
         assert file['data/demo_3'].attrs['status'] == 'error'
     summary = json.loads((joined / 'summary.json').read_text())
     assert (summary['succeeded'], summary['failed'], summary['error']) == (2, 1, 1)
+    assert summary['failures'] == {'a: r': [1], 'a: error': [3]} and summary['commits'] == ['c1', 'c2']
+    # Each seed's report is its last part's, placed in the joined episode (the second part starts at 2).
+    report = json.loads((joined / 'episodes' / '0.json').read_text())
+    assert report['events'][0]['step'] == 3 and [entry['at'] for entry in report['steps']] == [3, 5]
+    assert report['control_steps'] == 5 and report['wall_s'] == 20. and len(report['parts']) == 2
     assert summary['seeds']['count'] == 4
     with pytest.raises(SystemExit):     # the first batch must start from the initial states
         main([str(second), '--output', str(tmp_path / 'scene' / 'other')])
+    data = tmp_path / 'data' / 'scenes' / 'scene' / 'isaac-cpu'
+    monkeypatch.setattr(join_steps, 'ROOT', tmp_path)
+    with pytest.raises(SystemExit):     # steps 1-3 of 3 only: the first batch alone is not the data
+        main([str(first)])
+    main([str(first), str(second)])     # the scene's data by default
+    assert json.loads((data / 'summary.json').read_text())['succeeded'] == 2
+    with pytest.raises(SystemExit):     # nor replace a batch it joins, or one inside it
+        main([str(first), str(second), '--output', str(second)])
+    with pytest.raises(SystemExit):
+        main([str(first), str(second), '--output', str(tmp_path / 'scene' / 'isaac-cpu')])
+    assert (first / 'summary.json').is_file()
+
+
+def test_a_failure_case_is_the_last_run_of_its_subtask():
+    from scripts.experts.failure_cases import case, failing_start
+    report = {'seed': 3, 'duration_s': 1., 'wall_s': 2., 'control_steps': 50,
+              'failure': {'subtask': 'pick', 'reason': 'no reachable grasp'},
+              'subtasks': [{'instruction': 'pick', 'start': 0, 'end': 10}, {'instruction': 'place', 'start': 10, 'end': 20},
+                           {'instruction': 'pick', 'start': 20, 'end': None}],
+              'events': [{'step': 5, 'subtask': 'pick', 'note': 'next grasp', 'reason': 'old'},
+                         {'step': 25, 'subtask': 'pick', 'note': 'next grasp', 'reason': 'goal in collision',
+                          'goal_collisions': [['finger', 'drawer', 'drawer']]}]}
+    assert failing_start(report) == 20
+    numbers = case(report)
+    assert numbers['rejections'] == {'goal in collision': 1} and numbers['collisions'] == {'finger - drawer': 1}
+    # A step's check failed: where that step began.
+    check = {**report, 'failure': {'subtask': 'step 2', 'reason': 'r'}, 'steps': [{'step': 1, 'at': 18}]}
+    assert failing_start(check) == 18 and failing_start({**check, 'steps': []}) == 0
 
 
 def test_the_steps_of_a_resumed_run_keep_the_seed_s_start():
