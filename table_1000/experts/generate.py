@@ -160,8 +160,9 @@ class Generator:
         # MPlib's IK restarts and RRTConnect draw from its own generator; a later step, or a repeat,
         # from its own.
         import mplib.pymp
-        mplib.pymp.set_global_seed(seed + 1 + 1_000_003 * (first - 1) + 2_000_029 * repeat)   # OMPL rejects 0
         streams = [seed, attempt, 1] + ([first] if first > 1 or repeat else []) + ([repeat] if repeat else [])
+        mplib.pymp.set_global_seed(int(np.random.SeedSequence(streams).generate_state(1)[0]) | 1 if repeat
+                                   else seed + 1 + 1_000_003 * (first - 1))   # OMPL rejects 0
         ctx = Context(self.env, self.model, self.scene, self.assets, np.random.default_rng(streams), start=start,
                       only=self.steps)
         try:
@@ -251,18 +252,22 @@ def step_rates(reports, seeds, parent=None):
 
 def repeat_rates(reports, seeds, count):
     """Of a batch run ``count`` times per seed (``--repeats``), from all its reports: each seed's
-    successes (out of ``count``; seeds without reports have fewer), the failures by ``"subtask:
-    reason"`` and seed with their number, and the success rate over all the runs."""
+    successes (out of ``count``), the failures by ``"subtask: reason"`` and seed with their number,
+    the success rate over all the runs, and the seeds with fewer runs (a process stopped) with
+    their number of runs (``short``)."""
     succeeded, failures = dict.fromkeys(map(str, seeds), 0), {}
+    done = dict.fromkeys(map(str, seeds), 0)
     for report in reports:
+        done[str(report['seed'])] += 1
         if report['status'] == 'success':
             succeeded[str(report['seed'])] += 1
         else:
             seeds_failed = failures.setdefault(failure_key(report), {})
             seeds_failed[str(report['seed'])] = seeds_failed.get(str(report['seed']), 0) + 1
     return {'count': count, 'succeeded': succeeded,
-            'success_rate': sum(succeeded.values()) / (count * len(seeds)) if seeds else None,
-            'failures': dict(sorted(failures.items(), key=lambda item: -sum(item[1].values())))}
+            'success_rate': sum(succeeded.values()) / sum(done.values()) if any(done.values()) else None,
+            'failures': dict(sorted(failures.items(), key=lambda item: -sum(item[1].values()))),
+            'short': {seed: runs for seed, runs in done.items() if runs < count}}
 
 
 def summarize(reports, seeds):

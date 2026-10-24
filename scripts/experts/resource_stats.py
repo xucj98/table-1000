@@ -40,7 +40,9 @@ def main(argv=None):
     parser.add_argument('batches', nargs='+', type=Path, help='directories holding episodes/*.json')
     args = parser.parse_args(argv)
     for batch in args.batches:
-        reports = [json.loads(path.read_text()) for path in sorted((batch / 'episodes').glob('*.json'))]
+        # Each seed's first run (not the other runs of --repeats).
+        reports = [json.loads(path.read_text()) for path in sorted((batch / 'episodes').glob('*.json'))
+                   if '-' not in path.stem]
         stats = [(report['status'] == 'success', *episode_stats(report)) for report in reports]
         succeeded = sum(ok for ok, _, _ in stats)
         print(f'== {batch}: {len(reports)} episodes, {succeeded} succeeded')

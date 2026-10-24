@@ -37,7 +37,8 @@ rates count from the seeds of that batch's first step. See
 MPlib's), the first the seed's own as without it: how often it succeeds from there. The other runs'
 reports are ``episodes/<seed>-<r>.json`` (r = 1 .. K - 1), without trajectories or checkpoints;
 the batch's figures are those of the first runs, and ``summary.json``'s ``repeats`` gives each
-seed's successes out of K and the failures with their number per seed.
+seed's successes out of K, the failures with their number per seed, and the seeds a stopped
+process left with fewer runs (``short``: only seeds without a first run run again).
 
 Failed episodes are part of the result; the exit status is non-zero only when a
 seed has no episode. See ``table_1000/experts/generate.py``.
@@ -152,6 +153,8 @@ def main(argv=None):
     jobs = job_count(parser, args)
     root = args.root.resolve()
     first = args.steps[0] if args.steps else 1
+    if args.repeats < 1:
+        parser.error('--repeats: at least 1')
     if not args.dev and (args.steps or args.source or args.seeds or args.name or args.repeats > 1):
         parser.error('--steps, --from, --seeds, --name and --repeats make a development run, not the scene\'s data: '
                      'give --dev')
@@ -206,10 +209,6 @@ def main(argv=None):
     clear_batch(staging)
     works = {}
 
-    def last(seed):
-        """The name of a seed's last report (of its last run)."""
-        return f'{seed}-{args.repeats - 1}' if args.repeats > 1 else str(seed)
-
     def command(part, index, attempt):
         name = process_name(f'part{index}', attempt)
         works.update(dict.fromkeys(part, staging / name))
@@ -222,7 +221,9 @@ def main(argv=None):
 
     started = time.perf_counter()
     missing = run_batch(seeds, command=command, count=jobs, gpus=args.gpus, launcher=args.launcher, retries=args.retries,
-                        missing=lambda seed: not (works[seed] / 'episodes' / f'{last(seed)}.json').is_file())
+                        # A seed's first run is its episode (trajectory, checkpoints); a process stopped in
+                        # its later runs leaves it fewer of them (see repeat_rates), not to run again.
+                        missing=lambda seed: not (works[seed] / 'episodes' / f'{seed}.json').is_file())
     parts = sorted(staging.glob('part*/'))
     (directory / 'episodes').mkdir(parents=True)
     for name in ('trajectories', 'trajectories_failed'):
@@ -238,18 +239,17 @@ def main(argv=None):
                                            'commit': checkout})
     for path in staging.glob('part*/checkpoints/*.hdf5'):
         path.unlink()
-    # A seed's runs again elsewhere after its process stopped: its last reports count.
-    runs = {}
-    for path in sorted(staging.glob('part*/episodes/*.json'), key=lambda path: path.stat().st_mtime):
-        runs[path.name] = json.loads(path.read_text())
+    runs = []
+    for path in sorted(staging.glob('part*/episodes/*.json')):
+        runs.append(json.loads(path.read_text()))
         shutil.move(path, directory / 'episodes' / path.name)
-    reports = [report for report in runs.values() if not report.get('repeat')]
+    reports = [report for report in runs if not report.get('repeat')]
     summary = {'run': run, 'command': shlex.join(sys.argv if argv is None else ['run_expert.py', *argv]),
                'scene': args.scene, 'robot': robot, 'physics': args.physics, 'commit': checkout,
                'steps_run': args.steps, 'from': str(args.source.resolve()) if args.source else None,
                **summarize(reports, seeds), 'steps': step_rates(reports, seeds, parent),
-               'repeats': repeat_rates(list(runs.values()), seeds, args.repeats) if args.repeats > 1 else None,
-               'load': load_record(list(runs.values())), 'total_s': time.perf_counter() - started, 'videos': {}, 'fails': {}}
+               'repeats': repeat_rates(runs, seeds, args.repeats) if args.repeats > 1 else None,
+               'load': load_record(runs), 'total_s': time.perf_counter() - started, 'videos': {}, 'fails': {}}
     (directory / 'summary.json').write_text(json.dumps(summary, indent=1, ensure_ascii=False, default=float) + '\n')
     print('SUMMARY', directory / 'summary.json',
           json.dumps({key: summary[key] for key in ('succeeded', 'success_rate', 'failures')}, default=float), flush=True)

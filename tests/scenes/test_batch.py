@@ -352,5 +352,6 @@ def test_repeat_rates_count_every_run():
                {'seed': 72, 'repeat': 0, 'status': 'failed', 'failure': {'subtask': 'take', 'reason': 'no reachable grasp'}},
                {'seed': 72, 'repeat': 1, 'status': 'failed', 'failure': {'subtask': 'take', 'reason': 'no reachable grasp'}}]
     rates = repeat_rates(reports, [4, 72], 2)
-    assert rates['succeeded'] == {'4': 1, '72': 0} and rates['success_rate'] == .25
+    assert rates['succeeded'] == {'4': 1, '72': 0} and rates['success_rate'] == .25 and rates['short'] == {}
+    assert repeat_rates(reports[:3], [4, 72], 2)['short'] == {'72': 1}
     assert rates['failures'] == {'take: no reachable grasp': {'72': 2}, 'open: no reachable grasp': {'4': 1}}
