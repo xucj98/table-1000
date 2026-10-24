@@ -226,7 +226,7 @@ class Hand:
     of them when it has none)."""
 
     def __init__(self, model, arm, *, pad_spacing=None, min_pad_area=None,
-                 hold_margin=None, min_hold_area=None, opening_clearance=.01):
+                 hold_margin=None, min_hold_area=None, opening_clearance=.01, cost_width=0.):
         import xml.etree.ElementTree as ET
         self.model, self.arm, self.side = model, arm, model.spec.arms[arm]
         self.max_gap = self.side.max_gap
@@ -235,6 +235,7 @@ class Hand:
         self.hold_margin = HOLD_MARGIN if hold_margin is None else hold_margin
         self.min_hold_area = MIN_HOLD_AREA if min_hold_area is None else min_hold_area
         self.opening_clearance = opening_clearance
+        self.cost_width = cost_width
         urdf = model.root / model.spec.urdf
         links = {link.get('name'): link for link in ET.parse(urdf).getroot().findall('link')}
         self.cache = {}
@@ -399,7 +400,7 @@ def grasp_candidates(shape, transform, hand, obstacles, preferred, center_of_mas
     angle (rad) from the ``preferred`` approach direction, plus ``cost_offset`` per metre between
     the centre of the squeezing pad area and ``center_of_mass`` (default: the shape's centre),
     ``cost_backoff`` per metre of back-off and ``cost_hold`` per m^2 the held section falls short of
-    HOLD_AREA.
+    HOLD_AREA, plus ``hand.cost_width`` per metre of closing width (zero by default).
     """
     from mplib.collision_detection import fcl
     from table_1000.planning.world import geometry, pose
@@ -444,7 +445,7 @@ def grasp_candidates(shape, transform, hand, obstacles, preferred, center_of_mas
         if placed is None:
             continue
         tcp, backoff, gap, contact, held = placed
-        cost = angle + cost_offset * float(np.linalg.norm(contact - com)) + cost_backoff * backoff \
+        cost = angle + cost_offset * float(np.linalg.norm(contact - com)) + cost_backoff * backoff + hand.cost_width * width \
             + cost_hold * max(0., HOLD_AREA - held)
         # Choices are placed by angle: the first that places comes closest of all to the preferred approach.
         closest = angle if closest is None else closest

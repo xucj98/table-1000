@@ -21,7 +21,7 @@ SHAKE_OFFSETS = (1, -1, 1, -1, 0)
 # One candidate policy for every asset. Actual lift/shake measurements, not these
 # geometric screening thresholds, determine whether a grasp holds.
 HAND_PARAMETERS = dict(pad_spacing=.0005, min_pad_area=1e-6, hold_margin=0.,
-                       min_hold_area=1e-6, opening_clearance=.002)
+                       min_hold_area=1e-6, opening_clearance=.002, cost_width=10.)
 
 
 def oriented_shape(points):
@@ -64,13 +64,13 @@ def targets(skill):
 
 
 def pick(skill, report):
-    """Search whole-body/part grasps, then lift the entire rigid body."""
+    """Try geometric targets until the whole rigid body actually lifts."""
     from table_1000.experts.context import ExpertFailed
     ctx = skill.ctx
     report['target_attempts'] = []
     for target in targets(skill):
         attempt = {'shape': type(target.shape).__name__, 'parameters': vars(target.shape),
-                   'parts': target.names}
+                   'parts': list(target.names)}
         report['target_attempts'].append(attempt)
         thickness = float(np.ptp(target.shape.points(), axis=0).min())
         margin = min(.002, thickness / 4)
@@ -79,34 +79,38 @@ def pick(skill, report):
         attempt['hold_margin_m'] = margin
         try:
             result = skill.grasp(target, approach=(0., 0., -1.), then=(0., 0., .10), base=False)
+            report['target'] = attempt
+            solver = skill.solvers[result['arm']]
+            attempt['closure'] = {'tcp_pose': ctx.tcp(result['arm']).tolist(),
+                                 'object_pose': ctx.poses()[target.body].tolist(),
+                                 'finger_gap_m': solver.finger_gap()}
+            report['closure'] = attempt['closure']
+            rest = [name for name, obj in solver.world.objects.items()
+                    if obj.body == target.body and name not in target.names]
+            solver.carry(rest, target.names + result['supports'])
+            before = ctx.poses()[target.body].copy()
+            skill.move_by_displacement(result['arm'], (0., 0., .10))
+            ctx.hold(.2)
+            rise = float(ctx.poses()[target.body][2, 3] - before[2, 3])
+            attempt['lift'] = {'rise_m': rise, 'tcp_pose': ctx.tcp(result['arm']).tolist(),
+                              'object_pose': ctx.poses()[target.body].tolist(),
+                              'finger_gap_m': solver.finger_gap()}
+            report['lift'] = attempt['lift']
+            if rise < .05:
+                solver.release(rest, target.names + result['supports'])
+                skill.release(result['arm'])
+                ctx.note('missed lift', rise=rise)
+                ctx.fail('object not lifted', rise=rise, grasp=result['grasp'])
+            result.update(rise=rise)
+            return target, result
         except ExpertFailed as error:
             attempt['failure'] = {'reason': error.reason, 'details': error.details}
-            if error.reason not in ('no reachable grasp', 'object not held'):
+            if error.reason not in ('no reachable grasp', 'object not held', 'object not lifted'):
                 raise
             last = error
-            continue
-        break
-    else:
-        raise last
-    report['target'] = attempt
-    solver = skill.solvers[result['arm']]
-    report['closure'] = {'tcp_pose': ctx.tcp(result['arm']).tolist(),
-                         'object_pose': ctx.poses()[target.body].tolist(),
-                         'finger_gap_m': solver.finger_gap()}
-    rest = [name for name, obj in solver.world.objects.items()
-            if obj.body == target.body and name not in target.names]
-    solver.carry(rest, target.names + result['supports'])
-    before = ctx.poses()[target.body].copy()
-    skill.move_by_displacement(result['arm'], (0., 0., .10))
-    ctx.hold(.2)
-    rise = float(ctx.poses()[target.body][2, 3] - before[2, 3])
-    report['lift'] = {'rise_m': rise, 'tcp_pose': ctx.tcp(result['arm']).tolist(),
-                      'object_pose': ctx.poses()[target.body].tolist(),
-                      'finger_gap_m': solver.finger_gap()}
-    if rise < .05:
-        ctx.fail('object not lifted', rise=rise, grasp=result['grasp'])
-    result.update(rise=rise)
-    return target, result
+    if any('lift' in attempt for attempt in report['target_attempts']):
+        ctx.fail('object not lifted', attempts=len(report['target_attempts']))
+    raise last
 
 
 def inventory(source, excluded=()):
@@ -260,9 +264,9 @@ class Evaluator:
             from table_1000.experts.grasps import Hand
             skill.hands = {arm: Hand(self.model, arm, **HAND_PARAMETERS) for arm in skill.arms}
             skill.support_clearance = -.002
-            skill.held_tolerance = .01
+            skill.held_tolerance = .025
             report['candidate_policy'] = {**HAND_PARAMETERS, 'support_clearance_m': -.002,
-                                          'held_tolerance_m': .01}
+                                          'held_tolerance_m': .025}
             report['settled_pose'] = ctx.poses()[skill.target('object').body].tolist()
             phase['text'] = 'pick'
             self.env.contacts.phase = 'pick'

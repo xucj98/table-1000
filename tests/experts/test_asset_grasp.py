@@ -127,3 +127,36 @@ def test_shake_samples_transient_slip_and_executes_full_wrist_motion():
     assert np.isclose(result['max_slip_m'], .006)
     assert np.isclose(result['wrist_excursion_rad'], .8)
     assert not ctx.observers
+
+
+def test_failed_lift_releases_before_trying_next_geometric_target(monkeypatch):
+    from table_1000.experts import asset_grasp
+    from table_1000.experts.context import ExpertFailed
+    from table_1000.experts.grasps import Box
+    pose = np.eye(4)
+    attempts, released = [], []
+    candidates = [types.SimpleNamespace(shape=Box((.02,.03,.04)),
+                  names=[name], body='object:body') for name in ('handle', 'head')]
+    monkeypatch.setattr(asset_grasp, 'targets', lambda skill: iter(candidates))
+    def fail(reason, **details):
+        raise ExpertFailed(None, reason, **details)
+    ctx = types.SimpleNamespace(poses=lambda: {'object:body': pose.copy()},
+          tcp=lambda arm: np.eye(4), hold=lambda seconds: None, fail=fail, note=lambda *a, **k: None)
+    solver = types.SimpleNamespace(world=types.SimpleNamespace(objects={}),
+             carry=lambda *args: None, release=lambda *args: None, finger_gap=lambda: .02)
+    def grasp(target, **kwargs):
+        if attempts:
+            assert released == ['right']
+        attempts.append(target.names[0])
+        return {'arm':'right','supports':[],'grasp':{}}
+    def move(*args):
+        if len(attempts)==2:
+            pose[2,3] += .1
+    skill = types.SimpleNamespace(ctx=ctx, hands={'right':types.SimpleNamespace()},
+            grasp=grasp, solvers={'right':solver}, move_by_displacement=move, release=released.append)
+    report = {}
+    target, result = asset_grasp.pick(skill, report)
+    assert target.names == ['head'] and np.isclose(result['rise'], .1)
+    assert report['target_attempts'][0]['failure']['reason'] == 'object not lifted'
+    assert report['target_attempts'][0]['lift']['rise_m'] == 0
+    assert report['target_attempts'][1]['lift']['rise_m'] == .1
