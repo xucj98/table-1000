@@ -89,7 +89,7 @@ runs/expert/000000/<运行>/        一次开发运行（run_expert.py --dev）�
 
 `runs/` 放开发和实验的运行，按类型分子目录（专家轨迹为 `runs/expert/`），每次运行一个目录。
 
-规范：[建模](modeling.md)、[几何预览](preview.md)、[物理属性](physics.md)、[行为插件](behaviors.md)、[物理测试](physics-tests.md)、[机器人](robots.md)、[场景与专家轨迹](scenes.md)。
+规范：[建模](modeling.md)、[几何预览](preview.md)、[物理属性](physics.md)、[行为插件](behaviors.md)、[物理测试](physics-tests.md)、[资产抓取测试](grasp-tests.md)、[机器人](robots.md)、[场景与专家轨迹](scenes.md)。
 
 统一单位：m、kg、s、rad、N、N·m；四元数顺序为 `[w, qx, qy, qz]`。各文件另行注明坐标系。USD 原生属性遵循各 Schema 的单位，详见[物理属性](physics.md)。源码快照重建依赖同版本的 `table_1000` 包，共用模块不复制到资产目录。外部资源引用须注明版本、来源和许可，不使用私有绝对路径。
 

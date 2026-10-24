@@ -225,10 +225,17 @@ class Hand:
     sampled every ``PAD_SPACING``; those of shapes named ``*pad*`` in the URDF are its pads (all
     of them when it has none)."""
 
-    def __init__(self, model, arm):
+    def __init__(self, model, arm, *, pad_spacing=None, min_pad_area=None,
+                 hold_margin=None, min_hold_area=None, opening_clearance=.01, cost_width=0.):
         import xml.etree.ElementTree as ET
         self.model, self.arm, self.side = model, arm, model.spec.arms[arm]
         self.max_gap = self.side.max_gap
+        self.pad_spacing = PAD_SPACING if pad_spacing is None else pad_spacing
+        self.min_pad_area = MIN_PAD_AREA if min_pad_area is None else min_pad_area
+        self.hold_margin = HOLD_MARGIN if hold_margin is None else hold_margin
+        self.min_hold_area = MIN_HOLD_AREA if min_hold_area is None else min_hold_area
+        self.opening_clearance = opening_clearance
+        self.cost_width = cost_width
         urdf = model.root / model.spec.urdf
         links = {link.get('name'): link for link in ET.parse(urdf).getroot().findall('link')}
         self.cache = {}
@@ -245,7 +252,7 @@ class Hand:
             vertices = np.vstack([_vertices(shape) @ frame[:3, :3].T + frame[:3, 3] for shape in shapes])
             sign = float(np.sign(vertices[:, 1].mean()))
             inward = frame[:3, :3].T @ [0., -sign, 0.]
-            points = [_facing(shape, inward) for shape in shapes]
+            points = [_facing(shape, inward, self.pad_spacing) for shape in shapes]
             pads = [np.full(len(p), shape[3] or not padded) for p, shape in zip(points, shapes)]
             self.fingers.append((sign, np.vstack(points), np.concatenate(pads)))
 
@@ -393,7 +400,7 @@ def grasp_candidates(shape, transform, hand, obstacles, preferred, center_of_mas
     angle (rad) from the ``preferred`` approach direction, plus ``cost_offset`` per metre between
     the centre of the squeezing pad area and ``center_of_mass`` (default: the shape's centre),
     ``cost_backoff`` per metre of back-off and ``cost_hold`` per m^2 the held section falls short of
-    HOLD_AREA.
+    HOLD_AREA, plus ``hand.cost_width`` per metre of closing width (zero by default).
     """
     from mplib.collision_detection import fcl
     from table_1000.planning.world import geometry, pose
@@ -415,7 +422,7 @@ def grasp_candidates(shape, transform, hand, obstacles, preferred, center_of_mas
     length = lengthwise(closings)
     for closing, width, basis, slides in closings:
         open_gap = min(width + OPEN_MARGIN, hand.max_gap)
-        if width > open_gap - .01 or length is not None and width >= length:
+        if width > open_gap - hand.opening_clearance or length is not None and width >= length:
             continue
         closing = rotation @ closing
         approaches = [rotation @ (np.cos(t) * basis[0] + np.sin(t) * basis[1]) for t in np.arange(0., 2 * np.pi, step)] \
@@ -438,7 +445,7 @@ def grasp_candidates(shape, transform, hand, obstacles, preferred, center_of_mas
         if placed is None:
             continue
         tcp, backoff, gap, contact, held = placed
-        cost = angle + cost_offset * float(np.linalg.norm(contact - com)) + cost_backoff * backoff \
+        cost = angle + cost_offset * float(np.linalg.norm(contact - com)) + cost_backoff * backoff + hand.cost_width * width \
             + cost_hold * max(0., HOLD_AREA - held)
         # Choices are placed by angle: the first that places comes closest of all to the preferred approach.
         closest = angle if closest is None else closest
@@ -472,7 +479,7 @@ def _placed(shape, transform, target, pose, hand, open_gap, obstacles, approach_
                 _collides(closed_hand, obstacle, clearance) for obstacle, clearance in obstacles):
             continue
         held = _held_area(shape, transform, tcp, hand, gap)
-        if held < MIN_HOLD_AREA:
+        if held < hand.min_hold_area:
             return None     # backing off further only holds less
         return tcp, float(backoff), gap, contact, held
     return None
@@ -486,7 +493,7 @@ def _held_area(shape, transform, tcp, hand, gap):
     direction = rotation.T @ tcp[:3, 1]
     widest = float(np.ptp(shape.points() @ direction))
     pads = np.vstack([points[mask] for _, points, mask in hand.inner(gap)])
-    xs = np.arange(pads[:, 0].min(), pads[:, 0].max() - HOLD_MARGIN, HOLD_SPACING)
+    xs = np.arange(pads[:, 0].min(), pads[:, 0].max() - hand.hold_margin, HOLD_SPACING)
     zs = np.arange(pads[:, 2].min(), pads[:, 2].max(), HOLD_SPACING)
     if not len(xs) or not len(zs):
         return 0.
@@ -528,7 +535,7 @@ def _close(shape, transform, tcp, hand, open_gap, iterations=9):
     reaches = {sign: float(past.max()) for sign, _, _, past in fingers}
     shift = (reaches[-1.] - reaches[1.]) / 2
     touching = [world[pads & (past + sign * shift >= -CONTACT_TOLERANCE)] for sign, world, pads, past in fingers]
-    if min(len(points) for points in touching) < MIN_PAD_AREA / PAD_SPACING ** 2:
+    if min(len(points) for points in touching) < hand.min_pad_area / hand.pad_spacing ** 2:
         return None
     return float(low), np.vstack(touching).mean(axis=0)
 
