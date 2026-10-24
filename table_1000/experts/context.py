@@ -88,7 +88,7 @@ class Context:
         self._skills = None
         self.events = []        # (step, note) along the way, for the episode report
         self.origin = env.steps  # the episode starts here, after settling
-        self.started = time.perf_counter()
+        self.started, self.cpu_started = time.perf_counter(), time.process_time()
         self.subtask_wall_s = []     # wall seconds each subtask took, in the order of subtasks
         self.observers = []      # called after every step (e.g. video capture)
         # The robot where the seed's episode began ({'qpos', 'base_pose'}): its arms' home and its
@@ -96,7 +96,7 @@ class Context:
         self.start = start or self.robot_state()
         self.only = only            # (first, last) steps to run (see run_steps)
         self.step_names = None      # the expert's steps, once run_steps runs
-        self.checkpoints = []       # {'step', 'name', 'at', 'wall_s', 'state'} after each checked step
+        self.checkpoints = []       # {'step', 'name', 'at', 'wall_s', 'cpu_s', 'state'} after each checked step
         self.sync_model()
 
     # -- stepping ------------------------------------------------------------------
@@ -164,12 +164,13 @@ class Context:
             self.env.contacts.phase = None
 
     def checkpoint(self, index, name):
-        """Keep the scene state after step ``index`` (``name``), at control step :attr:`steps` and
-        ``wall_s`` seconds since the context was made."""
+        """Keep the scene state after step ``index`` (``name``), at control step :attr:`steps`,
+        ``wall_s`` seconds since the context was made and ``cpu_s`` CPU seconds of the process since."""
         from table_1000.sim.isaaclab.replay import numpy_state
         state = numpy_state(self.env)
         self.checkpoints.append({'step': index, 'name': name, 'at': self.steps,
-                                 'wall_s': time.perf_counter() - self.started, 'state': state})
+                                 'wall_s': time.perf_counter() - self.started,
+                                 'cpu_s': time.process_time() - self.cpu_started, 'state': state})
 
     def note(self, text, **values):
         self.events.append({'step': self.steps, 'subtask': self.current, 'note': text, **values})

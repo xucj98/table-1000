@@ -18,7 +18,8 @@ batches of some steps in it; with ``--steps`` it is ``<backend>/steps<k>-<m>/``:
   after step ``k`` passed its check;
 - ``summary.json``: commit, seeds, success rate, failed seeds by ``"subtask: reason"``
   (``-: process exited`` for seeds a stopped process left without a result), mean durations,
-  and per step the success rate and the progressive completion rate.
+  per step the success rate and the progressive completion rate, and the machines' load
+  (quantiles of the load per core and of the episodes' CPU seconds per wall second).
 
 ``--steps k[-m]`` runs steps ``k`` to ``m`` of the expert (``m`` = ``k`` when left out):
 from the initial states for ``k`` = 1, else from the checkpoints of step ``k - 1`` of the
@@ -92,7 +93,7 @@ def worker(args):
 
 
 def main(argv=None):
-    from table_1000.common.batch import add_arguments, commit, job_count, parse_seeds, process_name, run_batch, seed_range
+    from table_1000.common.batch import add_arguments, commit, job_count, load_record, parse_seeds, process_name, run_batch, seed_range
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('scene')
     parser.add_argument('--physics', choices=BACKENDS, required=True, help='simulation backend')
@@ -203,7 +204,7 @@ def main(argv=None):
     summary = {'scene': args.scene, 'robot': robot, 'physics': args.physics, 'commit': checkout,
                'steps_run': args.steps, 'from': str(args.source.resolve()) if args.source else None,
                **summarize(reports, seeds), 'steps': step_rates(reports, seeds, parent),
-               'total_s': time.perf_counter() - started, 'videos': {}, 'fails': {}}
+               'load': load_record(reports), 'total_s': time.perf_counter() - started, 'videos': {}, 'fails': {}}
     (directory / 'summary.json').write_text(json.dumps(summary, indent=1, ensure_ascii=False, default=float) + '\n')
     print('SUMMARY', directory / 'summary.json',
           json.dumps({key: summary[key] for key in ('succeeded', 'success_rate', 'failures')}, default=float), flush=True)
